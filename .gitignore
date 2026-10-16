@@ -1,0 +1,12 @@
+.DS_Store
+build/
+dist/
+node_modules/
+spikes/
+
+# Local product notes are intentionally not part of the public repository.
+codex-pulse-launch-article-zh.md
+product-spec.md
+today-plan.md
+user-value-roadmap.md
+auto-pause-resume-design.md

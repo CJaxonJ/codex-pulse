@@ -1,0 +1,22 @@
+{
+  "name": "codex-pulse-local",
+  "plugins": [
+    {
+      "name": "codex-pulse",
+      "description": "Quota-aware guidance for ordinary Codex chats.",
+      "source": {
+        "source": "local",
+        "path": "./plugin"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools",
+      "interface": {
+        "displayName": "Codex Pulse",
+        "shortDescription": "Use Codex quota on the work that matters."
+      }
+    }
+  ]
+}

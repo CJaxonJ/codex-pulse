@@ -1,0 +1,25 @@
+name: Feature request
+description: Suggest a concrete improvement to quota planning, alerts, or managed tasks.
+title: "[Feature] "
+labels: [enhancement]
+body:
+  - type: dropdown
+    id: plan
+    attributes:
+      label: Codex plan
+      options: [Plus, Pro, Other or unknown]
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What decision is hard today?
+      description: Describe the situation before proposing a UI or implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: What would a useful outcome look like?
+    validations:
+      required: true

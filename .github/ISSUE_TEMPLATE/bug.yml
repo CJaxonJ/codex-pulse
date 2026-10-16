@@ -1,0 +1,49 @@
+name: Bug report
+description: Report a missed alert, incorrect alert, installation problem, or task-control issue.
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not post credentials, reset-credit IDs, private prompts, or proprietary source code. Run `node bin/codex-pulse.mjs doctor` and review the output before sharing it.
+  - type: dropdown
+    id: plan
+    attributes:
+      label: Codex plan
+      options: [Plus, Pro, Other or unknown]
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "For example: macOS 15.6"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Codex Pulse version
+      placeholder: "For example: 0.8.0"
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: What happened?
+      description: Include the approximate time and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Redacted doctor output
+      render: shell
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I reviewed the report and removed any private information.
+          required: true
