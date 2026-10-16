@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.1 — 2026-10-16
+
+- Added an MIT license and contributor, support, conduct, and pull-request guidance.
+- Added CodeQL scanning and Dependabot updates for pinned GitHub Actions.
+- Fixed the macOS archive so it extracts into one product folder without
+  `__MACOSX` metadata or development-only release and E2E scripts.
+- Added automatic archive-layout verification and a published SHA-256 checksum.
+- Declared the supported Node.js version in package metadata.
+
 ## 0.8.0 — 2026-10-16
 
 - Added separate Tibo reset previews and capacity/limit notices.

@@ -134,6 +134,8 @@ try {
       "small",
       "--priority",
       "high",
+      "--quota-policy",
+      "deadline",
       "--start-floor",
       "0",
       "--resume-floor",

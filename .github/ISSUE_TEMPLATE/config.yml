@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Support guide
+    url: https://github.com/CJaxonJ/codex-pulse/blob/main/SUPPORT.md
+    about: Check setup and diagnostic steps before opening a bug.
+  - name: Report a security vulnerability
+    url: https://github.com/CJaxonJ/codex-pulse/security/advisories/new
+    about: Privately report a security issue. Do not disclose it in a public issue.

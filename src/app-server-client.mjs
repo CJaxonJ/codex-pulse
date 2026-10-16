@@ -55,7 +55,7 @@ export class AppServerClient extends EventEmitter {
       clientInfo: {
         name: "codex_pulse",
         title: "Codex Pulse",
-        version: "0.8.0",
+        version: "0.8.1",
       },
     });
     this.notify("initialized", {});

@@ -1,5 +1,9 @@
 # Codex Pulse
 
+[![Tests](https://github.com/CJaxonJ/codex-pulse/actions/workflows/test.yml/badge.svg)](https://github.com/CJaxonJ/codex-pulse/actions/workflows/test.yml)
+[![CodeQL](https://github.com/CJaxonJ/codex-pulse/actions/workflows/codeql.yml/badge.svg)](https://github.com/CJaxonJ/codex-pulse/actions/workflows/codeql.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+
 Codex Pulse is a local quota copilot for people who use Codex heavily on macOS.
 
 It helps answer four practical questions:
@@ -18,9 +22,16 @@ widens sandbox access, or consumes a reset credit.
 
 ## Download
 
-Download the latest macOS zip from
-[GitHub Releases](https://github.com/CJaxonJ/codex-pulse/releases/latest).
+Download the current macOS beta from
+[GitHub Releases](https://github.com/CJaxonJ/codex-pulse/releases/tag/v0.8.1).
 Chinese setup instructions are in [`开始使用.md`](./开始使用.md).
+
+The release includes `SHA256SUMS.txt`. After downloading both files, verify the
+archive before opening it:
+
+```bash
+shasum -a 256 -c SHA256SUMS.txt
+```
 
 ## What is monitored
 
@@ -256,3 +267,16 @@ Build the shareable macOS zip with:
 ```bash
 npm run package:macos
 ```
+
+The release build produces a single-folder ZIP plus `SHA256SUMS.txt`, then checks
+the archive layout and checksum before succeeding.
+
+## Project policies
+
+- [Contributing](./CONTRIBUTING.md)
+- [Support](./SUPPORT.md)
+- [Security](./SECURITY.md)
+- [Privacy](./PRIVACY.md)
+- [Code of Conduct](./CODE_OF_CONDUCT.md)
+
+Codex Pulse is available under the [MIT License](./LICENSE).

@@ -26,7 +26,7 @@ function createInstalledFixture() {
       "cache",
       "codex-pulse-local",
       "codex-pulse",
-      "0.8.0",
+      "0.8.1",
     ),
   ];
   for (const directory of paths) mkdirSync(directory, { recursive: true });
@@ -56,7 +56,7 @@ test("doctor reports a healthy installed runtime without exposing account data",
   assert.equal(result.ok, true);
   assert.equal(result.checks.find((item) => item.id === "launch-agent").status, "pass");
   assert.equal(result.checks.find((item) => item.id === "plugin").status, "pass");
-  assert.deepEqual(result.support.pluginVersions, ["0.8.0"]);
+  assert.deepEqual(result.support.pluginVersions, ["0.8.1"]);
   assert.equal(JSON.stringify(result).includes(homeDir), false);
 });
 
