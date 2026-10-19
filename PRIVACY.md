@@ -22,7 +22,16 @@ text.
 
 ## Network requests
 
-Codex Pulse requests public reset and capacity signals from `codex-reset.com`. The request contains a normal product user-agent and the network metadata ordinarily visible to a website, such as the caller's IP address. Codex Pulse does not attach Codex credentials or local quota data to this request.
+By default, Tibo monitoring requests the public feed and forecast endpoints at
+`codex-reset.com`. The service receives ordinary network metadata such as the
+caller's IP address. Codex Pulse never sends Codex credentials, prompts,
+workspace contents, or local quota data to that service. If it is unavailable,
+personal quota monitoring continues locally.
+
+An optional direct-X mode requests Tibo's public posts and replies from the
+official X API. Its bearer token is read from macOS Keychain into memory and is
+never written to Codex Pulse state, support reports, or logs. Users can disable
+Tibo monitoring entirely or switch between the two sources.
 
 Communication with Codex uses the local Codex App Server and remains subject to the user's existing OpenAI/Codex account and policies.
 

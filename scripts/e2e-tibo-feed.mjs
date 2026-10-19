@@ -1,56 +1,98 @@
 #!/usr/bin/env node
 
+import assert from "node:assert/strict";
+import { createServer } from "node:http";
+
 import { TiboResetClient } from "../src/tibo-client.mjs";
 import { normalizeTiboSnapshot } from "../src/tibo-monitor-core.mjs";
 
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-let lastError = null;
-for (let attempt = 1; attempt <= 3; attempt += 1) {
-  try {
-    const now = Math.floor(Date.now() / 1000);
-    const raw = await new TiboResetClient().readSnapshot();
-    if (!Array.isArray(raw.feed?.tweets)) {
-      throw new Error("feed.tweets is not an array");
-    }
-    if (!raw.forecast || typeof raw.forecast !== "object") {
-      throw new Error("forecast payload is missing");
-    }
-    const snapshot = normalizeTiboSnapshot(raw, { now });
-    if (snapshot.sourceHealth.status !== "healthy") {
-      throw new Error(
-        `feed is not healthy: ${JSON.stringify(snapshot.sourceHealth)}`,
-      );
-    }
-    console.log(
-      JSON.stringify(
-        {
-          ok: true,
-          source: snapshot.source,
-          sourceHealth: snapshot.sourceHealth,
-          latestPost: snapshot.latestPost
-            ? {
-                id: snapshot.latestPost.id,
-                at: snapshot.latestPost.occurredAt,
-                kind: snapshot.latestPost.kind,
-                lane: snapshot.latestPost.lane,
-              }
-            : null,
-          previewId: snapshot.preview?.id || null,
-          confirmedKey: snapshot.confirmed?.key || null,
+let observedSinceId = null;
+let observedAuthorization = null;
+const createdAt = new Date().toISOString();
+const server = createServer((request, response) => {
+  const url = new URL(request.url, "http://127.0.0.1");
+  observedAuthorization = request.headers.authorization || null;
+  response.setHeader("content-type", "application/json");
+  if (url.pathname === "/2/users/by/username/thsottiaux") {
+    response.end(
+      JSON.stringify({
+        data: {
+          id: "42",
+          username: "thsottiaux",
+          name: "Tibo",
+          public_metrics: { followers_count: 123 },
         },
-        null,
-        2,
-      ),
+      }),
     );
-    process.exit(0);
-  } catch (error) {
-    lastError = error;
-    if (attempt < 3) await delay(2_000);
+    return;
   }
-}
+  if (url.pathname === "/2/users/42/tweets") {
+    observedSinceId = url.searchParams.get("since_id");
+    response.end(
+      JSON.stringify({
+        data: [
+          {
+            id: "2119999999999999999",
+            text: "Done and dusted",
+            created_at: createdAt,
+            conversation_id: "2118888888888888888",
+            referenced_posts: [
+              { type: "replied_to", id: "2118888888888888888" },
+            ],
+          },
+        ],
+        includes: {
+          posts: [
+            {
+              id: "2118888888888888888",
+              text: "Has the Codex usage limit reset finished?",
+            },
+          ],
+        },
+      }),
+    );
+    return;
+  }
+  response.statusCode = 404;
+  response.end(JSON.stringify({ error: "not found" }));
+});
 
-console.error(JSON.stringify({ ok: false, error: lastError?.message || "unknown" }, null, 2));
-process.exit(1);
+await new Promise((resolve, reject) => {
+  server.once("error", reject);
+  server.listen(0, "127.0.0.1", resolve);
+});
+
+try {
+  const address = server.address();
+  const client = new TiboResetClient({
+    source: "x-api",
+    tokenProvider: async () => "e2e-secret",
+    xApiBaseUrl: `http://127.0.0.1:${address.port}`,
+  });
+  const now = Math.floor(Date.now() / 1000);
+  const raw = await client.readSnapshot({ sinceId: "2117777777777777777" });
+  const snapshot = normalizeTiboSnapshot(raw, { now });
+
+  assert.equal(observedAuthorization, "Bearer e2e-secret");
+  assert.equal(observedSinceId, "2117777777777777777");
+  assert.equal(snapshot.source, "x-api");
+  assert.equal(snapshot.sourceHealth.status, "healthy");
+  assert.equal(snapshot.latestPost.kind, "reset");
+  assert.equal(snapshot.confirmed.key, "2119999999999999999");
+  console.log(
+    JSON.stringify(
+      {
+        ok: true,
+        source: snapshot.source,
+        sourceHealth: snapshot.sourceHealth,
+        contextualReplyClassification: snapshot.latestPost.kind,
+        confirmedKey: snapshot.confirmed.key,
+        network: "local mock X API",
+      },
+      null,
+      2,
+    ),
+  );
+} finally {
+  await new Promise((resolve) => server.close(resolve));
+}

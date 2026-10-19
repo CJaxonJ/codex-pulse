@@ -1,8 +1,8 @@
 const HOUR = 60 * 60;
 const PREVIEW_MAX_AGE_SECONDS = 24 * HOUR;
 const PERSONAL_LANDING_MAX_AGE_SECONDS = 12 * HOUR;
-const SOURCE_STALE_SECONDS = 10 * 60;
-const SOURCE_FAILURE_THRESHOLD = 3;
+const SOURCE_STALE_SECONDS = 30 * 60;
+const SOURCE_FAILURE_THRESHOLD = 15;
 const STRONG_SIGNAL_KINDS = new Set(["signal", "reset", "banked"]);
 const OPERATIONAL_UPDATE_KINDS = new Set(["limits", "boost"]);
 
@@ -65,7 +65,7 @@ export function normalizeTiboSnapshot(raw, options = {}) {
     .map(normalizeFeedTweet)
     .filter((tweet) => tweet.occurredAt != null)
     .sort((a, b) => b.occurredAt - a.occurredAt);
-  const confirmed = lastResetAt
+  const forecastConfirmed = lastResetAt
     ? {
         key: String(latestAlert?.id || `reset:${lastResetAt}`),
         occurredAt: lastResetAt,
@@ -73,6 +73,22 @@ export function normalizeTiboSnapshot(raw, options = {}) {
         url: latestAlert?.url || null,
       }
     : null;
+  const confirmedPost = posts.find(
+    (post) =>
+      post.verificationStatus === "confirmed" &&
+      (post.kind === "reset" || post.kind === "banked"),
+  );
+  const feedConfirmed = confirmedPost
+    ? {
+        key: confirmedPost.id,
+        occurredAt: confirmedPost.occurredAt,
+        text: confirmedPost.text,
+        url: confirmedPost.url,
+      }
+    : null;
+  const confirmed = [forecastConfirmed, feedConfirmed]
+    .filter(Boolean)
+    .sort((a, b) => b.occurredAt - a.occurredAt)[0] || null;
 
   const candidates = [];
   const official = normalizeOfficialSignal(forecast.official_signal);
@@ -97,7 +113,10 @@ export function normalizeTiboSnapshot(raw, options = {}) {
   const preview = candidates
     .filter((candidate) => candidate.occurredAt != null)
     .filter((candidate) => now - candidate.occurredAt <= PREVIEW_MAX_AGE_SECONDS)
-    .filter((candidate) => !lastResetAt || candidate.occurredAt > lastResetAt)
+    .filter(
+      (candidate) =>
+        !confirmed?.occurredAt || candidate.occurredAt > confirmed.occurredAt,
+    )
     .sort((a, b) => b.occurredAt - a.occurredAt)[0] || null;
   const sourceFetchedAt = unixSeconds(feed.fetched_at);
   const sourceAgeSeconds = sourceFetchedAt == null ? null : Math.max(0, now - sourceFetchedAt);
@@ -127,7 +146,10 @@ export function normalizeTiboSnapshot(raw, options = {}) {
       newestPostAt: unixSeconds(feed.newest_post_at) || posts[0]?.occurredAt || null,
     },
     teasedWindow: forecast.teased_window || null,
-    source: "codex-reset.com",
+    source: raw?.source || feed.source || "unknown",
+    degradedComponents: Array.isArray(raw?.degradedComponents)
+      ? raw.degradedComponents
+      : [],
   };
 }
 
@@ -150,11 +172,12 @@ export function evaluateTiboSnapshot(previousState, snapshot, options = {}) {
         lastSeenTweetAt: snapshot.latestPost?.occurredAt || null,
         sourceHealthStatus: snapshot.sourceHealth?.status || "unknown",
         sourceFetchedAt: snapshot.sourceHealth?.fetchedAt || null,
+        source: snapshot.source || null,
         consecutiveSourceFailures: 0,
       },
       events:
         snapshot.sourceHealth?.status === "unhealthy"
-          ? [{ type: "tibo_source_unhealthy", reason: "stale_feed" }]
+          ? [{ type: "tibo_source_unhealthy", reason: "stale_feed", source: snapshot.source }]
           : [],
     };
   }
@@ -166,7 +189,11 @@ export function evaluateTiboSnapshot(previousState, snapshot, options = {}) {
   );
   const newestOperationalUpdate = newOperationalUpdates[0] || null;
   if (newestOperationalUpdate) {
-    events.push({ type: "tibo_limits_update", ...newestOperationalUpdate });
+    events.push({
+      type: "tibo_limits_update",
+      source: snapshot.source,
+      ...newestOperationalUpdate,
+    });
   }
 
   const sourceHealthStatus = snapshot.sourceHealth?.status || "unknown";
@@ -174,12 +201,16 @@ export function evaluateTiboSnapshot(previousState, snapshot, options = {}) {
     sourceHealthStatus === "unhealthy" &&
     previous.sourceHealthStatus !== "unhealthy"
   ) {
-    events.push({ type: "tibo_source_unhealthy", reason: "stale_feed" });
+    events.push({
+      type: "tibo_source_unhealthy",
+      reason: "stale_feed",
+      source: snapshot.source,
+    });
   } else if (
     sourceHealthStatus === "healthy" &&
     previous.sourceHealthStatus === "unhealthy"
   ) {
-    events.push({ type: "tibo_source_recovered" });
+    events.push({ type: "tibo_source_recovered", source: snapshot.source });
   }
   let pendingPublicReset = previous.pendingPublicReset || null;
   if (
@@ -192,6 +223,7 @@ export function evaluateTiboSnapshot(previousState, snapshot, options = {}) {
   if (snapshot.preview && snapshot.preview.id !== previous.lastPreviewId) {
     events.push({
       type: "tibo_preview",
+      source: snapshot.source,
       ...snapshot.preview,
       teasedWindow: snapshot.teasedWindow,
     });
@@ -203,7 +235,11 @@ export function evaluateTiboSnapshot(previousState, snapshot, options = {}) {
     (previous.lastConfirmedAt == null ||
       snapshot.confirmed.occurredAt > previous.lastConfirmedAt);
   if (isNewConfirmation) {
-    const event = { type: "tibo_confirmed", ...snapshot.confirmed };
+    const event = {
+      type: "tibo_confirmed",
+      source: snapshot.source,
+      ...snapshot.confirmed,
+    };
     events.push(event);
     pendingPublicReset = {
       key: snapshot.confirmed.key,
@@ -219,11 +255,17 @@ export function evaluateTiboSnapshot(previousState, snapshot, options = {}) {
       lastConfirmedKey: snapshot.confirmed?.key || previous.lastConfirmedKey || null,
       lastConfirmedAt: snapshot.confirmed?.occurredAt || previous.lastConfirmedAt || null,
       pendingPublicReset,
-      seenTweetIds: snapshot.operationalUpdates.map((tweet) => tweet.id).slice(0, 100),
+      seenTweetIds: [
+        ...new Set([
+          ...snapshot.operationalUpdates.map((tweet) => tweet.id),
+          ...(previous.seenTweetIds || []),
+        ]),
+      ].slice(0, 100),
       lastSeenTweetId: snapshot.latestPost?.id || previous.lastSeenTweetId || null,
       lastSeenTweetAt: snapshot.latestPost?.occurredAt || previous.lastSeenTweetAt || null,
       sourceHealthStatus,
       sourceFetchedAt: snapshot.sourceHealth?.fetchedAt || previous.sourceFetchedAt || null,
+      source: snapshot.source || previous.source || null,
       consecutiveSourceFailures: 0,
     },
     events,
@@ -245,7 +287,14 @@ export function evaluateTiboFetchFailure(previousState, options = {}) {
       sourceHealthStatus: becameUnhealthy ? "unhealthy" : previous.sourceHealthStatus,
     },
     events: becameUnhealthy
-      ? [{ type: "tibo_source_unhealthy", reason: "consecutive_failures", failures }]
+      ? [
+          {
+            type: "tibo_source_unhealthy",
+            reason: "consecutive_failures",
+            failures,
+            source: previous.source || null,
+          },
+        ]
       : [],
   };
 }

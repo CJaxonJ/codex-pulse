@@ -12,8 +12,12 @@ description: Verify the local Codex Pulse monitor and explain how to review and 
    remaining, reset time, weekly percentage, and reset-card count. Never print
    authentication material or opaque reset-card ids.
 3. Explain that Codex intentionally skips new or changed non-managed hooks until
-   the user reviews them. Ask the user to open `/hooks`, inspect the Codex Pulse
-   commands, and trust them only if the paths point inside the installed plugin.
+   the user reviews them. The interactive installer offers to open Codex CLI for
+   the user. In that CLI, have them run `/hooks`, verify that the Codex Pulse
+   commands point inside the installed plugin, press `t` to trust, confirm that
+   `Active` becomes `1`, then exit and restart the desktop app. If the installer
+   was non-interactive or they chose Later, explain how to launch Codex CLI from
+   Terminal. `/hooks` is not a desktop composer command.
 4. Explain the privacy boundary: Prompt text is inspected in memory to estimate
    task size and priority, but is never stored. Local observations contain only
    session/turn ids, model, inferred size and priority, timestamps, quota-window

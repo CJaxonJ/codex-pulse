@@ -18,7 +18,7 @@ Codex quota. Personal data stays on the Mac. It never auto-approves permissions,
 widens sandbox access, or consumes a reset credit.
 
 > Beta software. Codex Pulse is an independent project and is not made, endorsed,
-> or supported by OpenAI or codex-reset.com.
+> or supported by OpenAI or X.
 
 ## Download
 
@@ -39,19 +39,48 @@ shasum -a 256 -c SHA256SUMS.txt
 - Personal warnings: 20%, 10%, and 5%, plus a fast-consumption forecast.
 - Weekly pacing: estimates whether Plus or Pro usage is ahead of schedule and
   turns the remaining allowance into a practical average daily percentage.
-- Tibo signal: watches structured public signals from `codex-reset.com` once per minute.
+- Tibo signal: reads the zero-configuration `codex-reset.com` feed by default;
+  maintainers can optionally switch to direct X API reads and local classification.
 - Two alert levels: reset/banked signals are urgent previews; capacity, limit, and
   usage-policy changes are informational and are explicitly labeled as not being a reset.
-- Source health: warns only after three consecutive request failures or a stale
-  feed, then reports recovery without interrupting personal quota monitoring.
+- Source health: brief upstream failures stay quiet. A warning appears only after a
+  sustained 15-minute outage or a stale feed, without interrupting personal
+  quota monitoring.
 - Four distinct states: Tibo preview, usage/capacity update, public reset
   confirmation, and personal-account landing.
 
-Tibo alerts are third-party public signals, not an OpenAI guarantee. A reset is shown as personally landed only after this Mac reads a material quota increase from the user's own account.
+Tibo alerts are public social-media signals, not an OpenAI guarantee. A reset is
+shown as personally landed only after this Mac reads a material quota increase
+from the user's own account.
 
-Pulse logs the latest public post id, its website-provided classification, source
+Pulse logs the latest public post id, its classification, source
 freshness, and the emitted event type. This makes “no new reset signal,” “ordinary
-post ignored,” and “data source unavailable” distinguishable during support.
+post ignored,” and “data source unavailable” distinguishable during support. It
+never treats a public forecast as proof that this user's quota has landed.
+
+Tibo monitoring works out of the box through the public `codex-reset.com` feed;
+ordinary users do not need an X developer account or API credential. Personal
+quota warnings, reset-credit expiry, task pausing, and safe resume remain local
+and continue if that feed is unavailable.
+
+For maintainers who prefer to read Tibo's public posts directly, an optional X
+API source can be configured on macOS:
+
+```bash
+node bin/codex-pulse.mjs tibo-source --configure-x
+```
+
+Paste the token only into the macOS Keychain prompt. Codex Pulse never writes it
+to its state file or log. Inspect or disable the source with:
+
+```bash
+node bin/codex-pulse.mjs tibo-source
+node bin/codex-pulse.mjs tibo-source --mode disabled
+node bin/codex-pulse.mjs tibo-source --forget-x
+```
+
+The direct X source is an advanced fallback, not part of normal onboarding. Use
+`--mode codex-reset` to return to the zero-configuration default at any time.
 
 ## Install on macOS
 
@@ -79,10 +108,13 @@ copies its runtime to `~/Library/Application Support/Codex Pulse/app`, installs 
 login agent, and installs the local Codex Pulse plugin from a stable local
 marketplace. The extracted folder can then be deleted.
 
-Restart Codex after installation. Open `/hooks`, inspect the Codex Pulse hook
-commands, and trust them only when their paths stay inside the installed plugin.
-Codex intentionally requires this one-time review; the installer never bypasses
-hook trust.
+At the end of an interactive installation, a native guide offers to open Codex
+CLI in the same Terminal window. The user only needs to run `/hooks`, inspect the
+Codex Pulse hook commands, press `t` when their paths stay inside the installed
+plugin, exit the CLI, and restart the desktop app. `/hooks` is not a command in
+the desktop chat composer. Non-interactive installs print the same instructions.
+Codex intentionally requires this one-time review; the installer opens the right
+surface but never bypasses hook trust.
 
 Once trusted, normal Codex chats get automatic guidance:
 
@@ -215,9 +247,10 @@ configured unattended sandbox, which may be read-only. They are suitable only
 for optional checks or reminders unless a project-scoped task has been manually
 verified with the required sandbox.
 
-The macOS packaging command enforces the full test suite, a live
-`codex-reset.com` schema/freshness check, a real managed-task smoke test, and an
-ordinary-chat continuity test before it creates an artifact. The managed-task E2E launches
+The macOS packaging command enforces the full test suite, a deterministic local
+X API contract/classifier test, a live read from the zero-configuration Tibo
+source, a real managed-task smoke test, and an ordinary-chat continuity test
+before it creates an artifact. The managed-task E2E launches
 the actual Codex App Server, queues work in a disposable directory, waits for a
 real turn to write and verify a proof file, checks task completion, and confirms
 that the worktree lock was released:

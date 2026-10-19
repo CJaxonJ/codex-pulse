@@ -15,3 +15,8 @@ For ordinary bugs, open an issue and include:
 ## Security boundaries
 
 Codex Pulse never auto-approves permission requests, widens sandbox access, or consumes reset credits. Managed tasks fail closed when Codex requests user input or when the workspace has changed since pausing.
+
+The optional X API bearer token is stored in macOS Keychain. It is never accepted
+as a command-line value, written to Codex Pulse state, or included in diagnostic
+output. Users should revoke the token in the X developer console if they suspect
+it has been exposed.

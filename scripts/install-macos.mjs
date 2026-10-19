@@ -12,6 +12,11 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  hookReviewMessage,
+  openHookReview,
+} from "../src/hook-review-onboarding.mjs";
+
 const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const homeDir = os.homedir();
 const launchAgentsDir = path.join(homeDir, "Library", "LaunchAgents");
@@ -140,4 +145,12 @@ execFileSync(nodePath, [monitorPath, "doctor"], {
   env: { ...process.env, CODEX_BINARY: codexPath },
   stdio: "inherit",
 });
-console.log("\n最后一步：完全退出并重新打开 Codex，输入 /hooks，检查后信任 Codex Pulse。\n");
+
+const hookReview = openHookReview({ codexPath });
+if (!hookReview.launched) {
+  console.log(`\n${hookReviewMessage()}\n`);
+} else {
+  console.log(
+    "\nCodex CLI 已关闭。请彻底退出并重新打开 Codex 桌面端，Codex Pulse 随后会自动工作。\n",
+  );
+}

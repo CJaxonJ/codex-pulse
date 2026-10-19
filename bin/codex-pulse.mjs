@@ -20,6 +20,11 @@ import {
 } from "../src/macos-notifier.mjs";
 import { TiboResetClient } from "../src/tibo-client.mjs";
 import {
+  configureXBearerToken,
+  forgetXBearerToken,
+  readXBearerToken,
+} from "../src/tibo-credentials.mjs";
+import {
   attachPersonalLanding,
   evaluateTiboFetchFailure,
   evaluateTiboSnapshot,
@@ -35,6 +40,7 @@ import {
 import {
   PulsePreferencesStore,
   QUOTA_POLICIES,
+  TIBO_SOURCES,
 } from "../src/preferences-store.mjs";
 import {
   adviseTaskStart,
@@ -151,7 +157,7 @@ async function runDoctor() {
         privacy:
           "This report excludes authentication material, reset-credit IDs, prompt text, and absolute home paths.",
         nextStep: ok
-          ? "Restart Codex, open /hooks, inspect the Codex Pulse commands, and trust them if their paths remain inside the installed plugin."
+          ? "Restart Codex, open Codex CLI in a terminal, run /hooks, inspect the Codex Pulse commands, and trust them if their paths remain inside the installed plugin. /hooks is not a desktop composer command."
           : "Re-run node scripts/install-macos.mjs, then run doctor again. If it still fails, share this report with the developer.",
       },
       null,
@@ -291,6 +297,44 @@ async function managePolicy() {
   );
 }
 
+async function manageTiboSource() {
+  const store = new PulsePreferencesStore(dataDir);
+  if (args.includes("--configure-x")) {
+    console.log(
+      "Paste the X API bearer token at the Keychain prompt. It is stored by macOS and is never written to Codex Pulse state or logs.",
+    );
+    configureXBearerToken();
+    await store.set({ tiboSource: "x-api" });
+  }
+  if (args.includes("--forget-x")) {
+    forgetXBearerToken();
+    await store.set({ tiboSource: "codex-reset" });
+  }
+  const mode = argValue("--mode");
+  if (mode && !TIBO_SOURCES.includes(mode)) {
+    throw new Error(`--mode must be one of: ${TIBO_SOURCES.join(", ")}`);
+  }
+  if (mode) await store.set({ tiboSource: mode });
+  const preferences = await store.get();
+  const xApiCredentialConfigured = Boolean(await readXBearerToken());
+  console.log(
+    JSON.stringify(
+      {
+        ok: true,
+        source: preferences.tiboSource,
+        xApiCredentialConfigured,
+        zeroConfigurationSource: "codex-reset",
+        note:
+          preferences.tiboSource === "auto"
+            ? "The existing auto setting uses the zero-configuration codex-reset source."
+            : "The watcher picks up this setting without reinstalling or restarting.",
+      },
+      null,
+      2,
+    ),
+  );
+}
+
 async function listManagedTasks() {
   const store = new ManagedTaskStore(dataDir);
   const tasks = (await store.list()).map((task) => ({
@@ -314,7 +358,10 @@ async function listManagedTasks() {
 
 async function watch() {
   const client = new AppServerClient();
-  const tiboClient = new TiboResetClient();
+  const preferencesStore = new PulsePreferencesStore(dataDir);
+  const tiboClient = new TiboResetClient({
+    sourceProvider: async () => (await preferencesStore.get()).tiboSource,
+  });
   const lockManager = new WorktreeLockManager(dataDir);
   const managedTaskStore = new ManagedTaskStore(dataDir);
   const managedController = new ManagedTaskController({
@@ -361,21 +408,30 @@ async function watch() {
       if (reason !== "server-event" && now - lastTiboPollAt >= 60) {
         lastTiboPollAt = now;
         try {
-          const rawTibo = await tiboClient.readSnapshot();
-          const tiboSnapshot = normalizeTiboSnapshot(rawTibo, { now });
-          const evaluatedTibo = evaluateTiboSnapshot(state.tibo, tiboSnapshot, { now });
-          state = { ...state, tibo: evaluatedTibo.state };
-          tiboEvents.push(...evaluatedTibo.events);
-          log("Tibo signal checked", {
-            previewId: tiboSnapshot.preview?.id ?? null,
-            confirmedKey: tiboSnapshot.confirmed?.key ?? null,
-            latestPostId: tiboSnapshot.latestPost?.id ?? null,
-            latestPostKind: tiboSnapshot.latestPost?.kind ?? null,
-            latestPostLane: tiboSnapshot.latestPost?.lane ?? null,
-            sourceStatus: tiboSnapshot.sourceHealth?.status ?? "unknown",
-            eventTypes: evaluatedTibo.events.map((event) => event.type),
-            eventCount: evaluatedTibo.events.length,
+          const rawTibo = await tiboClient.readSnapshot({
+            sinceId: state.tibo?.lastSeenTweetId || null,
           });
+          if (!rawTibo) {
+            log("Tibo signal source disabled; quota monitoring continues");
+          } else {
+            const tiboSnapshot = normalizeTiboSnapshot(rawTibo, { now });
+            const evaluatedTibo = evaluateTiboSnapshot(state.tibo, tiboSnapshot, {
+              now,
+            });
+            state = { ...state, tibo: evaluatedTibo.state };
+            tiboEvents.push(...evaluatedTibo.events);
+            log("Tibo signal checked", {
+              previewId: tiboSnapshot.preview?.id ?? null,
+              confirmedKey: tiboSnapshot.confirmed?.key ?? null,
+              latestPostId: tiboSnapshot.latestPost?.id ?? null,
+              latestPostKind: tiboSnapshot.latestPost?.kind ?? null,
+              latestPostLane: tiboSnapshot.latestPost?.lane ?? null,
+              sourceStatus: tiboSnapshot.sourceHealth?.status ?? "unknown",
+              degradedComponents: tiboSnapshot.degradedComponents,
+              eventTypes: evaluatedTibo.events.map((event) => event.type),
+              eventCount: evaluatedTibo.events.length,
+            });
+          }
         } catch (error) {
           const failure = evaluateTiboFetchFailure(state.tibo, { now });
           state = { ...state, tibo: failure.state };
@@ -505,10 +561,11 @@ try {
   else if (command === "managed-list") await listManagedTasks();
   else if (command === "advice") await printTaskAdvice();
   else if (command === "policy") await managePolicy();
+  else if (command === "tibo-source") await manageTiboSource();
   else if (command === "watch") await watch();
   else {
     console.error(
-      "Usage: codex-pulse [status|doctor|watch [--once]|notify-test|advice [--size small|medium|large] [--priority low|normal|high] [--model MODEL]|policy [--mode finish_current|strict_reserve|deadline]|managed-run --objective TEXT [--cwd PATH] [--model MODEL] [--size SIZE] [--priority PRIORITY] [--quota-policy POLICY] [--start-floor N] [--resume-floor N]|managed-list]",
+      "Usage: codex-pulse [status|doctor|watch [--once]|notify-test|advice [--size small|medium|large] [--priority low|normal|high] [--model MODEL]|policy [--mode finish_current|strict_reserve|deadline]|tibo-source [--configure-x|--forget-x|--mode disabled|auto|x-api|codex-reset]|managed-run --objective TEXT [--cwd PATH] [--model MODEL] [--size SIZE] [--priority PRIORITY] [--quota-policy POLICY] [--start-floor N] [--resume-floor N]|managed-list]",
     );
     process.exitCode = 2;
   }

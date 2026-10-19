@@ -51,6 +51,7 @@ function alreadyInstalled(version) {
     marketplaceName,
     pluginName,
     version,
+    ".codex-plugin",
     "plugin.json",
   );
   if (!existsSync(cachedManifest) || !existsSync(configPath)) return false;
@@ -78,7 +79,10 @@ function copyMarketplace() {
 const codexPath = resolveCodexPath();
 copyMarketplace();
 const manifest = JSON.parse(
-  readFileSync(path.join(marketplaceRoot, "plugin", "plugin.json"), "utf8"),
+  readFileSync(
+    path.join(marketplaceRoot, "plugin", ".codex-plugin", "plugin.json"),
+    "utf8",
+  ),
 );
 const reusedExistingInstall = alreadyInstalled(manifest.version);
 
@@ -117,8 +121,8 @@ console.log(
       reusedExistingInstall,
       hookTrustRequired: true,
       nextSteps: [
-        "Restart Codex so it reloads the installed plugin.",
-        "Open /hooks, inspect the Codex Pulse commands, and trust them only if the paths stay inside the installed plugin.",
+        "Open a fresh Codex CLI, run /hooks, inspect the Codex Pulse commands, and trust them only if the paths stay inside the installed plugin.",
+        "After trust is complete, restart the Codex desktop app so it reloads the installed plugin.",
       ],
     },
     null,
