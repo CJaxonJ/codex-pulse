@@ -42,6 +42,14 @@ function installedPluginVersions(homeDir) {
     .sort();
 }
 
+function packageVersion(packagePath) {
+  try {
+    return JSON.parse(readFileSync(packagePath, "utf8")).version || null;
+  } catch {
+    return null;
+  }
+}
+
 function check(id, status, detail) {
   return { id, status, detail };
 }
@@ -56,11 +64,13 @@ export function redactDiagnosticText(value, homeDir) {
 export function inspectLocalInstallation({
   homeDir,
   uid,
+  expectedVersion = null,
   now = Date.now(),
   run = execFileSync,
 } = {}) {
   const dataDir = path.join(homeDir, "Library", "Application Support", "Codex Pulse");
   const runtimePath = path.join(dataDir, "app", "bin", "codex-pulse.mjs");
+  const runtimeVersion = packageVersion(path.join(dataDir, "app", "package.json"));
   const plistPath = path.join(
     homeDir,
     "Library",
@@ -86,12 +96,28 @@ export function inspectLocalInstallation({
   const logAgeSeconds = fileAgeSeconds(logPath, now);
   const pluginVersions = installedPluginVersions(homeDir);
   const pluginEnabled = enabledPlugin(configPath);
+  const newestPluginVersion = pluginVersions.at(-1) || null;
+  const runtimeStatus = !existsSync(runtimePath)
+    ? "fail"
+    : expectedVersion && runtimeVersion !== expectedVersion
+      ? "fail"
+      : "pass";
+  const pluginStatus =
+    !pluginEnabled || !newestPluginVersion
+      ? "warn"
+      : expectedVersion && newestPluginVersion !== expectedVersion
+        ? "fail"
+        : "pass";
 
   const checks = [
     check(
       "runtime",
-      existsSync(runtimePath) ? "pass" : "fail",
-      existsSync(runtimePath) ? "后台运行文件已安装" : "没有找到后台运行文件",
+      runtimeStatus,
+      !existsSync(runtimePath)
+        ? "没有找到后台运行文件"
+        : expectedVersion && runtimeVersion !== expectedVersion
+          ? `后台版本不一致（已安装 ${runtimeVersion || "未知"}，期望 ${expectedVersion}）`
+          : `后台运行文件已安装（${runtimeVersion || "版本未知"}）`,
     ),
     check(
       "launch-agent",
@@ -119,9 +145,11 @@ export function inspectLocalInstallation({
     ),
     check(
       "plugin",
-      pluginEnabled && pluginVersions.length > 0 ? "pass" : "warn",
+      pluginStatus,
       pluginEnabled
-        ? `Codex 插件已启用（${pluginVersions.at(-1) || "版本未知"}）`
+        ? expectedVersion && newestPluginVersion !== expectedVersion
+          ? `Codex 插件版本不一致（已安装 ${newestPluginVersion || "未知"}，期望 ${expectedVersion}）`
+          : `Codex 插件已启用（${newestPluginVersion || "版本未知"}）`
         : "Codex 插件尚未启用",
     ),
     check(
@@ -138,6 +166,8 @@ export function inspectLocalInstallation({
       stateAgeSeconds,
       logAgeSeconds,
       pluginVersions,
+      runtimeVersion,
+      expectedVersion,
     },
   };
 }

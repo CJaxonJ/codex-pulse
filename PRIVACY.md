@@ -10,9 +10,15 @@ Codex Pulse reads the signed-in Codex account's rate-limit summary through the C
 - alert deduplication state;
 - task status, model, size, priority, working-directory path, and thread/turn identifiers;
 - workspace fingerprints used to prevent unsafe automatic resume;
+- for an ordinary chat paused by strict-reserve mode, the final assistant
+  checkpoint text (limited to 8,000 characters), but not the original user prompt;
 - aggregate percentage consumption used for future estimates.
 
-Prompt text may be inspected in memory to estimate task size, but it is not written to Codex Pulse history.
+Prompt text may be inspected in memory to estimate task size, but the original
+prompt is not written to Codex Pulse history. Checkpoint summaries can repeat
+context the assistant included in its final response, so users should treat the
+local application-support folder as potentially containing project-sensitive
+text.
 
 ## Network requests
 

@@ -139,6 +139,14 @@ async function loadManagedTasks(dataDir) {
   }
 }
 
+function matchesManagedSession(tasks, input) {
+  return tasks.some(
+    (task) =>
+      task.threadId === input.session_id ||
+      (input.turn_id && task.turnId === input.turn_id),
+  );
+}
+
 async function runtimeModules(appRoot) {
   const advisorUrl = pathToFileURL(path.join(appRoot, "src", "usage-advisor.mjs")).href;
   const storeUrl = pathToFileURL(
@@ -147,16 +155,32 @@ async function runtimeModules(appRoot) {
   const preferencesUrl = pathToFileURL(
     path.join(appRoot, "src", "preferences-store.mjs"),
   ).href;
+  const continuityStoreUrl = pathToFileURL(
+    path.join(appRoot, "src", "chat-continuity-store.mjs"),
+  ).href;
+  const workspaceUrl = pathToFileURL(
+    path.join(appRoot, "src", "workspace-inspector.mjs"),
+  ).href;
   const [
     { adviseTaskStart },
     { UsageObservationStore },
     { PulsePreferencesStore },
+    { ChatContinuityStore },
+    { WorkspaceInspector },
   ] = await Promise.all([
     import(advisorUrl),
     import(storeUrl),
     import(preferencesUrl),
+    import(continuityStoreUrl),
+    import(workspaceUrl),
   ]);
-  return { adviseTaskStart, UsageObservationStore, PulsePreferencesStore };
+  return {
+    adviseTaskStart,
+    UsageObservationStore,
+    PulsePreferencesStore,
+    ChatContinuityStore,
+    WorkspaceInspector,
+  };
 }
 
 function observationId(input) {
@@ -208,21 +232,39 @@ export async function handleHook(input, options = {}) {
     process.env.CODEX_PULSE_APP_ROOT ||
     path.join(dataDir, "app");
   const state = await readJson(path.join(dataDir, "state.json"), {});
-  if (!isFresh(state, now) || !state.lastSummary) {
+  const cachedPreferences = await readJson(path.join(dataDir, "preferences.json"), {});
+  const staleStrictReserve =
+    !isFresh(state, now) &&
+    cachedPreferences?.quotaPolicy === "strict_reserve" &&
+    state.lastSummary?.fiveHour?.remainingPercent != null &&
+    state.lastSummary.fiveHour.remainingPercent <= 10;
+  if (!state.lastSummary || (!isFresh(state, now) && !staleStrictReserve)) {
     return input.hook_event_name === "Stop" ? {} : null;
   }
 
   const summary = state.lastSummary;
-  const { adviseTaskStart, UsageObservationStore, PulsePreferencesStore } =
-    await runtimeModules(appRoot);
+  const {
+    adviseTaskStart,
+    UsageObservationStore,
+    PulsePreferencesStore,
+    ChatContinuityStore,
+    WorkspaceInspector,
+  } = await runtimeModules(appRoot);
   const preferences = await new PulsePreferencesStore(dataDir).get();
   const mode = preferences.quotaPolicy;
   const observationStore = new UsageObservationStore(dataDir);
+  const continuityStore = new ChatContinuityStore(dataDir);
+  const workspace = new WorkspaceInspector();
   const id = observationId(input);
 
   if (input.hook_event_name === "UserPromptSubmit") {
     const currentRemaining = summary.fiveHour?.remainingPercent;
-    if (mode === "strict_reserve" && currentRemaining != null && currentRemaining <= 10) {
+    const managedTasks = await loadManagedTasks(dataDir);
+    if (
+      mode === "strict_reserve" &&
+      currentRemaining != null &&
+      currentRemaining <= 10
+    ) {
       return {
         decision: "block",
         reason: `Codex Pulse 严格保余额模式：当前 5 小时额度剩余 ${Math.round(currentRemaining)}%，已阻止新任务。额度恢复后重试，或运行 codex-pulse policy --mode finish_current 切换策略。`,
@@ -247,7 +289,7 @@ export async function handleHook(input, options = {}) {
     });
     const advice = adviseTaskStart({
       summary,
-      tasks: await loadManagedTasks(dataDir),
+      tasks: managedTasks,
       observations: await observationStore.list(),
       taskSize,
       priority,
@@ -273,18 +315,98 @@ export async function handleHook(input, options = {}) {
     };
   }
 
+  if (input.hook_event_name === "PreToolUse") {
+    const remaining = summary.fiveHour?.remainingPercent;
+    if (mode !== "strict_reserve" || remaining == null || remaining > 10) {
+      return null;
+    }
+    if (matchesManagedSession(await loadManagedTasks(dataDir), input)) return null;
+    if (input.session_id) {
+      const existingChat = await continuityStore.get(input.session_id);
+      const sameTurn =
+        existingChat &&
+        (!input.turn_id || !existingChat.turnId || input.turn_id === existingChat.turnId);
+      const baseChat = sameTurn ? existingChat : { sessionId: input.session_id };
+      if (
+        !sameTurn ||
+        !["paused_quota", "complete", "needs_attention"].includes(existingChat.status)
+      ) {
+        const cwd = path.resolve(input.cwd || baseChat.cwd || process.cwd());
+        await continuityStore.put({
+          ...baseChat,
+          status: "checkpoint_requested",
+          cwd,
+          turnId: input.turn_id || baseChat.turnId || null,
+          model: input.model || baseChat.model || null,
+          permissionMode: input.permission_mode || baseChat.permissionMode || "default",
+          quotaPolicy: mode,
+          autoResume: true,
+          resumeFloor: baseChat.resumeFloor ?? 50,
+          pausedWindowKey: summary.fiveHour?.resetsAt || null,
+          pausedRemaining: remaining,
+          checkpointRequestedAt: now,
+          checkpoint: {
+            ...(baseChat.checkpoint || {}),
+            quotaAtPause: remaining,
+            requestedAt: now,
+          },
+        });
+      }
+    }
+    return {
+      decision: "block",
+      reason:
+        "Codex Pulse strict-reserve hard floor reached. Do not call another tool. Summarize completed work, remaining steps, verification already run, and blockers in the final response, then stop.",
+      systemMessage: `Codex Pulse：严格保余额模式剩余 ${Math.round(remaining)}%，已阻止新的工具调用并要求保存检查点。`,
+    };
+  }
+
   if (input.hook_event_name === "PostToolUse") {
     const remaining = summary.fiveHour?.remainingPercent;
     if (remaining == null) return null;
+    if (matchesManagedSession(await loadManagedTasks(dataDir), input)) return null;
     const policy = thresholdPolicy(remaining, mode);
     if (!policy || !(await markThreshold(dataDir, input.turn_id, policy.band))) {
       return null;
     }
+    if (policy.stop && input.session_id) {
+      const existingChat = await continuityStore.get(input.session_id);
+      const sameTurn =
+        existingChat &&
+        (!input.turn_id || !existingChat.turnId || input.turn_id === existingChat.turnId);
+      const baseChat = sameTurn ? existingChat : { sessionId: input.session_id };
+      if (
+        !sameTurn ||
+        !["paused_quota", "complete", "needs_attention"].includes(existingChat.status)
+      ) {
+        const cwd = path.resolve(input.cwd || baseChat.cwd || process.cwd());
+        await continuityStore.put({
+          ...baseChat,
+          status: "checkpoint_requested",
+          cwd,
+          turnId: input.turn_id || baseChat.turnId || null,
+          model: input.model || baseChat.model || null,
+          permissionMode: input.permission_mode || baseChat.permissionMode || "default",
+          quotaPolicy: mode,
+          autoResume: true,
+          resumeFloor: baseChat.resumeFloor ?? 50,
+          pausedWindowKey: summary.fiveHour?.resetsAt || null,
+          pausedRemaining: remaining,
+          checkpointRequestedAt: now,
+          checkpoint: {
+            ...(baseChat.checkpoint || {}),
+            quotaAtPause: remaining,
+            requestedAt: now,
+          },
+        });
+      }
+    }
     return {
       ...(policy.stop
         ? {
-            continue: false,
-            stopReason: "Codex Pulse quota policy reached its hard floor.",
+            decision: "block",
+            reason:
+              "Codex Pulse strict-reserve hard floor reached. Do not call another tool. Summarize completed work, remaining steps, verification already run, and blockers in the final response, then stop.",
           }
         : {}),
       systemMessage: policy.systemMessage,
@@ -328,6 +450,72 @@ export async function handleHook(input, options = {}) {
             : null,
         durationSeconds: Math.max(0, now - existing.startedAt),
         outcome: input.hook_event_name === "Stop" ? "completed" : "interrupted",
+      });
+    }
+    const chat = input.session_id
+      ? await continuityStore.get(input.session_id)
+      : null;
+    const matchingChatTurn =
+      chat && (!input.turn_id || !chat.turnId || input.turn_id === chat.turnId);
+    if (
+      input.hook_event_name === "Stop" &&
+      matchingChatTurn &&
+      ["checkpoint_requested", "checkpointing"].includes(chat.status)
+    ) {
+      const cwd = path.resolve(input.cwd || chat.cwd || process.cwd());
+      await continuityStore.put({
+        ...chat,
+        status: "paused_quota",
+        cwd,
+        turnId: input.turn_id || chat.turnId,
+        pausedAt: now,
+        checkpoint: {
+          ...(chat.checkpoint || {}),
+          summary: String(
+            input.last_assistant_message ||
+              "The turn stopped at the strict quota reserve. Inspect the workspace before continuing.",
+          ).slice(0, 8_000),
+          workspaceFingerprint: await workspace.fingerprint(cwd),
+          completedAt: now,
+        },
+      });
+      return {
+        continue: false,
+        stopReason: "Codex Pulse saved a local quota checkpoint.",
+        systemMessage: "Codex Pulse：检查点已保存在本机，额度恢复后将尝试继续当前聊天。",
+      };
+    }
+    if (
+      input.hook_event_name === "Interrupt" &&
+      matchingChatTurn &&
+      chat.status === "checkpoint_requested"
+    ) {
+      const cwd = path.resolve(input.cwd || chat.cwd || process.cwd());
+      await continuityStore.put({
+        ...chat,
+        status: "paused_quota",
+        cwd,
+        turnId: input.turn_id || chat.turnId,
+        pausedAt: now,
+        checkpoint: {
+          ...(chat.checkpoint || {}),
+          summary:
+            "The turn was interrupted at the strict quota reserve. Inspect current workspace changes, then continue only the unfinished work.",
+          workspaceFingerprint: await workspace.fingerprint(cwd),
+          completedAt: now,
+        },
+      });
+      return {
+        systemMessage: "Codex Pulse：中断状态已保存，额度恢复后将进行安全检查。",
+      };
+    }
+    if (matchingChatTurn) {
+      await continuityStore.put({
+        ...chat,
+        status: input.hook_event_name === "Stop" ? "complete" : "interrupted",
+        autoResume: input.hook_event_name === "Stop" ? chat.autoResume : false,
+        completedAt: input.hook_event_name === "Stop" ? now : chat.completedAt,
+        interruptedAt: input.hook_event_name === "Interrupt" ? now : chat.interruptedAt,
       });
     }
     return input.hook_event_name === "Stop" ? {} : null;

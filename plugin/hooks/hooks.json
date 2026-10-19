@@ -28,9 +28,21 @@
         ]
       }
     ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/env node \"$PLUGIN_ROOT/scripts/pulse-hook.mjs\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
-        "matcher": "Bash|apply_patch|Agent",
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",

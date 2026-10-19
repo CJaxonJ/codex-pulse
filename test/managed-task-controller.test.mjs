@@ -448,3 +448,64 @@ test("a newer user turn prevents quota recovery from reviving stale work", async
   assert.equal(events[0].reason, "newer_thread_activity");
   assert.equal(client.calls.filter((call) => call.method === "thread/resume").length, 0);
 });
+
+test("a replacement watcher reconciles a completed task even while quota is unavailable", async () => {
+  const running = {
+    ...queuedTask(),
+    status: "running",
+    threadId: "thread-1",
+    turnId: "turn-1",
+    usageSegments: [
+      { startedAt: 10, startRemaining: 80, windowKey: 2_000_000_000 },
+    ],
+    worktreeLock: {
+      key: "project",
+      token: "old-token",
+      holderId: "old-watcher",
+      taskId: "task-1",
+      cwd: "/tmp/project",
+    },
+  };
+  const store = new MemoryTaskStore([running]);
+  const client = new FakeClient();
+  client.request = async function request(method, params) {
+    this.calls.push({ method, params });
+    if (method === "thread/turns/list") {
+      return { data: [{ id: "turn-1", status: "completed" }] };
+    }
+    return {};
+  };
+  const released = [];
+  const lockManager = {
+    holderId: "new-watcher",
+    async acquire(cwd, taskId) {
+      return {
+        acquired: true,
+        handle: {
+          key: "project",
+          token: "new-token",
+          holderId: "new-watcher",
+          taskId,
+          cwd,
+        },
+      };
+    },
+    async release(handle) {
+      released.push(handle.token);
+      return true;
+    },
+  };
+  const controller = new ManagedTaskController({
+    client,
+    store,
+    workspace: {},
+    lockManager,
+  });
+
+  const events = await controller.reconcile({}, { now: 100 });
+  const task = (await store.list())[0];
+  assert.equal(events[0].type, "managed_task_complete");
+  assert.equal(task.status, "complete");
+  assert.equal(task.worktreeLock, null);
+  assert.deepEqual(released, ["new-token"]);
+});
