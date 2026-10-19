@@ -26,11 +26,15 @@ function createInstalledFixture() {
       "cache",
       "codex-pulse-local",
       "codex-pulse",
-      "0.8.1",
+      "0.9.0",
     ),
   ];
   for (const directory of paths) mkdirSync(directory, { recursive: true });
   writeFileSync(path.join(dataDir, "app", "bin", "codex-pulse.mjs"), "");
+  writeFileSync(
+    path.join(dataDir, "app", "package.json"),
+    JSON.stringify({ version: "0.9.0" }),
+  );
   writeFileSync(
     path.join(homeDir, "Library", "LaunchAgents", "com.cjaxonj.codex-pulse.plist"),
     "",
@@ -50,14 +54,41 @@ test("doctor reports a healthy installed runtime without exposing account data",
   const result = inspectLocalInstallation({
     homeDir,
     uid: 501,
+    expectedVersion: "0.9.0",
     run: () => "service exists",
   });
 
   assert.equal(result.ok, true);
   assert.equal(result.checks.find((item) => item.id === "launch-agent").status, "pass");
   assert.equal(result.checks.find((item) => item.id === "plugin").status, "pass");
-  assert.deepEqual(result.support.pluginVersions, ["0.8.1"]);
+  assert.deepEqual(result.support.pluginVersions, ["0.9.0"]);
+  assert.equal(result.support.runtimeVersion, "0.9.0");
   assert.equal(JSON.stringify(result).includes(homeDir), false);
+});
+
+test("doctor fails when runtime or plugin versions are stale", () => {
+  const homeDir = createInstalledFixture();
+  writeFileSync(
+    path.join(
+      homeDir,
+      "Library",
+      "Application Support",
+      "Codex Pulse",
+      "app",
+      "package.json",
+    ),
+    JSON.stringify({ version: "0.8.1" }),
+  );
+  const result = inspectLocalInstallation({
+    homeDir,
+    uid: 501,
+    expectedVersion: "0.9.0",
+    run: () => "service exists",
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.checks.find((item) => item.id === "runtime").status, "fail");
+  assert.equal(result.checks.find((item) => item.id === "plugin").status, "pass");
 });
 
 test("doctor fails closed when the service and runtime are missing", () => {

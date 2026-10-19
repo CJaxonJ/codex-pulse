@@ -13,6 +13,40 @@ export function formatResetTime(timestamp) {
 }
 
 export function notificationForEvent(event) {
+  if (event.type === "chat_continuity_resumed") {
+    return {
+      title: "Codex 聊天已自动续跑",
+      body: "个人额度已经恢复，正在原聊天中根据本机检查点继续未完成工作。",
+    };
+  }
+  if (event.type === "chat_continuity_complete") {
+    return {
+      title: "Codex 聊天续跑已完成",
+      body: "恢复后的任务已正常结束，不会再次自动启动。",
+    };
+  }
+  if (event.type === "chat_continuity_attention") {
+    const reasons = {
+      workspace_changed: "暂停后工作区发生了变化",
+      cwd_missing: "原工作目录不可用",
+      approval_required: "任务需要你审批命令或文件修改",
+      permission_required: "任务需要你确认额外权限",
+      user_input_required: "任务正在等待你的选择或回答",
+      mcp_input_required: "连接的工具正在等待你的确认",
+      dynamic_tool_required: "任务需要宿主应用执行工具调用",
+      newer_thread_activity: "暂停后聊天出现了新的用户操作",
+      thread_history_unavailable: "暂时无法核对聊天历史",
+      workspace_unverifiable: "无法可靠校验暂停时的工作区状态",
+      resume_state_unknown: "后台重启后无法确认续跑任务是否仍在执行",
+      resume_failed: "恢复后的任务执行失败",
+      resume_interrupted: "恢复后的任务被中断",
+      resume_incomplete: "恢复请求未能完整启动",
+    };
+    return {
+      title: "Codex 聊天续跑需要确认",
+      body: `${reasons[event.reason] || "恢复条件不再安全"}，已停止自动续跑。`,
+    };
+  }
   if (event.type === "managed_task_started") {
     return {
       title: "Codex Pulse 已启动托管任务",

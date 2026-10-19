@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 
 import { AppServerClient } from "../src/app-server-client.mjs";
+import { ChatContinuityController } from "../src/chat-continuity-controller.mjs";
+import { ChatContinuityStore } from "../src/chat-continuity-store.mjs";
 import { ManagedTaskController } from "../src/managed-task-controller.mjs";
 import { ManagedTaskStore } from "../src/managed-task-store.mjs";
 import {
@@ -41,6 +43,9 @@ import {
 } from "../src/usage-advisor.mjs";
 
 const args = process.argv.slice(2);
+const packageManifest = JSON.parse(
+  await readFile(path.resolve(import.meta.dirname, "..", "package.json"), "utf8"),
+);
 const command = args[0] || "status";
 const once = args.includes("--once");
 const pollSeconds = Number(process.env.CODEX_PULSE_POLL_SECONDS || 60);
@@ -130,6 +135,7 @@ async function runDoctor() {
   const local = inspectLocalInstallation({
     homeDir: os.homedir(),
     uid: process.getuid?.() ?? 0,
+    expectedVersion: packageManifest.version,
   });
   checks.push(...local.checks);
   const ok = checks.every((item) => item.status !== "fail");
@@ -138,6 +144,8 @@ async function runDoctor() {
     JSON.stringify(
       {
         ok,
+        installationOk: ok,
+        hookTrust: "manual_verification_required",
         generatedAt: new Date().toISOString(),
         checks,
         privacy:
@@ -307,18 +315,34 @@ async function listManagedTasks() {
 async function watch() {
   const client = new AppServerClient();
   const tiboClient = new TiboResetClient();
+  const lockManager = new WorktreeLockManager(dataDir);
   const managedTaskStore = new ManagedTaskStore(dataDir);
   const managedController = new ManagedTaskController({
     client,
     store: managedTaskStore,
     workspace: new WorkspaceInspector(),
-    lockManager: new WorktreeLockManager(dataDir),
+    lockManager,
     onEvent: async (event) => {
       const notification = notificationForEvent(event);
       await sendMacNotification(notification);
       log("managed task notification sent", {
         type: event.type,
         taskId: event.taskId,
+        title: notification.title,
+      });
+    },
+  });
+  const continuityController = new ChatContinuityController({
+    client,
+    store: new ChatContinuityStore(dataDir),
+    workspace: new WorkspaceInspector(),
+    lockManager,
+    onEvent: async (event) => {
+      const notification = notificationForEvent(event);
+      await sendMacNotification(notification);
+      log("ordinary chat continuity notification sent", {
+        type: event.type,
+        sessionId: event.sessionId,
         title: notification.title,
       });
     },
@@ -386,6 +410,13 @@ async function watch() {
       } catch (error) {
         log("managed task reconciliation failed", { error: error.message });
       }
+      try {
+        await continuityController.reconcile(summary, { now });
+      } catch (error) {
+        log("ordinary chat continuity reconciliation failed", {
+          error: error.message,
+        });
+      }
       log("quota checked", {
         reason,
         planType: summary.planType,
@@ -426,10 +457,22 @@ async function watch() {
         error: error.message,
       });
     });
+    void continuityController.handleNotification(message).catch((error) => {
+      log("ordinary chat continuity event handling failed", {
+        method: message.method,
+        error: error.message,
+      });
+    });
   });
   client.on("serverRequest", (message) => {
     void managedController.handleServerRequest(message).catch((error) => {
       log("managed task user-action handling failed", {
+        method: message.method,
+        error: error.message,
+      });
+    });
+    void continuityController.handleServerRequest(message).catch((error) => {
+      log("ordinary chat continuity user-action handling failed", {
         method: message.method,
         error: error.message,
       });

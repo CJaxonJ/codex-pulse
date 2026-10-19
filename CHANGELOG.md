@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.9.0 — 2026-10-19
+
+- Added strict-reserve continuity for ordinary Codex chats: at the hard floor,
+  trusted hooks block additional tools, save the turn's final summary locally,
+  and resume the same chat only after personal quota recovery.
+- Added fail-closed workspace verification and exact turn matching before any
+  automatic resume or completion transition.
+- Added durable per-worktree locking for ordinary-chat continuity and recovery
+  after watcher restarts for both ordinary and managed tasks.
+- Kept stale low-quota observations protective in strict-reserve mode while
+  leaving stale healthy observations non-interfering.
+- Added a real App Server continuity release gate without using a synthetic
+  `turn/interrupt` to manufacture the pause.
+- Added installed runtime/plugin version checks to the redacted doctor report.
+
 ## 0.8.1 — 2026-10-16
 
 - Added an MIT license and contributor, support, conduct, and pull-request guidance.

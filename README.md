@@ -23,7 +23,7 @@ widens sandbox access, or consumes a reset credit.
 ## Download
 
 Download the current macOS beta from
-[GitHub Releases](https://github.com/CJaxonJ/codex-pulse/releases/tag/v0.8.1).
+[GitHub Releases](https://github.com/CJaxonJ/codex-pulse/releases/latest).
 Chinese setup instructions are in [`开始使用.md`](./开始使用.md).
 
 The release includes `SHA256SUMS.txt`. After downloading both files, verify the
@@ -88,7 +88,8 @@ Once trusted, normal Codex chats get automatic guidance:
 
 - before a prompt: start now, scope down, wait for reset, or consider a reset card;
 - at 15% remaining: stop expanding scope and finish the current bounded step;
-- at 10% remaining: finish the nearest useful result and leave a checkpoint;
+- in strict-reserve mode at 10%: block additional tool calls, let the model
+  summarize the turn, and save that final summary as a local checkpoint;
 - after a turn: learn the observed percentage cost for similar future work.
 
 The user-facing warning appears only when the recommendation changes. The model
@@ -111,6 +112,15 @@ node bin/codex-pulse.mjs policy --mode deadline
 Run `node bin/codex-pulse.mjs policy` to inspect the current mode. A managed task
 can override the default with `--quota-policy MODE`.
 
+In strict-reserve mode, an ordinary chat can resume automatically after the
+personal five-hour window materially recovers. Pulse resumes the same thread only
+when its latest turn still matches the saved checkpoint and the workspace
+fingerprint is unchanged. Missing fingerprints, newer user activity, approvals,
+questions, failed/interrupted turns, or an unknown App Server state stop the
+automation and require attention. Every active resume owns a durable lock for its
+canonical worktree, so a watcher restart cannot start a second turn in the same
+checkout.
+
 Create a redacted support report after installation:
 
 ```bash
@@ -121,9 +131,13 @@ The report verifies the signed-in plan shape, background service, recent state,
 notification helper, and local plugin. It excludes credentials, reset-credit IDs,
 prompt text, and absolute home paths.
 
-Prompt text is inspected in memory only to estimate task size and priority. It is
-never written to Codex Pulse history. The plugin never auto-approves permissions,
-expands sandbox access, interrupts an ordinary chat, or consumes a reset card.
+Prompt text is inspected in memory only to estimate task size and priority; the
+original prompt is never written to Codex Pulse history. For strict-reserve
+continuity, Pulse does store the final assistant checkpoint (up to 8,000
+characters), thread/turn identifiers, local working-directory path, and a
+workspace fingerprint under the user's local application-support directory. The
+plugin never auto-approves permissions, expands sandbox access, calls App Server
+`turn/interrupt` on an ordinary chat, or consumes a reset card.
 
 ## Developer commands
 
@@ -202,8 +216,8 @@ for optional checks or reminders unless a project-scoped task has been manually
 verified with the required sandbox.
 
 The macOS packaging command enforces the full test suite, a live
-`codex-reset.com` schema/freshness check, and the real managed-task smoke test
-before it creates an artifact. The managed-task E2E launches
+`codex-reset.com` schema/freshness check, a real managed-task smoke test, and an
+ordinary-chat continuity test before it creates an artifact. The managed-task E2E launches
 the actual Codex App Server, queues work in a disposable directory, waits for a
 real turn to write and verify a proof file, checks task completion, and confirms
 that the worktree lock was released:
@@ -217,6 +231,14 @@ use `workspaceWrite`, while the desktop-bundled App Server used by this release
 accepts `workspace-write`. The runtime test, not a copied mock expectation, is
 the final compatibility gate. It consumes a small amount of the signed-in Codex
 allowance, never uses a reset credit, and suppresses desktop notifications.
+
+The ordinary-chat E2E also uses the real App Server. It feeds the trusted-hook
+block result back into a running turn, verifies that the turn leaves a local
+checkpoint before crossing an intentional barrier, restores a synthetic recovered
+quota snapshot, resumes the same thread once, checks a proof file, and confirms
+that no worktree lock remains. Hook dispatch and one-time trust are host-owned, so
+the release gate invokes the same hook handler directly and labels that boundary
+instead of claiming to automate trust.
 
 List managed tasks:
 

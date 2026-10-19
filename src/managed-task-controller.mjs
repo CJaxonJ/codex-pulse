@@ -170,11 +170,29 @@ export class ManagedTaskController {
     this.lastSummary = summary;
     const quota = effectiveRemaining(summary);
     const events = [];
-    if (quota == null) return events;
+    let tasks = await this.store.list();
+    let activeTasks = tasks.filter((task) => ACTIVE_STATUSES.has(task.status));
+    const hadActiveTasks = activeTasks.length > 0;
 
-    const tasks = await this.store.list();
-    const activeTasks = tasks.filter((task) => ACTIVE_STATUSES.has(task.status));
+    for (const originalTask of activeTasks.filter(
+      (task) => task.worktreeLock && !this.#lockBelongsToCurrentWatcher(task),
+    )) {
+      const claim = await this.#claimLock(originalTask);
+      if (!claim.acquired) continue;
+      const event = await this.#recoverAfterWatcherRestart(claim.task, summary, now);
+      if (event) {
+        events.push(event);
+        await this.onEvent(event);
+      }
+    }
+
+    if (quota == null) return events;
+    tasks = await this.store.list();
+    activeTasks = tasks.filter((task) => ACTIVE_STATUSES.has(task.status));
     for (const originalTask of activeTasks) {
+      if (originalTask.worktreeLock && !this.#lockBelongsToCurrentWatcher(originalTask)) {
+        continue;
+      }
       const claim = await this.#claimLock(originalTask);
       if (!claim.acquired) continue;
       const task = claim.task;
@@ -194,7 +212,7 @@ export class ManagedTaskController {
     }
     // Never fill a newly released slot in the same reconciliation cycle. This
     // gives App Server completion/interrupt notifications time to settle.
-    if (activeTasks.length) return events;
+    if (hadActiveTasks || activeTasks.length) return events;
 
     const candidates = tasks
       .filter((task) => task.status === "queued" || task.status === "paused_quota")
@@ -239,6 +257,152 @@ export class ManagedTaskController {
       }
     }
     return events;
+  }
+
+  #lockBelongsToCurrentWatcher(task) {
+    return Boolean(
+      this.lockManager?.holderId &&
+        task.worktreeLock?.holderId === this.lockManager.holderId,
+    );
+  }
+
+  async #recoverAfterWatcherRestart(task, summary, now) {
+    if (!task.threadId || !task.turnId) {
+      const blocked = await this.store.put({
+        ...task,
+        status: "needs_attention",
+        blocker: "runtime_state_unknown",
+      });
+      await this.#releaseLock(blocked);
+      return {
+        type: "managed_task_attention",
+        taskId: task.id,
+        reason: "runtime_state_unknown",
+      };
+    }
+
+    let latestTurn;
+    try {
+      const history = await this.client.request("thread/turns/list", {
+        threadId: task.threadId,
+        limit: 1,
+        sortDirection: "desc",
+        itemsView: "notLoaded",
+      });
+      latestTurn = history.data?.[0] || null;
+    } catch {
+      await this.store.put({
+        ...task,
+        status: "needs_attention",
+        blocker: "thread_history_unavailable",
+        holdWorktreeLock: true,
+      });
+      return {
+        type: "managed_task_attention",
+        taskId: task.id,
+        reason: "thread_history_unavailable",
+      };
+    }
+
+    if (task.status === "resuming" && latestTurn?.id === task.turnId) {
+      const paused = await this.store.put({
+        ...task,
+        status: "paused_quota",
+        holdWorktreeLock: false,
+        lastResumeError: "Watcher restarted before the resumed turn was created.",
+      });
+      await this.#releaseLock(paused);
+      return null;
+    }
+
+    const terminal = ["completed", "failed", "interrupted"].includes(
+      latestTurn?.status,
+    );
+    if (!latestTurn || latestTurn.id !== task.turnId) {
+      const blocked = await this.store.put({
+        ...task,
+        status: "needs_attention",
+        blocker: "runtime_state_unknown",
+        latestTurnId: latestTurn?.id || null,
+        holdWorktreeLock: !terminal,
+      });
+      if (terminal) await this.#releaseLock(blocked);
+      return {
+        type: "managed_task_attention",
+        taskId: task.id,
+        reason: "runtime_state_unknown",
+      };
+    }
+
+    if (latestTurn.status === "completed") {
+      if (["draining", "pausing"].includes(task.status)) {
+        const workspaceFingerprint = await this.workspace.fingerprint(task.cwd);
+        const paused = await this.store.put({
+          ...task,
+          status: "paused_quota",
+          holdWorktreeLock: false,
+          checkpoint: checkpointFor(
+            task,
+            remaining(summary),
+            workspaceFingerprint,
+            now,
+            "watcher_restart_after_drain",
+          ),
+          pausedWindowKey: summary.fiveHour?.resetsAt || null,
+          pausedRemaining: remaining(summary),
+          pausedAt: now,
+          usageSegments: closeUsageSegment(
+            task,
+            summary,
+            now,
+            "watcher_restart_after_drain",
+          ),
+        });
+        await this.#releaseLock(paused);
+        return { type: "managed_task_paused", taskId: task.id };
+      }
+      const completed = await this.store.put({
+        ...task,
+        status: "complete",
+        holdWorktreeLock: false,
+        completedAt: now,
+        usageSegments: closeUsageSegment(
+          task,
+          summary,
+          now,
+          "watcher_restart_completed",
+        ),
+      });
+      await this.#releaseLock(completed);
+      return { type: "managed_task_complete", taskId: task.id };
+    }
+
+    if (["failed", "interrupted"].includes(latestTurn.status)) {
+      const blocked = await this.store.put({
+        ...task,
+        status: "needs_attention",
+        blocker: `turn_${latestTurn.status}`,
+        holdWorktreeLock: false,
+      });
+      await this.#releaseLock(blocked);
+      return {
+        type: "managed_task_attention",
+        taskId: task.id,
+        reason: `turn_${latestTurn.status}`,
+      };
+    }
+
+    await this.store.put({
+      ...task,
+      status: "needs_attention",
+      blocker: "runtime_state_unknown",
+      holdWorktreeLock: true,
+    });
+    return {
+      type: "managed_task_attention",
+      taskId: task.id,
+      reason: "runtime_state_unknown",
+    };
   }
 
   async #start(task, summary, now) {
@@ -389,7 +553,22 @@ export class ManagedTaskController {
     task = claim.task;
     const currentFingerprint = await this.workspace.fingerprint(task.cwd);
     if (
-      task.checkpoint?.workspaceFingerprint &&
+      task.checkpoint?.workspaceFingerprint == null ||
+      currentFingerprint == null
+    ) {
+      const blocked = await this.store.put({
+        ...task,
+        status: "needs_attention",
+        blocker: "workspace_unverifiable",
+      });
+      await this.#releaseLock(blocked);
+      return {
+        type: "managed_task_attention",
+        taskId: task.id,
+        reason: "workspace_unverifiable",
+      };
+    }
+    if (
       currentFingerprint !== task.checkpoint.workspaceFingerprint
     ) {
       const blocked = await this.store.put({
@@ -490,9 +669,7 @@ export class ManagedTaskController {
     const tasks = await this.store.list();
     const turnId = params.turnId || params.turn?.id || params.item?.turnId;
     const task = tasks.find(
-      (candidate) =>
-        candidate.turnId === turnId ||
-        (params.threadId && candidate.threadId === params.threadId),
+      (candidate) => candidate.turnId === turnId,
     );
     if (!task) return;
 
@@ -550,8 +727,7 @@ export class ManagedTaskController {
     const params = message.params || {};
     const tasks = await this.store.list();
     const task = tasks.find(
-      (candidate) =>
-        candidate.threadId === params.threadId || candidate.turnId === params.turnId,
+      (candidate) => candidate.turnId === params.turnId,
     );
     if (!task || !ACTIVE_STATUSES.has(task.status)) return;
 

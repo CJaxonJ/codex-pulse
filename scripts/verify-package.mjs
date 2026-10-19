@@ -28,6 +28,8 @@ const required = [
   `${bundleName}/package.json`,
   `${bundleName}/Install Codex Pulse.command`,
   `${bundleName}/bin/codex-pulse.mjs`,
+  `${bundleName}/src/chat-continuity-controller.mjs`,
+  `${bundleName}/src/chat-continuity-store.mjs`,
   `${bundleName}/scripts/install-macos.mjs`,
   `${bundleName}/scripts/uninstall-macos.mjs`,
 ];

@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { handleHook } from "../plugin/scripts/pulse-hook.mjs";
+import { ChatContinuityStore } from "../src/chat-continuity-store.mjs";
 
 const NOW = 2_000_000_000;
 const APP_ROOT = path.resolve(import.meta.dirname, "..");
@@ -128,6 +129,7 @@ test("healthy quota records a turn but does not add model context", async () => 
     { dataDir, appRoot: APP_ROOT, now: NOW },
   );
   assert.equal(output, null);
+  assert.equal(await new ChatContinuityStore(dataDir).get("session-2"), null);
 });
 
 test("Stop closes the local observation with real percentage consumption", async () => {
@@ -216,8 +218,84 @@ test("strict-reserve mode blocks new turns and stops at the hard floor", async (
 
   assert.equal(blocked.decision, "block");
   assert.match(blocked.reason, /严格保余额/);
-  assert.equal(stopped.continue, false);
-  assert.match(stopped.stopReason, /hard floor/);
+  assert.equal(stopped.decision, "block");
+  assert.match(stopped.reason, /hard floor/);
+});
+
+test("ordinary chat blocks further tools and saves one local checkpoint without storing the prompt", async () => {
+  const dataDir = await createDataDir(80);
+  await writeFile(
+    path.join(dataDir, "preferences.json"),
+    JSON.stringify({ quotaPolicy: "strict_reserve" }),
+  );
+  const store = new ChatContinuityStore(dataDir);
+  const base = {
+    session_id: "ordinary-thread",
+    model: "gpt-6.1-sol",
+    cwd: process.cwd(),
+    permission_mode: "default",
+  };
+  const originalPrompt = "实现内部机密功能 ALPHA-PRIVATE-DO-NOT-STORE";
+  await handleHook(
+    {
+      ...base,
+      hook_event_name: "UserPromptSubmit",
+      turn_id: "turn-work",
+      prompt: originalPrompt,
+    },
+    { dataDir, appRoot: APP_ROOT, now: NOW },
+  );
+
+  const statePath = path.join(dataDir, "state.json");
+  const state = JSON.parse(await readFile(statePath, "utf8"));
+  state.fiveHour.lastCheckedAt = NOW + 60;
+  state.lastSummary.fiveHour.remainingPercent = 9;
+  state.lastSummary.fiveHour.usedPercent = 91;
+  await writeFile(statePath, JSON.stringify(state));
+
+  const stopped = await handleHook(
+    {
+      ...base,
+      hook_event_name: "PostToolUse",
+      turn_id: "turn-work",
+      tool_name: "Bash",
+    },
+    { dataDir, appRoot: APP_ROOT, now: NOW + 60 },
+  );
+  assert.equal(stopped.decision, "block");
+  assert.match(stopped.reason, /Do not call another tool/);
+  assert.equal((await store.get(base.session_id)).status, "checkpoint_requested");
+
+  const deniedTool = await handleHook(
+    {
+      ...base,
+      hook_event_name: "PreToolUse",
+      turn_id: "turn-work",
+      tool_name: "apply_patch",
+    },
+    { dataDir, appRoot: APP_ROOT, now: NOW + 61 },
+  );
+  assert.equal(deniedTool.decision, "block");
+  assert.match(deniedTool.reason, /Do not call another tool/);
+
+  const checkpointSummary =
+    "Completed: phase one. Remaining: phase two. Verification: unit tests pass. Blockers: none.";
+  const saved = await handleHook(
+    {
+      ...base,
+      hook_event_name: "Stop",
+      turn_id: "turn-work",
+      stop_hook_active: false,
+      last_assistant_message: checkpointSummary,
+    },
+    { dataDir, appRoot: APP_ROOT, now: NOW + 62 },
+  );
+  const record = await store.get(base.session_id);
+  assert.equal(saved.continue, false);
+  assert.equal(record.status, "paused_quota");
+  assert.equal(record.turnId, "turn-work");
+  assert.equal(record.checkpoint.summary, checkpointSummary);
+  assert.equal(JSON.stringify(record).includes(originalPrompt), false);
 });
 
 test("deadline mode stays quiet at fifteen percent and drains at five", async () => {
@@ -268,4 +346,52 @@ test("stale monitor data never changes a Codex turn", async () => {
     { dataDir, appRoot: APP_ROOT, now: NOW + 181 },
   );
   assert.equal(output, null);
+});
+
+test("stale low-quota data remains protective in strict-reserve mode", async () => {
+  const dataDir = await createDataDir(9);
+  await writeFile(
+    path.join(dataDir, "preferences.json"),
+    JSON.stringify({ quotaPolicy: "strict_reserve" }),
+  );
+  const output = await handleHook(
+    {
+      hook_event_name: "PreToolUse",
+      session_id: "stale-strict-session",
+      turn_id: "stale-strict-turn",
+      model: "gpt-6.1-sol",
+      tool_name: "Bash",
+    },
+    { dataDir, appRoot: APP_ROOT, now: NOW + 181 },
+  );
+
+  assert.equal(output.decision, "block");
+  assert.match(output.reason, /hard floor/);
+});
+
+test("a late Stop from an older turn cannot complete a newer tracked turn", async () => {
+  const dataDir = await createDataDir(80);
+  const store = new ChatContinuityStore(dataDir);
+  await store.put({
+    sessionId: "turn-race-session",
+    status: "running",
+    cwd: process.cwd(),
+    turnId: "new-turn",
+    autoResume: true,
+  });
+
+  await handleHook(
+    {
+      hook_event_name: "Stop",
+      session_id: "turn-race-session",
+      turn_id: "old-turn",
+      cwd: process.cwd(),
+      last_assistant_message: "old turn finished late",
+    },
+    { dataDir, appRoot: APP_ROOT, now: NOW },
+  );
+
+  const record = await store.get("turn-race-session");
+  assert.equal(record.status, "running");
+  assert.equal(record.turnId, "new-turn");
 });
