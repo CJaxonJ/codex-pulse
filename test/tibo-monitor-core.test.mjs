@@ -28,6 +28,12 @@ test("first Tibo snapshot establishes a baseline without historical alerts", () 
   assert.ok(result.state.lastConfirmedKey);
 });
 
+test("a source-less snapshot never masquerades as the legacy service", () => {
+  const now = Date.parse("2026-10-15T07:00:00Z") / 1000;
+  const snapshot = normalizeTiboSnapshot(raw(), { now });
+  assert.equal(snapshot.source, "unknown");
+});
+
 test("new reset signal produces one preview and not a duplicate", () => {
   const firstNow = Date.parse("2026-10-15T07:00:00Z") / 1000;
   const baseline = evaluateTiboSnapshot(
@@ -120,6 +126,38 @@ test("a new limits post creates one informational event and is then deduplicated
   assert.deepEqual(duplicate.events, []);
 });
 
+test("incremental empty reads preserve dedupe history across a later backfill", () => {
+  const now = Date.parse("2026-10-15T07:00:00Z") / 1000;
+  const baseline = evaluateTiboSnapshot(
+    null,
+    normalizeTiboSnapshot(raw(), { now }),
+    { now },
+  );
+  const update = {
+    id: "limits-backfill",
+    text: "More compute is now available.",
+    created_at: "2026-10-15T07:01:00Z",
+    kind: "limits",
+  };
+  const first = evaluateTiboSnapshot(
+    baseline.state,
+    normalizeTiboSnapshot(raw({ tweets: [update] }), { now: now + 60 }),
+    { now: now + 60 },
+  );
+  assert.equal(first.events[0].type, "tibo_limits_update");
+  const empty = evaluateTiboSnapshot(
+    first.state,
+    normalizeTiboSnapshot(raw({ tweets: [] }), { now: now + 120 }),
+    { now: now + 120 },
+  );
+  const backfill = evaluateTiboSnapshot(
+    empty.state,
+    normalizeTiboSnapshot(raw({ tweets: [update] }), { now: now + 180 }),
+    { now: now + 180 },
+  );
+  assert.deepEqual(backfill.events, []);
+});
+
 test("banked and explicit-reset posts are strong previews, not limits updates", () => {
   const now = Date.parse("2026-10-15T07:00:00Z") / 1000;
   const snapshot = normalizeTiboSnapshot(
@@ -140,29 +178,56 @@ test("banked and explicit-reset posts are strong previews, not limits updates", 
   assert.equal(snapshot.operationalUpdates.length, 0);
 });
 
-test("three fetch failures emit one source-health alert and recovery emits one event", () => {
+test("a confirmed feed post survives a missing forecast endpoint", () => {
+  const now = Date.parse("2026-10-15T07:00:00Z") / 1000;
+  const snapshot = normalizeTiboSnapshot(
+    {
+      source: "codex-reset",
+      forecast: {},
+      degradedComponents: ["forecast"],
+      feed: {
+        fetched_at: "2026-10-15T07:00:00Z",
+        tweets: [
+          {
+            id: "confirmed-from-feed",
+            text: "Done and dusted",
+            created_at: "2026-10-15T06:59:00Z",
+            kind: "reset",
+            reset_verification_status: "confirmed",
+          },
+        ],
+      },
+    },
+    { now },
+  );
+  assert.equal(snapshot.confirmed.key, "confirmed-from-feed");
+  assert.deepEqual(snapshot.degradedComponents, ["forecast"]);
+});
+
+test("short outages stay quiet; a sustained outage emits one source-health alert", () => {
   const now = Date.parse("2026-10-15T07:00:00Z") / 1000;
   const baseline = evaluateTiboSnapshot(
     null,
     normalizeTiboSnapshot(raw(), { now }),
     { now },
   );
-  const first = evaluateTiboFetchFailure(baseline.state, { now: now + 60 });
-  const second = evaluateTiboFetchFailure(first.state, { now: now + 120 });
-  const third = evaluateTiboFetchFailure(second.state, { now: now + 180 });
-  assert.deepEqual(first.events, []);
-  assert.deepEqual(second.events, []);
-  assert.equal(third.events[0].type, "tibo_source_unhealthy");
-  const fourth = evaluateTiboFetchFailure(third.state, { now: now + 240 });
-  assert.deepEqual(fourth.events, []);
+  let failed = baseline;
+  for (let attempt = 1; attempt <= 14; attempt += 1) {
+    failed = evaluateTiboFetchFailure(failed.state, { now: now + attempt * 60 });
+    assert.deepEqual(failed.events, []);
+  }
+  const sustained = evaluateTiboFetchFailure(failed.state, { now: now + 15 * 60 });
+  assert.equal(sustained.events[0].type, "tibo_source_unhealthy");
+  const repeated = evaluateTiboFetchFailure(sustained.state, { now: now + 16 * 60 });
+  assert.deepEqual(repeated.events, []);
 
   const healthyRaw = raw();
   healthyRaw.feed.fetched_at = new Date((now + 300) * 1000).toISOString();
   healthyRaw.feed.stale = false;
   const recovered = evaluateTiboSnapshot(
-    fourth.state,
-    normalizeTiboSnapshot(healthyRaw, { now: now + 300 }),
-    { now: now + 300 },
+    repeated.state,
+    normalizeTiboSnapshot(healthyRaw, { now: now + 17 * 60 }),
+    { now: now + 17 * 60 },
   );
   assert.equal(recovered.events[0].type, "tibo_source_recovered");
   assert.equal(recovered.state.consecutiveSourceFailures, 0);

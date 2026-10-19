@@ -6,8 +6,11 @@ import test from "node:test";
 const ROOT = path.resolve(import.meta.dirname, "..");
 
 test("plugin manifest and marketplace point at packaged hook files", async () => {
-  const manifest = JSON.parse(
-    await readFile(path.join(ROOT, "plugin", "plugin.json"), "utf8"),
+  const codexManifest = JSON.parse(
+    await readFile(
+      path.join(ROOT, "plugin", ".codex-plugin", "plugin.json"),
+      "utf8",
+    ),
   );
   const marketplace = JSON.parse(
     await readFile(path.join(ROOT, ".agents", "plugins", "marketplace.json"), "utf8"),
@@ -15,16 +18,17 @@ test("plugin manifest and marketplace point at packaged hook files", async () =>
   const packageManifest = JSON.parse(
     await readFile(path.join(ROOT, "package.json"), "utf8"),
   );
-  const hooksPath = manifest.extensions["com.openai"].hooks.replace(/^\.\//, "");
   const hooks = JSON.parse(
-    await readFile(path.join(ROOT, "plugin", hooksPath), "utf8"),
+    await readFile(path.join(ROOT, "plugin", "hooks", "hooks.json"), "utf8"),
   );
 
   assert.equal(
-    manifest.version,
+    codexManifest.version,
     packageManifest.version,
-    "plugin and release versions must stay in sync so upgrades are not skipped",
+    "Codex compatibility manifest must match the release version",
   );
+  assert.deepEqual(codexManifest.hooks, hooks);
+  assert.equal(codexManifest.skills, "./skills/");
   assert.equal(marketplace.name, "codex-pulse-local");
   assert.equal(marketplace.plugins[0].source.path, "./plugin");
   assert.ok(hooks.hooks.UserPromptSubmit);

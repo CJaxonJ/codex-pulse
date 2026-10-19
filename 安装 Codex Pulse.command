@@ -19,6 +19,6 @@ fi
 node scripts/install-macos.mjs
 
 echo ""
-echo "安装完成。请完全退出并重新打开 Codex，然后输入 /hooks 检查并信任 Codex Pulse。"
+echo "安装流程已结束。若你刚才选择了‘稍后’，请重新运行安装程序完成 Hook 信任。"
 echo ""
 read -r "?按回车键关闭窗口。"

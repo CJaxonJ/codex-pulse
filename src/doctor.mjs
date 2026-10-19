@@ -155,7 +155,7 @@ export function inspectLocalInstallation({
     check(
       "hook-trust",
       "manual",
-      "请在重启 Codex 后打开 /hooks，人工检查并信任 Codex Pulse hooks",
+      "请在重启 Codex 后打开终端运行 codex，再在 Codex CLI 中输入 /hooks，人工检查并信任 Codex Pulse hooks",
     ),
   ];
 

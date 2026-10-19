@@ -1,0 +1,111 @@
+{
+  "name": "codex-pulse",
+  "version": "0.9.1",
+  "description": "Quota-aware guidance for ordinary Codex chats, backed by the user's local Codex Pulse monitor.",
+  "author": {
+    "name": "CJaxonJ",
+    "url": "https://github.com/CJaxonJ"
+  },
+  "homepage": "https://github.com/CJaxonJ/codex-pulse",
+  "repository": "https://github.com/CJaxonJ/codex-pulse",
+  "license": "MIT",
+  "keywords": ["codex", "quota", "usage", "productivity"],
+  "skills": "./skills/",
+  "hooks": {
+    "description": "Local quota guidance from Codex Pulse. Prompts are inspected in memory only and are never saved.",
+    "hooks": {
+      "SessionStart": [
+        {
+          "matcher": "startup|resume|compact",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "/usr/bin/env node \"$PLUGIN_ROOT/scripts/pulse-hook.mjs\"",
+              "timeout": 3,
+              "statusMessage": "Checking Codex quota",
+              "additionalContextLimit": 800
+            }
+          ]
+        }
+      ],
+      "UserPromptSubmit": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "/usr/bin/env node \"$PLUGIN_ROOT/scripts/pulse-hook.mjs\"",
+              "timeout": 3,
+              "statusMessage": "Planning quota headroom",
+              "additionalContextLimit": 800
+            }
+          ]
+        }
+      ],
+      "PreToolUse": [
+        {
+          "matcher": "*",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "/usr/bin/env node \"$PLUGIN_ROOT/scripts/pulse-hook.mjs\"",
+              "timeout": 3
+            }
+          ]
+        }
+      ],
+      "PostToolUse": [
+        {
+          "matcher": "*",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "/usr/bin/env node \"$PLUGIN_ROOT/scripts/pulse-hook.mjs\"",
+              "timeout": 3,
+              "additionalContextLimit": 800
+            }
+          ]
+        }
+      ],
+      "Stop": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "/usr/bin/env node \"$PLUGIN_ROOT/scripts/pulse-hook.mjs\"",
+              "timeout": 3
+            }
+          ]
+        }
+      ],
+      "Interrupt": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "/usr/bin/env node \"$PLUGIN_ROOT/scripts/pulse-hook.mjs\"",
+              "timeout": 3
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "interface": {
+    "displayName": "Codex Pulse",
+    "shortDescription": "Use Codex quota on the work that matters.",
+    "longDescription": "Adds local, quota-aware guidance and selectable finish-current, strict-reserve, or deadline policies to ordinary Codex chats. It never uploads prompts, auto-approves permissions, or redeems reset credits.",
+    "developerName": "CJaxonJ",
+    "category": "Developer Tools",
+    "capabilities": ["Read"],
+    "brandColor": "#10A37F",
+    "defaultPrompt": [
+      "Show my current Codex Pulse recommendation.",
+      "Help me decide whether to start a large Codex task now."
+    ]
+  },
+  "extensions": {
+    "com.openai": {
+      "onboardingSkill": "./skills/setup/SKILL.md"
+    }
+  }
+}

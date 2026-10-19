@@ -30,6 +30,9 @@ const required = [
   `${bundleName}/bin/codex-pulse.mjs`,
   `${bundleName}/src/chat-continuity-controller.mjs`,
   `${bundleName}/src/chat-continuity-store.mjs`,
+  `${bundleName}/src/tibo-classifier.mjs`,
+  `${bundleName}/src/tibo-credentials.mjs`,
+  `${bundleName}/src/tibo-x-api-client.mjs`,
   `${bundleName}/scripts/install-macos.mjs`,
   `${bundleName}/scripts/uninstall-macos.mjs`,
 ];

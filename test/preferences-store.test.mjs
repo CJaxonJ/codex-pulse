@@ -10,7 +10,10 @@ test("quota policy defaults to finish-current and persists an explicit choice", 
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "codex-pulse-preferences-"));
   const store = new PulsePreferencesStore(dataDir);
   assert.equal((await store.get()).quotaPolicy, "finish_current");
+  assert.equal((await store.get()).tiboSource, "codex-reset");
   assert.equal((await store.set({ quotaPolicy: "deadline" })).quotaPolicy, "deadline");
   assert.equal((await store.get()).quotaPolicy, "deadline");
   await assert.rejects(store.set({ quotaPolicy: "invented" }), /must be one of/);
+  assert.equal((await store.set({ tiboSource: "x-api" })).tiboSource, "x-api");
+  await assert.rejects(store.set({ tiboSource: "invented" }), /must be one of/);
 });

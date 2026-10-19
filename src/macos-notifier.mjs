@@ -103,34 +103,36 @@ export function notificationForEvent(event) {
   }
   if (event.type === "tibo_preview") {
     const quote = event.text ? `“${event.text.slice(0, 70)}”` : "出现了新的重置信号";
+    const source = event.source === "x-api" ? "X 官方 API" : "公共数据源";
     return {
       title: "Tibo 发出 Codex 重置信号",
-      body: `${quote}。这是预告，不代表你的账户已到账；我会继续监控。数据：codex-reset.com`,
+      body: `${quote}。这是预告，不代表你的账户已到账；我会继续监控。数据：${source}`,
     };
   }
   if (event.type === "tibo_limits_update") {
     const quote = event.text ? `“${event.text.slice(0, 95)}”` : "Codex 使用体验有新变化";
+    const source = event.source === "x-api" ? "X 官方 API" : "公共数据源";
     return {
       title: "Tibo 更新 Codex 容量或额度信息",
-      body: `${quote}。这是使用体验更新，不代表额度重置。数据：codex-reset.com`,
+      body: `${quote}。这是使用体验更新，不代表额度重置。数据：${source}`,
     };
   }
   if (event.type === "tibo_source_unhealthy") {
     return {
       title: "Codex Pulse 暂时收不到 Tibo 数据",
-      body: "codex-reset.com 连续失败或数据已过期；个人额度监控仍继续，恢复后会通知。",
+      body: "Tibo 公共数据源已持续不可用；个人额度监控仍继续，恢复后会通知。",
     };
   }
   if (event.type === "tibo_source_recovered") {
     return {
       title: "Tibo 数据源已恢复",
-      body: "Codex Pulse 已重新收到 codex-reset.com 的最新数据。",
+      body: "Codex Pulse 已重新收到 Tibo 的最新公共动态。",
     };
   }
   if (event.type === "tibo_confirmed") {
     return {
       title: "Codex 公共重置已确认",
-      body: "公共侧已观察到重置，但你的账户可能稍后到账；我会继续盯个人额度。数据：codex-reset.com",
+      body: "公共侧已观察到重置，但你的账户可能稍后到账；我会继续盯个人额度。",
     };
   }
   if (event.type === "personal_landed") {

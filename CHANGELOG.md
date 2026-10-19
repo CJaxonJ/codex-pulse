@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+## 0.9.1 — 2026-10-19
+
+- Kept `codex-reset.com` as the zero-configuration default and added an optional
+  direct X API source for maintainers who want an independent fallback.
+- Added local, explainable reset classification with parent-post context for terse
+  replies such as “Done and dusted.”
+- Store the optional X bearer token in macOS Keychain and keep it out of state,
+  logs, command-line arguments, and diagnostics.
+- Isolated the aggregator behind a replaceable adapter and delayed source-health
+  notifications until a sustained outage.
+- Replaced the external release check with a deterministic local X API contract
+  and classifier end-to-end test, while retaining a separate live check for the
+  default zero-configuration source.
+
+- Added the supported `.codex-plugin/plugin.json` compatibility manifest so the
+  current Codex CLI discovers bundled lifecycle hooks.
+- Clarified that `/hooks` must be run in Codex CLI, not in the desktop chat
+  composer.
+- Made the interactive installer open Codex CLI for the user and show the exact
+  one-time `/hooks` trust steps instead of asking users to find the CLI themselves.
+
 ## 0.9.0 — 2026-10-19
 
 - Added strict-reserve continuity for ordinary Codex chats: at the hard floor,
