@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.9.7 — 2026-10-20
+
+- Fixed automatic chat recovery when Git fingerprinting is unavailable inside
+  the Hook sandbox by using a bounded filesystem fingerprint and verifying the
+  same strategy before resume.
+- Made quota-recovery, automatic-resume, and resume-attention alerts remain on
+  screen until the user dismisses them or opens the Codex Pulse status panel.
+- Added regression coverage for the fallback fingerprint and persistent recovery
+  alerts.
+
 ## 0.9.6 — 2026-10-20
 
 - Made strict-reserve the default for new installs so the advertised 10% safety
