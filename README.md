@@ -37,6 +37,9 @@ shasum -a 256 -c SHA256SUMS.txt
 
 - Personal account: reads the signed-in user's real five-hour and weekly windows through Codex App Server.
 - Personal warnings: 20%, 10%, and 5%, plus a fast-consumption forecast.
+- Persistent status: double-click `Codex Pulse.app` in `~/Applications` to see
+  the latest local quota snapshot, active protection policy, and most recent
+  critical event even after a notification banner disappears.
 - Weekly pacing: estimates whether Plus or Pro usage is ahead of schedule and
   turns the remaining allowance into a practical average daily percentage.
 - Tibo signal: reads the zero-configuration `codex-reset.com` feed by default;
@@ -131,10 +134,10 @@ prompts do not create repeated banners.
 Choose how Pulse behaves near exhaustion:
 
 ```bash
-# Default: let the current bounded result finish; pause at 5% or after 10 minutes of draining.
+# Let the current bounded result finish; pause at 5% or after 10 minutes of draining.
 node bin/codex-pulse.mjs policy --mode finish_current
 
-# Preserve a hard reserve: block new turns and pause active managed work at 10%.
+# Default: preserve a hard reserve, block new turns, and pause active work at 10%.
 node bin/codex-pulse.mjs policy --mode strict_reserve
 
 # Prioritize a deadline result: defer draining until 5%, with a 1% hard floor.
@@ -143,6 +146,11 @@ node bin/codex-pulse.mjs policy --mode deadline
 
 Run `node bin/codex-pulse.mjs policy` to inspect the current mode. A managed task
 can override the default with `--quota-policy MODE`.
+
+Every user-visible quota, reset, pause, resume, and attention event is also kept
+in a small local rolling journal. Run `node bin/codex-pulse.mjs activity` for a
+redacted text view, or double-click `~/Applications/Codex Pulse.app`; prompt text
+and authentication material are never written to this journal.
 
 In strict-reserve mode, an ordinary chat can resume automatically after the
 personal five-hour window materially recovers. Pulse resumes the same thread only
@@ -247,30 +255,29 @@ configured unattended sandbox, which may be read-only. They are suitable only
 for optional checks or reminders unless a project-scoped task has been manually
 verified with the required sandbox.
 
-The macOS packaging command enforces the full test suite, a deterministic local
-X API contract/classifier test, a live read from the zero-configuration Tibo
-source, a real managed-task smoke test, and an ordinary-chat continuity test
-before it creates an artifact. The managed-task E2E launches
-the actual Codex App Server, queues work in a disposable directory, waits for a
-real turn to write and verify a proof file, checks task completion, and confirms
-that the worktree lock was released:
+The default macOS packaging command is quota-free. It enforces the full test
+suite, a deterministic local X API contract/classifier test, and an offline
+full-chain simulation of the 10% pause, structured checkpoint, recovered-quota
+detection, exactly-once resume, and lock cleanup. The simulation uses the
+production Hook handler, stores, workspace fingerprinting, controller, and
+durable worktree lock; only the Codex App Server is replaced with a deterministic
+fake:
 
 ```bash
 npm run package:macos
 ```
 
-This test also catches protocol-version drift: current public protocol examples
-use `workspaceWrite`, while the desktop-bundled App Server used by this release
-accepts `workspace-write`. The runtime test, not a copied mock expectation, is
-the final compatibility gate. It consumes a small amount of the signed-in Codex
-allowance, never uses a reset credit, and suppresses desktop notifications.
+Live compatibility tests are opt-in because they use external services and the
+real Codex App Server. They never consume a reset credit, but the App Server
+tests do use ordinary signed-in Codex allowance:
 
-The ordinary-chat E2E also uses the real App Server. It feeds the trusted-hook
-block result back into a running turn, verifies that the turn leaves a local
-checkpoint before crossing an intentional barrier, restores a synthetic recovered
-quota snapshot, resumes the same thread once, checks a proof file, and confirms
-that no worktree lock remains. Hook dispatch and one-time trust are host-owned, so
-the release gate invokes the same hook handler directly and labels that boundary
+```bash
+CODEX_PULSE_RUN_LIVE_E2E=1 npm run package:macos
+```
+
+The live gate checks the Tibo source and protocol drift, then runs managed-task
+and ordinary-chat smoke tests in disposable workspaces. Hook dispatch and
+one-time trust are host-owned, so the tests invoke the same Hook handler directly
 instead of claiming to automate trust.
 
 List managed tasks:
@@ -289,6 +296,13 @@ To reinstall only the local plugin after an update:
 
 ```bash
 npm run plugin:install
+```
+
+If an update changes only the background monitor or status app, update it without
+touching the plugin or repeating Hook review:
+
+```bash
+npm run runtime:update
 ```
 
 The installer also builds a small native `Codex Pulse.app` under `~/Applications` so macOS can grant notification permission to a named application. The first notification may display a system permission prompt.

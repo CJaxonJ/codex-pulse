@@ -34,6 +34,7 @@ const required = [
   `${bundleName}/src/tibo-credentials.mjs`,
   `${bundleName}/src/tibo-x-api-client.mjs`,
   `${bundleName}/scripts/install-macos.mjs`,
+  `${bundleName}/scripts/update-runtime-macos.mjs`,
   `${bundleName}/scripts/uninstall-macos.mjs`,
 ];
 

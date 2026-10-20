@@ -6,10 +6,10 @@ import test from "node:test";
 
 import { PulsePreferencesStore } from "../src/preferences-store.mjs";
 
-test("quota policy defaults to finish-current and persists an explicit choice", async () => {
+test("quota policy defaults to strict reserve and persists an explicit choice", async () => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "codex-pulse-preferences-"));
   const store = new PulsePreferencesStore(dataDir);
-  assert.equal((await store.get()).quotaPolicy, "finish_current");
+  assert.equal((await store.get()).quotaPolicy, "strict_reserve");
   assert.equal((await store.get()).tiboSource, "codex-reset");
   assert.equal((await store.set({ quotaPolicy: "deadline" })).quotaPolicy, "deadline");
   assert.equal((await store.get()).quotaPolicy, "deadline");

@@ -4,8 +4,10 @@ import { execFileSync } from "node:child_process";
 import {
   copyFileSync,
   cpSync,
+  readFileSync,
   mkdirSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -20,10 +22,27 @@ const buildMacOS = path.join(buildContents, "MacOS");
 const buildExecutable = path.join(buildMacOS, "CodexPulseNotifier");
 const installDir = path.join(os.homedir(), "Applications");
 const installedApp = path.join(installDir, "Codex Pulse.app");
+const packageVersion = JSON.parse(
+  readFileSync(path.join(projectDir, "package.json"), "utf8"),
+).version;
 
 rmSync(buildDir, { recursive: true, force: true });
 mkdirSync(buildMacOS, { recursive: true });
 copyFileSync(plistSource, path.join(buildContents, "Info.plist"));
+const builtPlist = path.join(buildContents, "Info.plist");
+writeFileSync(
+  builtPlist,
+  readFileSync(builtPlist, "utf8")
+    .replace(
+      /<key>CFBundleShortVersionString<\/key>\s*<string>[^<]+<\/string>/,
+      `<key>CFBundleShortVersionString</key>\n  <string>${packageVersion}</string>`,
+    )
+    .replace(
+      /<key>CFBundleVersion<\/key>\s*<string>[^<]+<\/string>/,
+      `<key>CFBundleVersion</key>\n  <string>${packageVersion.replaceAll(".", "")}</string>`,
+    ),
+  "utf8",
+);
 execFileSync("/usr/bin/xcrun", [
   "clang",
   sourcePath,

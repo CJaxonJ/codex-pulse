@@ -15,6 +15,16 @@ function turnStatus(turn) {
   return turn?.status || null;
 }
 
+function recoveryReady(record, summary, quota) {
+  if (quota == null) return false;
+  const newWindow = record.pausedWindowKey !== summary.fiveHour?.resetsAt;
+  const materiallyRecovered = quota >= (record.pausedRemaining ?? 0) + 30;
+  return (
+    (newWindow || materiallyRecovered) &&
+    quota >= (record.resumeFloor ?? 50)
+  );
+}
+
 function recoveryPrompt(record) {
   const checkpoint = record.checkpoint || {};
   const summary = String(checkpoint.summary || "No textual checkpoint was captured.").slice(
@@ -68,6 +78,24 @@ export class ChatContinuityController {
 
     for (const record of records.filter(
       (candidate) =>
+        quota != null &&
+        candidate.status === "paused_quota" &&
+        !candidate.pauseNotifiedAt &&
+        !recoveryReady(candidate, summary, quota),
+    )) {
+      await this.store.put({ ...record, pauseNotifiedAt: now });
+      const event = {
+        type: "chat_continuity_paused",
+        sessionId: record.sessionId,
+      };
+      events.push(event);
+      await this.onEvent(event);
+    }
+
+    records = await this.store.list();
+
+    for (const record of records.filter(
+      (candidate) =>
         ["complete", "needs_attention"].includes(candidate.status) &&
         candidate.worktreeLock &&
         candidate.holdWorktreeLock !== true,
@@ -101,9 +129,7 @@ export class ChatContinuityController {
       .sort((a, b) => (a.pausedAt || 0) - (b.pausedAt || 0));
 
     for (const record of candidates) {
-      const newWindow = record.pausedWindowKey !== summary.fiveHour?.resetsAt;
-      const materiallyRecovered = quota >= (record.pausedRemaining ?? 0) + 30;
-      if (!(newWindow || materiallyRecovered) || quota < (record.resumeFloor ?? 50)) {
+      if (!recoveryReady(record, summary, quota)) {
         continue;
       }
       const event = await this.#resume(record, summary, now);
@@ -238,7 +264,11 @@ export class ChatContinuityController {
     const claim = await this.#claimLock(original);
     if (!claim.acquired) return null;
     const record = claim.record;
-    const fingerprint = await this.workspace.fingerprint(record.cwd);
+    const fingerprint = await this.workspace.fingerprint(record.cwd, {
+      strategy: String(record.checkpoint?.workspaceFingerprint || "").startsWith("fs:")
+        ? "filesystem"
+        : undefined,
+    });
     if (
       record.checkpoint?.workspaceFingerprint == null ||
       fingerprint == null

@@ -49,6 +49,7 @@ test("reset notifications explain ambiguity and later public correlation", () =>
   assert.match(first.title, /24% → 100%/);
   assert.match(first.body, /普通 5 小时恢复还是公共重置/);
   assert.equal(first.interruptionLevel, "time-sensitive");
+  assert.equal(first.persistent, true);
 
   const confirmed = notificationForEvent({
     type: "public_reset_landed",
@@ -58,4 +59,33 @@ test("reset notifications explain ambiguity and later public correlation", () =>
   assert.match(confirmed.title, /刚才是 Codex 公共重置/);
   assert.match(confirmed.body, /无需使用重置卡/);
   assert.equal(confirmed.interruptionLevel, "time-sensitive");
+  assert.equal(confirmed.persistent, true);
+});
+
+test("recovery and resume outcomes stay visible until the user dismisses them", () => {
+  assert.equal(notificationForEvent({ type: "personal_landed", remainingPercent: 80 }).persistent, true);
+  assert.equal(notificationForEvent({ type: "chat_continuity_resumed" }).persistent, true);
+  assert.equal(
+    notificationForEvent({ type: "chat_continuity_attention", reason: "workspace_unverifiable" }).persistent,
+    true,
+  );
+});
+
+test("strict reserve makes the ten-percent action explicit and persistent", () => {
+  const threshold = notificationForEvent({
+    type: "threshold",
+    threshold: 10,
+    remainingPercent: 9,
+    resetsAt: 2_000_000_000,
+    quotaPolicy: "strict_reserve",
+  });
+  assert.match(threshold.title, /10% 保护线/);
+  assert.match(threshold.body, /拦截后续工具调用/);
+  assert.match(threshold.body, /保存检查点/);
+  assert.equal(threshold.interruptionLevel, "time-sensitive");
+
+  const paused = notificationForEvent({ type: "chat_continuity_paused" });
+  assert.match(paused.title, /安全暂停/);
+  assert.match(paused.body, /个人额度恢复后只会续跑一次/);
+  assert.equal(paused.interruptionLevel, "time-sensitive");
 });

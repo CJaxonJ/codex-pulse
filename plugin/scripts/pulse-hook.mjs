@@ -64,7 +64,7 @@ function quotaPolicy(verdict, mode) {
     return "Codex Pulse deadline policy: the user chose to prioritize the current bounded deadline result. Keep moving toward that result, avoid optional exploration, and never redeem a reset credit without explicit confirmation.";
   }
   if (mode === "strict_reserve") {
-    return "Codex Pulse strict-reserve policy: preserve the user's remaining quota. Do not expand scope, start optional work, or continue past the configured hard floor.";
+    return "Codex Pulse strict-reserve policy: preserve the user's remaining quota. Keep the result bounded; do not expand scope, start optional work, or continue past the configured hard floor.";
   }
   if (verdict === "wait_for_reset") {
     return "Codex Pulse quota policy: the user submitted the prompt despite a nearby reset. Continue with one bounded, useful result only. Do not broaden scope, spawn optional subagents, perform unrelated refactors, or add nonessential verification. End with a concise checkpoint for deferred work.";
@@ -82,7 +82,7 @@ function thresholdPolicy(remaining, mode) {
       stop: true,
       systemMessage: `Codex Pulse：严格保余额模式已在 ${Math.round(remaining)}% 停止本轮。`,
       context:
-        "Codex Pulse strict-reserve stop: preserve existing edits and stop opening or continuing work. Resume only after quota recovery or after the user changes the policy.",
+        "Codex Pulse strict-reserve stop: preserve existing edits and stop opening or continuing work. In the final response write a compact handoff with these labels: Completed, Verification, Remaining, Next action, Blockers. Do not claim the task is complete. Resume only after quota recovery or after the user changes the policy.",
     };
   }
   if (mode === "deadline") {
@@ -356,7 +356,7 @@ export async function handleHook(input, options = {}) {
     return {
       decision: "block",
       reason:
-        "Codex Pulse strict-reserve hard floor reached. Do not call another tool. Summarize completed work, remaining steps, verification already run, and blockers in the final response, then stop.",
+        "Codex Pulse strict-reserve hard floor reached. Do not call another tool. In the final response write a compact handoff with exactly these sections: Completed, Verification, Remaining, Next action, Blockers. Do not claim the task is complete. Then stop.",
       systemMessage: `Codex Pulse：严格保余额模式剩余 ${Math.round(remaining)}%，已阻止新的工具调用并要求保存检查点。`,
     };
   }
@@ -406,7 +406,7 @@ export async function handleHook(input, options = {}) {
         ? {
             decision: "block",
             reason:
-              "Codex Pulse strict-reserve hard floor reached. Do not call another tool. Summarize completed work, remaining steps, verification already run, and blockers in the final response, then stop.",
+              "Codex Pulse strict-reserve hard floor reached. Do not call another tool. In the final response write a compact handoff with exactly these sections: Completed, Verification, Remaining, Next action, Blockers. Do not claim the task is complete. Then stop.",
           }
         : {}),
       systemMessage: policy.systemMessage,

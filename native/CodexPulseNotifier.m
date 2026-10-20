@@ -6,6 +6,8 @@
 @property(nonatomic, copy) NSString *notificationBody;
 @property(nonatomic, assign) BOOL setupMode;
 @property(nonatomic, assign) BOOL timeSensitive;
+@property(nonatomic, assign) BOOL statusMode;
+@property(nonatomic, assign) BOOL persistentMode;
 @end
 
 @implementation CodexPulseDelegate
@@ -54,7 +56,110 @@
     });
 }
 
+- (void)showPersistentAlert {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.messageText = self.notificationTitle;
+        alert.informativeText = self.notificationBody;
+        [alert addButtonWithTitle:@"知道了"];
+        [alert addButtonWithTitle:@"查看状态"];
+        [NSApp activateIgnoringOtherApps:YES];
+        if ([alert runModal] == NSAlertSecondButtonReturn) {
+            [self showStatusPanel];
+        } else {
+            [NSApp terminate:nil];
+        }
+    });
+}
+
+- (void)finishDelivery {
+    if (self.persistentMode) {
+        [self showPersistentAlert];
+    } else {
+        [self finishAfterDelay];
+    }
+}
+
+- (NSDictionary *)readJSON:(NSString *)name {
+    NSURL *home = [NSURL fileURLWithPath:NSHomeDirectory()];
+    NSURL *directory = [[[home URLByAppendingPathComponent:@"Library"]
+        URLByAppendingPathComponent:@"Application Support"]
+        URLByAppendingPathComponent:@"Codex Pulse"];
+    NSURL *file = [directory URLByAppendingPathComponent:name];
+    NSData *data = [NSData dataWithContentsOfURL:file];
+    if (!data) return @{};
+    id parsed = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    return [parsed isKindOfClass:[NSDictionary class]] ? parsed : @{};
+}
+
+- (NSString *)formatUnixTime:(NSNumber *)timestamp {
+    if (![timestamp isKindOfClass:[NSNumber class]]) return @"未知";
+    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+    formatter.locale = [NSLocale localeWithLocaleIdentifier:@"zh_CN"];
+    formatter.dateFormat = @"M月d日 HH:mm";
+    return [formatter stringFromDate:[NSDate dateWithTimeIntervalSince1970:timestamp.doubleValue]];
+}
+
+- (void)showStatusPanel {
+    NSDictionary *state = [self readJSON:@"state.json"];
+    NSDictionary *summary = [state[@"lastSummary"] isKindOfClass:[NSDictionary class]]
+        ? state[@"lastSummary"] : @{};
+    NSDictionary *fiveHour = [summary[@"fiveHour"] isKindOfClass:[NSDictionary class]]
+        ? summary[@"fiveHour"] : @{};
+    NSDictionary *preferences = [self readJSON:@"preferences.json"];
+    NSDictionary *journal = [self readJSON:@"user-events.json"];
+    NSArray *events = [journal[@"events"] isKindOfClass:[NSArray class]]
+        ? journal[@"events"] : @[];
+    NSDictionary *latest = [events.lastObject isKindOfClass:[NSDictionary class]]
+        ? events.lastObject : @{};
+
+    NSNumber *remaining = fiveHour[@"remainingPercent"];
+    NSString *remainingText = [remaining isKindOfClass:[NSNumber class]]
+        ? [NSString stringWithFormat:@"%.0f%%", remaining.doubleValue]
+        : @"暂未读到";
+    NSString *resetText = [self formatUnixTime:fiveHour[@"resetsAt"]];
+    NSString *policy = [preferences[@"quotaPolicy"] isKindOfClass:[NSString class]]
+        ? preferences[@"quotaPolicy"] : @"strict_reserve";
+    NSDictionary *policyNames = @{
+        @"strict_reserve": @"10% 自动暂停并保存检查点",
+        @"finish_current": @"优先完成当前结果",
+        @"deadline": @"截止日期模式"
+    };
+    NSString *policyText = policyNames[policy] ?: policy;
+
+    NSString *eventText = @"还没有关键事件";
+    if (latest.count > 0) {
+        NSString *title = [latest[@"title"] isKindOfClass:[NSString class]]
+            ? latest[@"title"] : @"Codex Pulse";
+        NSString *body = [latest[@"body"] isKindOfClass:[NSString class]]
+            ? latest[@"body"] : @"";
+        if (body.length > 240) body = [[body substringToIndex:240] stringByAppendingString:@"…"];
+        NSString *delivery = [latest[@"deliveryStatus"] isEqual:@"failed"]
+            ? @"（系统通知发送失败，但事件已记录）" : @"";
+        eventText = [NSString stringWithFormat:@"%@%@\n%@\n%@",
+            title, delivery, body, [self formatUnixTime:latest[@"occurredAt"]]];
+    }
+
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.messageText = @"Codex Pulse 状态";
+    alert.informativeText = [NSString stringWithFormat:
+        @"5 小时额度：%@\n预计恢复：%@\n保护策略：%@\n\n最近事件\n%@",
+        remainingText, resetText, policyText, eventText];
+    [alert addButtonWithTitle:@"关闭"];
+    [alert addButtonWithTitle:@"通知设置"];
+    [NSApp activateIgnoringOtherApps:YES];
+    if ([alert runModal] == NSAlertSecondButtonReturn) {
+        NSURL *url = [NSURL URLWithString:@"x-apple.systempreferences:com.apple.Notifications-Settings.extension"];
+        [[NSWorkspace sharedWorkspace] openURL:url];
+    }
+    [NSApp terminate:nil];
+}
+
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
+    if (self.statusMode) {
+        [self showStatusPanel];
+        return;
+    }
     if (self.setupMode) {
         NSAlert *intro = [[NSAlert alloc] init];
         intro.messageText = @"开启 Codex Pulse 额度提醒";
@@ -79,7 +184,7 @@
             if (self.setupMode) {
                 [self showPermissionHelp:@"请在“系统设置 → 通知 → Codex Pulse”中打开“允许通知”。"];
             } else {
-                [self finishAfterDelay];
+                [self finishDelivery];
             }
             return;
         }
@@ -88,7 +193,7 @@
             if (self.setupMode) {
                 [self showPermissionHelp:@"监控仍会运行，但不会弹出预警。可以稍后在系统通知设置中重新开启 Codex Pulse。"];
             } else {
-                [self finishAfterDelay];
+                [self finishDelivery];
             }
             return;
         }
@@ -112,9 +217,16 @@
             } else {
                 [self writeLog:[NSString stringWithFormat:@"notification delivered: %@", self.notificationTitle]];
             }
-            [self finishAfterDelay];
+            [self finishDelivery];
         }];
     }];
+}
+
+- (void)userNotificationCenter:(UNUserNotificationCenter *)center
+        didReceiveNotificationResponse:(UNNotificationResponse *)response
+                 withCompletionHandler:(void (^)(void))completionHandler {
+    [self showStatusPanel];
+    completionHandler();
 }
 
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center
@@ -135,6 +247,8 @@ int main(int argc, const char * argv[]) {
         CodexPulseDelegate *delegate = [[CodexPulseDelegate alloc] init];
         delegate.setupMode = [arguments containsObject:@"--setup"];
         delegate.timeSensitive = [arguments containsObject:@"--time-sensitive"];
+        delegate.persistentMode = [arguments containsObject:@"--persistent"];
+        delegate.statusMode = arguments.count == 1 || [arguments containsObject:@"--status"];
         delegate.notificationTitle = title;
         delegate.notificationBody = body;
         app.delegate = delegate;

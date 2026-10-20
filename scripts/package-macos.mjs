@@ -38,6 +38,7 @@ for (const entry of [
   "install-macos.mjs",
   "install-plugin.mjs",
   "setup-notifications-macos.mjs",
+  "update-runtime-macos.mjs",
   "uninstall-macos.mjs",
 ]) {
   cpSync(
