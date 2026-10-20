@@ -59,7 +59,11 @@ test("detects a five-hour reset", () => {
   const second = evaluateFiveHourSample(first.state, summary(100, 2_000_018_000), {
     now: 1_060,
   });
-  assert.ok(second.events.some((event) => event.type === "reset"));
+  const reset = second.events.find((event) => event.type === "reset");
+  assert.ok(reset);
+  assert.equal(reset.previousRemainingPercent, 8);
+  assert.equal(reset.remainingPercent, 100);
+  assert.equal(second.state.lastDetectedReset.detectedAt, 1_060);
 });
 
 test("warns for a reset credit at 24h, 6h, and 1h without duplicates", () => {

@@ -26,6 +26,7 @@ import {
 } from "../src/tibo-credentials.mjs";
 import {
   attachPersonalLanding,
+  correlateRecentPersonalReset,
   evaluateTiboFetchFailure,
   evaluateTiboSnapshot,
   normalizeTiboSnapshot,
@@ -456,11 +457,17 @@ async function watch() {
       const evaluated = evaluateFiveHourSample(state.fiveHour, summary, { now });
       const creditEvaluation = evaluateResetCredits(state.resetCredits, summary, { now });
       const landing = attachPersonalLanding(evaluated.events, state.tibo, { now });
+      const correlatedTibo = correlateRecentPersonalReset(
+        tiboEvents,
+        landing.tiboState,
+        evaluated.state,
+        { now },
+      );
       state = {
         ...state,
         fiveHour: evaluated.state,
         resetCredits: creditEvaluation.state,
-        tibo: landing.tiboState,
+        tibo: correlatedTibo.tiboState,
         lastSummary: summary,
       };
       await saveState(state);
@@ -484,7 +491,7 @@ async function watch() {
         eventCount: landing.events.length + creditEvaluation.events.length,
       });
       for (const event of [
-        ...tiboEvents,
+        ...correlatedTibo.events,
         ...creditEvaluation.events,
         ...landing.events,
       ]) {

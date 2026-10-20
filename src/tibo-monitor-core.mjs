@@ -1,6 +1,7 @@
 const HOUR = 60 * 60;
 const PREVIEW_MAX_AGE_SECONDS = 24 * HOUR;
 const PERSONAL_LANDING_MAX_AGE_SECONDS = 12 * HOUR;
+const LATE_CONFIRMATION_MAX_AGE_SECONDS = 15 * 60;
 const SOURCE_STALE_SECONDS = 30 * 60;
 const SOURCE_FAILURE_THRESHOLD = 15;
 const STRONG_SIGNAL_KINDS = new Set(["signal", "reset", "banked"]);
@@ -316,5 +317,35 @@ export function attachPersonalLanding(quotaEvents, tiboState, options = {}) {
   return {
     events,
     tiboState: landed ? { ...tiboState, pendingPublicReset: null } : tiboState,
+  };
+}
+
+export function correlateRecentPersonalReset(tiboEvents, tiboState, fiveHourState, options = {}) {
+  const now = options.now ?? Math.floor(Date.now() / 1000);
+  const recentReset = fiveHourState?.lastDetectedReset;
+  const hasConfirmation = tiboEvents.some((event) => event.type === "tibo_confirmed");
+  const canCorrelate =
+    hasConfirmation &&
+    tiboState?.pendingPublicReset &&
+    recentReset?.detectedAt != null &&
+    now - recentReset.detectedAt >= 0 &&
+    now - recentReset.detectedAt <= LATE_CONFIRMATION_MAX_AGE_SECONDS;
+  if (!canCorrelate) return { events: tiboEvents, tiboState };
+
+  let correlated = false;
+  const events = tiboEvents.map((event) => {
+    if (correlated || event.type !== "tibo_confirmed") return event;
+    correlated = true;
+    return {
+      ...event,
+      type: "public_reset_landed",
+      personalDetectedAt: recentReset.detectedAt,
+      previousRemainingPercent: recentReset.previousRemainingPercent,
+      remainingPercent: recentReset.remainingPercent,
+    };
+  });
+  return {
+    events,
+    tiboState: correlated ? { ...tiboState, pendingPublicReset: null } : tiboState,
   };
 }

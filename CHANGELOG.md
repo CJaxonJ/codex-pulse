@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.9.5 — 2026-10-20
+
+- Made public-reset notifications explicit: an unexplained quota jump now shows
+  the before/after percentages and stays marked as unconfirmed until a public
+  signal arrives.
+- Correlate a public confirmation that arrives shortly after the user's quota
+  recovered, then clear the pending signal so a later normal five-hour reset
+  cannot be mislabeled as the public reset.
+- Send reset previews, confirmations, and personal landing notices as macOS
+  time-sensitive notifications. Notification approval remains under user
+  control.
+
 ## 0.9.4 — 2026-10-20
 
 - Updated `doctor` to recognize a hook execution observed after the current
