@@ -87,6 +87,7 @@ export class ChatContinuityController {
       const event = {
         type: "chat_continuity_paused",
         sessionId: record.sessionId,
+        resumePrepared: Boolean(record.checkpoint?.workspaceFingerprint),
       };
       events.push(event);
       await this.onEvent(event);
@@ -273,16 +274,19 @@ export class ChatContinuityController {
       record.checkpoint?.workspaceFingerprint == null ||
       fingerprint == null
     ) {
+      const reason = record.checkpoint?.workspaceFingerprint == null
+        ? "checkpoint_missing_fingerprint"
+        : "workspace_unverifiable";
       const blocked = await this.store.put({
         ...record,
         status: "needs_attention",
-        blocker: "workspace_unverifiable",
+        blocker: reason,
       });
       await this.#releaseLock(blocked);
       return {
         type: "chat_continuity_attention",
         sessionId: record.sessionId,
-        reason: "workspace_unverifiable",
+        reason,
       };
     }
     if (

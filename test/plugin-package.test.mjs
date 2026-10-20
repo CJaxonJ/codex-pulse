@@ -22,10 +22,11 @@ test("plugin manifest and marketplace point at packaged hook files", async () =>
     await readFile(path.join(ROOT, "plugin", "hooks", "hooks.json"), "utf8"),
   );
 
-  assert.equal(
-    codexManifest.version,
-    packageManifest.version,
-    "Codex compatibility manifest must match the release version",
+  assert.ok(
+    packageManifest.codexPulse?.compatiblePluginVersions?.includes(
+      codexManifest.version,
+    ),
+    "The bundled Hook plugin must be declared compatible with this runtime release",
   );
   assert.deepEqual(codexManifest.hooks, hooks);
   assert.equal(codexManifest.skills, "./skills/");

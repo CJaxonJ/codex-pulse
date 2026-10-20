@@ -40,6 +40,9 @@ shasum -a 256 -c SHA256SUMS.txt
 - Persistent status: double-click `Codex Pulse.app` in `~/Applications` to see
   the latest local quota snapshot, active protection policy, and most recent
   critical event even after a notification banner disappears.
+- Must-see recovery outcomes also open a floating Codex Pulse alert that stays
+  visible until dismissed. The release gate verifies the native window remains
+  on screen without blocking the quota watcher.
 - Weekly pacing: estimates whether Plus or Pro usage is ahead of schedule and
   turns the remaining allowance into a practical average daily percentage.
 - Tibo signal: reads the zero-configuration `codex-reset.com` feed by default;
@@ -161,6 +164,11 @@ automation and require attention. Every active resume owns a durable lock for it
 canonical worktree, so a watcher restart cannot start a second turn in the same
 checkout.
 
+Checkpoints created by an older runtime may not contain a usable pause-time
+workspace fingerprint. Pulse never reconstructs that evidence after the fact:
+it shows a persistent explanation and asks the user to continue in the original
+chat instead of claiming an unsafe automatic resume will happen.
+
 Create a redacted support report after installation:
 
 ```bash
@@ -256,7 +264,8 @@ for optional checks or reminders unless a project-scoped task has been manually
 verified with the required sandbox.
 
 The default macOS packaging command is quota-free. It enforces the full test
-suite, a deterministic local X API contract/classifier test, and an offline
+suite, a native persistent-alert E2E, a deterministic local X API
+contract/classifier test, and an offline
 full-chain simulation of the 10% pause, structured checkpoint, recovered-quota
 detection, exactly-once resume, and lock cleanup. The simulation uses the
 production Hook handler, stores, workspace fingerprinting, controller, and

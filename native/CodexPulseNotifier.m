@@ -8,6 +8,8 @@
 @property(nonatomic, assign) BOOL timeSensitive;
 @property(nonatomic, assign) BOOL statusMode;
 @property(nonatomic, assign) BOOL persistentMode;
+@property(nonatomic, assign) BOOL persistentSelfTestMode;
+@property(nonatomic, assign) BOOL persistentSelfTestPassed;
 @end
 
 @implementation CodexPulseDelegate
@@ -63,8 +65,34 @@
         alert.informativeText = self.notificationBody;
         [alert addButtonWithTitle:@"知道了"];
         [alert addButtonWithTitle:@"查看状态"];
+        alert.window.level = NSFloatingWindowLevel;
+        alert.window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
+                                          NSWindowCollectionBehaviorTransient;
         [NSApp activateIgnoringOtherApps:YES];
-        if ([alert runModal] == NSAlertSecondButtonReturn) {
+        [alert.window center];
+        [alert.window orderFrontRegardless];
+        [self writeLog:[NSString stringWithFormat:@"persistent alert presented: %@", self.notificationTitle]];
+        if (self.persistentSelfTestMode) {
+            NSTimer *timer = [NSTimer timerWithTimeInterval:3 repeats:NO block:^(NSTimer *timer) {
+                self.persistentSelfTestPassed = alert.window.isVisible && NSApp.modalWindow == alert.window;
+                [self writeLog:self.persistentSelfTestPassed
+                    ? @"persistent self-test passed: alert remained visible for 3 seconds"
+                    : @"persistent self-test failed: alert was not visible after 3 seconds"];
+                [NSApp abortModal];
+                [alert.window orderOut:nil];
+            }];
+            [[NSRunLoop mainRunLoop] addTimer:timer forMode:NSModalPanelRunLoopMode];
+        }
+        NSModalResponse response = [alert runModal];
+        if (self.persistentSelfTestMode) {
+            printf("{\"ok\":%s,\"visibleForSeconds\":3}\n",
+                   self.persistentSelfTestPassed ? "true" : "false");
+            fflush(stdout);
+            [NSApp terminate:nil];
+            return;
+        }
+        [self writeLog:[NSString stringWithFormat:@"persistent alert dismissed: %@", self.notificationTitle]];
+        if (response == NSAlertSecondButtonReturn) {
             [self showStatusPanel];
         } else {
             [NSApp terminate:nil];
@@ -73,9 +101,7 @@
 }
 
 - (void)finishDelivery {
-    if (self.persistentMode) {
-        [self showPersistentAlert];
-    } else {
+    if (!self.persistentMode) {
         [self finishAfterDelay];
     }
 }
@@ -156,6 +182,10 @@
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
+    if (self.persistentSelfTestMode) {
+        [self showPersistentAlert];
+        return;
+    }
     if (self.statusMode) {
         [self showStatusPanel];
         return;
@@ -173,6 +203,14 @@
         }
         self.notificationTitle = @"Codex Pulse 已就绪";
         self.notificationBody = @"这是一条测试通知，不代表真实额度。真实提醒会明确显示当前剩余百分比。";
+    }
+
+    // Present the must-see alert independently of Notification Center. Banner
+    // lifetime is controlled by macOS and may be only a few seconds. Keeping
+    // this helper process alive makes the second surface remain until the user
+    // explicitly dismisses it.
+    if (self.persistentMode) {
+        [self showPersistentAlert];
     }
 
     UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
@@ -247,10 +285,15 @@ int main(int argc, const char * argv[]) {
         CodexPulseDelegate *delegate = [[CodexPulseDelegate alloc] init];
         delegate.setupMode = [arguments containsObject:@"--setup"];
         delegate.timeSensitive = [arguments containsObject:@"--time-sensitive"];
-        delegate.persistentMode = [arguments containsObject:@"--persistent"];
+        delegate.persistentSelfTestMode = [arguments containsObject:@"--persistent-self-test"];
+        delegate.persistentMode = [arguments containsObject:@"--persistent"] || delegate.persistentSelfTestMode;
         delegate.statusMode = arguments.count == 1 || [arguments containsObject:@"--status"];
         delegate.notificationTitle = title;
         delegate.notificationBody = body;
+        if (delegate.persistentMode) {
+            [NSProcessInfo.processInfo disableSuddenTermination];
+            [NSProcessInfo.processInfo disableAutomaticTermination:@"Codex Pulse persistent alert"];
+        }
         app.delegate = delegate;
         [app run];
     }

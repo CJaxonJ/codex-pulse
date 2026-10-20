@@ -169,11 +169,18 @@ try {
     store,
     workspace: inspector,
     lockManager: new WorktreeLockManager(dataDir, { holderId: "paused-watcher" }),
-    onEvent: async (event) => pausedEvents.push(event.type),
+    onEvent: async (event) => pausedEvents.push(event),
   });
   await pausedController.reconcile(quotaSummary(10, firstWindow), { now: now + 63 });
   await pausedController.reconcile(quotaSummary(49, recoveredWindow), { now: now + 64 });
-  assert(pausedEvents.filter((type) => type === "chat_continuity_paused").length === 1, "pause notification was not deduplicated");
+  const pauseNotifications = pausedEvents.filter(
+    (event) => event.type === "chat_continuity_paused",
+  );
+  assert(pauseNotifications.length === 1, "pause notification was not deduplicated");
+  assert(
+    pauseNotifications[0].resumePrepared === true,
+    "pause notification promised recovery without a workspace fingerprint",
+  );
   assert(!(await exists(proofPath)), "task resumed below the 50% recovery floor");
   timeline.push("10%-49%: stayed paused; no duplicate notification and no early resume");
 

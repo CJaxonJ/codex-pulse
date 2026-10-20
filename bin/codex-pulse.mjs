@@ -218,6 +218,8 @@ async function runDoctor() {
     homeDir: os.homedir(),
     uid: process.getuid?.() ?? 0,
     expectedVersion: packageManifest.version,
+    compatiblePluginVersions:
+      packageManifest.codexPulse?.compatiblePluginVersions || [packageManifest.version],
   });
   checks.push(...local.checks);
   const ok = checks.every((item) => item.status !== "fail");

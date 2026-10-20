@@ -76,6 +76,7 @@ export function inspectLocalInstallation({
   homeDir,
   uid,
   expectedVersion = null,
+  compatiblePluginVersions = expectedVersion ? [expectedVersion] : [],
   now = Date.now(),
   run = execFileSync,
 } = {}) {
@@ -112,6 +113,11 @@ export function inspectLocalInstallation({
   const pluginVersions = installedPluginVersions(homeDir);
   const pluginEnabled = enabledPlugin(configPath);
   const newestPluginVersion = pluginVersions.at(-1) || null;
+  const pluginVersionCompatible = Boolean(
+    newestPluginVersion &&
+      (compatiblePluginVersions.length === 0 ||
+        compatiblePluginVersions.includes(newestPluginVersion)),
+  );
   const newestPluginPath = newestPluginVersion
     ? path.join(
         homeDir,
@@ -139,7 +145,7 @@ export function inspectLocalInstallation({
   const pluginStatus =
     !pluginEnabled || !newestPluginVersion
       ? "warn"
-      : expectedVersion && newestPluginVersion !== expectedVersion
+      : !pluginVersionCompatible
         ? "fail"
         : "pass";
 
@@ -181,8 +187,8 @@ export function inspectLocalInstallation({
       "plugin",
       pluginStatus,
       pluginEnabled
-        ? expectedVersion && newestPluginVersion !== expectedVersion
-          ? `Codex 插件版本不一致（已安装 ${newestPluginVersion || "未知"}，期望 ${expectedVersion}）`
+        ? !pluginVersionCompatible
+          ? `Codex 插件版本不兼容（已安装 ${newestPluginVersion || "未知"}，兼容 ${compatiblePluginVersions.join("、") || "未知"}）`
           : `Codex 插件已启用（${newestPluginVersion || "版本未知"}）`
         : "Codex 插件尚未启用",
     ),
@@ -204,6 +210,7 @@ export function inspectLocalInstallation({
       pluginVersions,
       runtimeVersion,
       expectedVersion,
+      compatiblePluginVersions,
       hookDecisionAgeSeconds,
       hookObservedForInstalledPlugin,
     },

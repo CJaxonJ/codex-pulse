@@ -21,6 +21,14 @@ export function notificationForEvent(event) {
     };
   }
   if (event.type === "chat_continuity_paused") {
+    if (event.resumePrepared === false) {
+      return {
+        title: "Codex 已暂停，但无法保证自动续跑",
+        body: "检查点已保存，但本机未能记录可靠的工作区指纹。额度恢复后会提醒你回到原聊天手动继续，不会冒险覆盖现有修改。",
+        interruptionLevel: "time-sensitive",
+        persistent: true,
+      };
+    }
     return {
       title: "Codex 已在 10% 保护线安全暂停",
       body: "本机检查点已保存：包含已完成、验证结果、剩余工作和下一步。个人额度恢复后只会续跑一次。",
@@ -45,6 +53,8 @@ export function notificationForEvent(event) {
       newer_thread_activity: "暂停后聊天出现了新的用户操作",
       thread_history_unavailable: "暂时无法核对聊天历史",
       workspace_unverifiable: "无法可靠校验暂停时的工作区状态",
+      checkpoint_missing_fingerprint:
+        "暂停时没有保存到工作区指纹（可能是旧版记录或当时校验失败）",
       resume_state_unknown: "后台重启后无法确认续跑任务是否仍在执行",
       resume_failed: "恢复后的任务执行失败",
       resume_interrupted: "恢复后的任务被中断",
@@ -52,7 +62,7 @@ export function notificationForEvent(event) {
     };
     return {
       title: "Codex 聊天续跑需要确认",
-      body: `${reasons[event.reason] || "恢复条件不再安全"}，已停止自动续跑。`,
+      body: `${reasons[event.reason] || "恢复条件不再安全"}，已停止自动续跑。请回到原聊天发送“继续”。`,
       persistent: true,
     };
   }
@@ -196,6 +206,23 @@ export function notificationForEvent(event) {
   };
 }
 
+export function nativeNotificationArgs({
+  nativeApp,
+  title,
+  body,
+  interruptionLevel,
+  persistent,
+}) {
+  const args = ["-g", "-n", nativeApp, "--args", title, body];
+  // A persistent alert owns its own helper process until the user dismisses
+  // it. Do not make the quota watcher wait behind that UI. Short-lived
+  // banners still use -W so launch failures surface synchronously.
+  if (!persistent) args.unshift("-W");
+  if (interruptionLevel === "time-sensitive") args.push("--time-sensitive");
+  if (persistent) args.push("--persistent");
+  return args;
+}
+
 export function sendMacNotification({ title, body, interruptionLevel, persistent }) {
   if (process.env.CODEX_PULSE_DISABLE_NOTIFICATIONS === "1") {
     return Promise.resolve();
@@ -205,9 +232,13 @@ export function sendMacNotification({ title, body, interruptionLevel, persistent
     path.join(os.homedir(), "Applications", "Codex Pulse.app");
   if (existsSync(nativeApp)) {
     return new Promise((resolve, reject) => {
-      const args = ["-W", "-g", "-n", nativeApp, "--args", title, body];
-      if (interruptionLevel === "time-sensitive") args.push("--time-sensitive");
-      if (persistent) args.push("--persistent");
+      const args = nativeNotificationArgs({
+        nativeApp,
+        title,
+        body,
+        interruptionLevel,
+        persistent,
+      });
       const child = spawn(
         "/usr/bin/open",
         args,

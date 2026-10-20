@@ -1,6 +1,19 @@
 # Changelog
 
-## Unreleased
+## 0.9.8 — 2026-10-20
+
+- Added a native macOS E2E that proves must-see alerts remain visible for three
+  seconds before the test closes them automatically; it consumes no Codex quota.
+- Persistent alerts now use a floating window, stay open until explicit
+  dismissal, and launch without blocking the quota watcher.
+- Pause notifications now disclose whether a reliable workspace fingerprint
+  was captured. Missing pause-time evidence is explained as a manual-resume case
+  instead of promising unsafe automatic continuation.
+- The release gate now compiles the native notifier and runs its persistent
+  window E2E before packaging.
+- Runtime-only upgrades can explicitly retain a compatible already-trusted
+  plugin version, avoiding an unnecessary Hook review when Hook code did not
+  change.
 
 ## 0.9.7 — 2026-10-20
 

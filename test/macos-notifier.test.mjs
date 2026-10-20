@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { notificationForEvent } from "../src/macos-notifier.mjs";
+import {
+  nativeNotificationArgs,
+  notificationForEvent,
+} from "../src/macos-notifier.mjs";
 
 test("attention notifications tell the user what is actually blocking resume", () => {
   const input = notificationForEvent({
@@ -69,6 +72,43 @@ test("recovery and resume outcomes stay visible until the user dismisses them", 
     notificationForEvent({ type: "chat_continuity_attention", reason: "workspace_unverifiable" }).persistent,
     true,
   );
+});
+
+test("missing pause-time fingerprints explain why recovery cannot safely auto-resume", () => {
+  const paused = notificationForEvent({
+    type: "chat_continuity_paused",
+    resumePrepared: false,
+  });
+  assert.match(paused.title, /无法保证自动续跑/);
+  assert.match(paused.body, /手动继续/);
+  assert.equal(paused.persistent, true);
+
+  const attention = notificationForEvent({
+    type: "chat_continuity_attention",
+    reason: "checkpoint_missing_fingerprint",
+  });
+  assert.match(attention.body, /旧版记录或当时校验失败/);
+  assert.match(attention.body, /发送“继续”/);
+  assert.equal(attention.persistent, true);
+});
+
+test("persistent native alerts do not block the quota watcher", () => {
+  const persistent = nativeNotificationArgs({
+    nativeApp: "/Applications/Codex Pulse.app",
+    title: "Recovered",
+    body: "Quota recovered",
+    persistent: true,
+  });
+  assert.equal(persistent.includes("-W"), false);
+  assert.equal(persistent.includes("--persistent"), true);
+
+  const banner = nativeNotificationArgs({
+    nativeApp: "/Applications/Codex Pulse.app",
+    title: "Threshold",
+    body: "20% remaining",
+    persistent: false,
+  });
+  assert.equal(banner.includes("-W"), true);
 });
 
 test("strict reserve makes the ten-percent action explicit and persistent", () => {

@@ -182,6 +182,35 @@ test("ordinary chat fails closed when the workspace fingerprint is unavailable",
   assert.equal(client.calls.some((call) => call.method === "turn/start"), false);
 });
 
+test("a checkpoint missing its pause-time fingerprint is identified explicitly", async () => {
+  const store = new MemoryChatContinuityStore([
+    pausedChat({
+      checkpoint: {
+        summary: "Legacy checkpoint created before workspace fingerprints were reliable.",
+        workspaceFingerprint: null,
+      },
+    }),
+  ]);
+  const client = new FakeClient();
+  const controller = new ChatContinuityController({
+    client,
+    store,
+    workspace: {
+      async exists() {
+        return true;
+      },
+      async fingerprint() {
+        return "current";
+      },
+    },
+  });
+
+  const events = await controller.reconcile(summary(85, 200), { now: 20 });
+  assert.equal(events[0].reason, "checkpoint_missing_fingerprint");
+  assert.equal((await store.get("thread-1")).blocker, "checkpoint_missing_fingerprint");
+  assert.equal(client.calls.some((call) => call.method === "turn/start"), false);
+});
+
 test("ordinary chat refuses resume when a newer turn exists", async () => {
   const store = new MemoryChatContinuityStore([pausedChat()]);
   const client = new FakeClient();
