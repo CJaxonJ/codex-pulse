@@ -5,7 +5,7 @@ export const QUOTA_POLICIES = ["finish_current", "strict_reserve", "deadline"];
 export const TIBO_SOURCES = ["disabled", "auto", "x-api", "codex-reset"];
 
 const DEFAULT_PREFERENCES = {
-  quotaPolicy: "finish_current",
+  quotaPolicy: "strict_reserve",
   tiboSource: "codex-reset",
 };
 

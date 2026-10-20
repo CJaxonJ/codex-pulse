@@ -37,6 +37,9 @@ shasum -a 256 -c SHA256SUMS.txt
 
 - Personal account: reads the signed-in user's real five-hour and weekly windows through Codex App Server.
 - Personal warnings: 20%, 10%, and 5%, plus a fast-consumption forecast.
+- Persistent status: double-click `Codex Pulse.app` in `~/Applications` to see
+  the latest local quota snapshot, active protection policy, and most recent
+  critical event even after a notification banner disappears.
 - Weekly pacing: estimates whether Plus or Pro usage is ahead of schedule and
   turns the remaining allowance into a practical average daily percentage.
 - Tibo signal: reads the zero-configuration `codex-reset.com` feed by default;
@@ -131,10 +134,10 @@ prompts do not create repeated banners.
 Choose how Pulse behaves near exhaustion:
 
 ```bash
-# Default: let the current bounded result finish; pause at 5% or after 10 minutes of draining.
+# Let the current bounded result finish; pause at 5% or after 10 minutes of draining.
 node bin/codex-pulse.mjs policy --mode finish_current
 
-# Preserve a hard reserve: block new turns and pause active managed work at 10%.
+# Default: preserve a hard reserve, block new turns, and pause active work at 10%.
 node bin/codex-pulse.mjs policy --mode strict_reserve
 
 # Prioritize a deadline result: defer draining until 5%, with a 1% hard floor.
@@ -143,6 +146,11 @@ node bin/codex-pulse.mjs policy --mode deadline
 
 Run `node bin/codex-pulse.mjs policy` to inspect the current mode. A managed task
 can override the default with `--quota-policy MODE`.
+
+Every user-visible quota, reset, pause, resume, and attention event is also kept
+in a small local rolling journal. Run `node bin/codex-pulse.mjs activity` for a
+redacted text view, or double-click `~/Applications/Codex Pulse.app`; prompt text
+and authentication material are never written to this journal.
 
 In strict-reserve mode, an ordinary chat can resume automatically after the
 personal five-hour window materially recovers. Pulse resumes the same thread only
@@ -289,6 +297,13 @@ To reinstall only the local plugin after an update:
 
 ```bash
 npm run plugin:install
+```
+
+If an update changes only the background monitor or status app, update it without
+touching the plugin or repeating Hook review:
+
+```bash
+npm run runtime:update
 ```
 
 The installer also builds a small native `Codex Pulse.app` under `~/Applications` so macOS can grant notification permission to a named application. The first notification may display a system permission prompt.

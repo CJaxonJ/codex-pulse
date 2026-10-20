@@ -59,3 +59,22 @@ test("reset notifications explain ambiguity and later public correlation", () =>
   assert.match(confirmed.body, /无需使用重置卡/);
   assert.equal(confirmed.interruptionLevel, "time-sensitive");
 });
+
+test("strict reserve makes the ten-percent action explicit and persistent", () => {
+  const threshold = notificationForEvent({
+    type: "threshold",
+    threshold: 10,
+    remainingPercent: 9,
+    resetsAt: 2_000_000_000,
+    quotaPolicy: "strict_reserve",
+  });
+  assert.match(threshold.title, /10% 保护线/);
+  assert.match(threshold.body, /拦截后续工具调用/);
+  assert.match(threshold.body, /保存检查点/);
+  assert.equal(threshold.interruptionLevel, "time-sensitive");
+
+  const paused = notificationForEvent({ type: "chat_continuity_paused" });
+  assert.match(paused.title, /安全暂停/);
+  assert.match(paused.body, /个人额度恢复后只会续跑一次/);
+  assert.equal(paused.interruptionLevel, "time-sensitive");
+});

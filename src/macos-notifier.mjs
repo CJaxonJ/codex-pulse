@@ -19,6 +19,13 @@ export function notificationForEvent(event) {
       body: "个人额度已经恢复，正在原聊天中根据本机检查点继续未完成工作。",
     };
   }
+  if (event.type === "chat_continuity_paused") {
+    return {
+      title: "Codex 已在 10% 保护线安全暂停",
+      body: "本机检查点已保存：包含已完成、验证结果、剩余工作和下一步。个人额度恢复后只会续跑一次。",
+      interruptionLevel: "time-sensitive",
+    };
+  }
   if (event.type === "chat_continuity_complete") {
     return {
       title: "Codex 聊天续跑已完成",
@@ -152,6 +159,13 @@ export function notificationForEvent(event) {
     };
   }
   if (event.type === "threshold") {
+    if (event.threshold <= 10 && event.quotaPolicy === "strict_reserve") {
+      return {
+        title: "Codex Pulse：已到 10% 保护线",
+        body: `当前剩余 ${Math.round(event.remainingPercent)}%。将拦截后续工具调用，要求 Codex 保存检查点；预计 ${formatResetTime(event.resetsAt)} 恢复后安全续跑。`,
+        interruptionLevel: "time-sensitive",
+      };
+    }
     return {
       title: `Codex 5 小时额度剩余 ${Math.round(event.remainingPercent)}%`,
       body: `已跌破 ${event.threshold}% 预警线，预计 ${formatResetTime(event.resetsAt)} 恢复。先暂停新增长任务或切换更省额度的模型。`,

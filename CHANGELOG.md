@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 0.9.6 — 2026-10-20
+
+- Made strict-reserve the default for new installs so the advertised 10% safety
+  boundary matches the out-of-box behavior; existing explicit preferences stay
+  unchanged.
+- Added a local rolling journal for every user-visible quota, reset, pause,
+  resume, and attention event, including notification-delivery status.
+- Made `Codex Pulse.app` open a small status window showing the current quota,
+  reset time, protection policy, and latest critical event after banners vanish.
+- Added an explicit time-sensitive notification when an ordinary chat has saved
+  its 10% checkpoint, while keeping notification failures from breaking task
+  reconciliation.
+- Tightened the strict-reserve handoff contract to Completed, Verification,
+  Remaining, Next action, and Blockers.
+- Added a runtime-only updater so monitor and status-window fixes do not replace
+  the Codex plugin or ask users to review unchanged hooks again.
+
 ## 0.9.5 — 2026-10-20
 
 - Made public-reset notifications explicit: an unexplained quota jump now shows

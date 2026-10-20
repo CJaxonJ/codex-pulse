@@ -22,8 +22,9 @@ description: Verify the local Codex Pulse monitor and explain how to review and 
    task size and priority, but is never stored. Local observations contain only
    session/turn ids, model, inferred size and priority, timestamps, quota-window
    identity, and percentage before/after.
-5. Explain the three quota policies. `finish_current` is the safe default;
-   `strict_reserve` blocks new work at 10%; `deadline` delays draining for one
+5. Explain the three quota policies. `strict_reserve` is the default and blocks
+   new work at 10%; `finish_current` lets the current bounded result finish;
+   `deadline` delays draining for one
    bounded high-priority result. Show the installed `policy --mode` command if
    the user wants to change it.
 6. Do not bypass hook trust, change sandbox permissions, approve commands, or

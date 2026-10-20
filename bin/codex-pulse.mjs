@@ -34,6 +34,7 @@ import {
 import { WorkspaceInspector } from "../src/workspace-inspector.mjs";
 import { WorktreeLockManager } from "../src/worktree-lock-manager.mjs";
 import { UsageObservationStore } from "../src/usage-observation-store.mjs";
+import { UserEventJournal } from "../src/user-event-journal.mjs";
 import {
   inspectLocalInstallation,
   redactDiagnosticText,
@@ -84,6 +85,50 @@ async function saveState(state) {
   await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
 }
 
+async function deliverUserEvent(
+  event,
+  {
+    journal = new UserEventJournal(dataDir),
+    notification = notificationForEvent(event),
+    context = {},
+  } = {},
+) {
+  let journalEntry = null;
+  try {
+    journalEntry = await journal.append({
+      type: event.type,
+      title: notification.title,
+      body: notification.body,
+      occurredAt: Math.floor(Date.now() / 1000),
+      deliveryStatus: "pending",
+    });
+  } catch (error) {
+    log("user event journal write failed", { type: event.type, error: error.message });
+  }
+  let deliveryStatus = "notification_request_accepted";
+  try {
+    await sendMacNotification(notification);
+  } catch (error) {
+    deliveryStatus = "failed";
+    log("notification delivery failed", {
+      type: event.type,
+      error: error.message,
+      ...context,
+    });
+  }
+  if (journalEntry) {
+    try {
+      await journal.updateDeliveryStatus(journalEntry.id, deliveryStatus);
+    } catch (error) {
+      log("user event journal status update failed", {
+        type: event.type,
+        error: error.message,
+      });
+    }
+  }
+  return { notification, deliveryStatus };
+}
+
 async function withClient(fn) {
   const client = new AppServerClient();
   try {
@@ -102,18 +147,48 @@ async function printStatus() {
 }
 
 async function testNotification() {
+  const preferences = await new PulsePreferencesStore(dataDir).get();
   const quotaExample = notificationForEvent({
     type: "threshold",
     threshold: 10,
     remainingPercent: 10,
     resetsAt: Math.floor(Date.now() / 1000) + 60 * 60,
+    quotaPolicy: preferences.quotaPolicy,
   });
   const notification = {
     title: `【测试】${quotaExample.title}`,
     body: `这是一条测试通知，不代表真实额度。${quotaExample.body}`,
   };
-  await sendMacNotification(notification);
-  log("test notification sent");
+  const result = await deliverUserEvent(
+    { type: "test_threshold" },
+    { notification },
+  );
+  log("test notification processed", { deliveryStatus: result.deliveryStatus });
+}
+
+async function printActivity() {
+  const state = await loadState();
+  const preferences = await new PulsePreferencesStore(dataDir).get();
+  const journal = new UserEventJournal(dataDir);
+  console.log(
+    JSON.stringify(
+      {
+        ok: true,
+        quota: {
+          planType: state.lastSummary?.planType || null,
+          fiveHour: state.lastSummary?.fiveHour || null,
+          weekly: state.lastSummary?.weekly || null,
+          resetCreditCount: state.lastSummary?.resetCredits?.availableCount ?? 0,
+        },
+        protection: preferences.quotaPolicy,
+        latestEvent: await journal.latest(),
+        privacy:
+          "This view excludes prompts, authentication material, and reset-credit identifiers.",
+      },
+      null,
+      2,
+    ),
+  );
 }
 
 async function runDoctor() {
@@ -290,8 +365,8 @@ async function managePolicy() {
         ok: true,
         preferences,
         modes: {
-          finish_current: "Default: finish the current bounded result before pausing.",
-          strict_reserve: "Protect the reserve: block new work and pause at 10%.",
+          finish_current: "Finish the current bounded result before pausing.",
+          strict_reserve: "Default: protect the reserve, block new work, and pause at 10%.",
           deadline: "Prioritize a bounded deadline task and drain only at critically low quota.",
         },
       },
@@ -368,18 +443,22 @@ async function watch() {
   });
   const lockManager = new WorktreeLockManager(dataDir);
   const managedTaskStore = new ManagedTaskStore(dataDir);
+  const eventJournal = new UserEventJournal(dataDir);
   const managedController = new ManagedTaskController({
     client,
     store: managedTaskStore,
     workspace: new WorkspaceInspector(),
     lockManager,
     onEvent: async (event) => {
-      const notification = notificationForEvent(event);
-      await sendMacNotification(notification);
-      log("managed task notification sent", {
+      const delivered = await deliverUserEvent(event, {
+        journal: eventJournal,
+        context: { taskId: event.taskId },
+      });
+      log("managed task notification processed", {
         type: event.type,
         taskId: event.taskId,
-        title: notification.title,
+        title: delivered.notification.title,
+        deliveryStatus: delivered.deliveryStatus,
       });
     },
   });
@@ -389,12 +468,15 @@ async function watch() {
     workspace: new WorkspaceInspector(),
     lockManager,
     onEvent: async (event) => {
-      const notification = notificationForEvent(event);
-      await sendMacNotification(notification);
-      log("ordinary chat continuity notification sent", {
+      const delivered = await deliverUserEvent(event, {
+        journal: eventJournal,
+        context: { sessionId: event.sessionId },
+      });
+      log("ordinary chat continuity notification processed", {
         type: event.type,
         sessionId: event.sessionId,
-        title: notification.title,
+        title: delivered.notification.title,
+        deliveryStatus: delivered.deliveryStatus,
       });
     },
   });
@@ -490,14 +572,21 @@ async function watch() {
         resetsAt: summary.fiveHour?.resetsAt ?? null,
         eventCount: landing.events.length + creditEvaluation.events.length,
       });
+      const preferences = await preferencesStore.get();
       for (const event of [
         ...correlatedTibo.events,
         ...creditEvaluation.events,
         ...landing.events,
       ]) {
-        const notification = notificationForEvent(event);
-        await sendMacNotification(notification);
-        log("notification sent", { type: event.type, title: notification.title });
+        const enrichedEvent = { ...event, quotaPolicy: preferences.quotaPolicy };
+        const delivered = await deliverUserEvent(enrichedEvent, {
+          journal: eventJournal,
+        });
+        log("notification processed", {
+          type: event.type,
+          title: delivered.notification.title,
+          deliveryStatus: delivered.deliveryStatus,
+        });
       }
     } catch (error) {
       log("quota check failed", { error: error.message });
@@ -565,6 +654,7 @@ async function watch() {
 
 try {
   if (command === "status") await printStatus();
+  else if (command === "activity") await printActivity();
   else if (command === "doctor") await runDoctor();
   else if (command === "notify-test") await testNotification();
   else if (command === "managed-run") await queueManagedTask();
@@ -575,7 +665,7 @@ try {
   else if (command === "watch") await watch();
   else {
     console.error(
-      "Usage: codex-pulse [status|doctor|watch [--once]|notify-test|advice [--size small|medium|large] [--priority low|normal|high] [--model MODEL]|policy [--mode finish_current|strict_reserve|deadline]|tibo-source [--configure-x|--forget-x|--mode disabled|auto|x-api|codex-reset]|managed-run --objective TEXT [--cwd PATH] [--model MODEL] [--size SIZE] [--priority PRIORITY] [--quota-policy POLICY] [--start-floor N] [--resume-floor N]|managed-list]",
+      "Usage: codex-pulse [status|activity|doctor|watch [--once]|notify-test|advice [--size small|medium|large] [--priority low|normal|high] [--model MODEL]|policy [--mode finish_current|strict_reserve|deadline]|tibo-source [--configure-x|--forget-x|--mode disabled|auto|x-api|codex-reset]|managed-run --objective TEXT [--cwd PATH] [--model MODEL] [--size SIZE] [--priority PRIORITY] [--quota-policy POLICY] [--start-floor N] [--resume-floor N]|managed-list]",
     );
     process.exitCode = 2;
   }

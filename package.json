@@ -1,6 +1,6 @@
 {
   "name": "codex-pulse",
-  "version": "0.9.5",
+  "version": "0.9.6",
   "private": true,
   "license": "MIT",
   "engines": {
@@ -15,6 +15,7 @@
     "advice": "node bin/codex-pulse.mjs advice",
     "managed:list": "node bin/codex-pulse.mjs managed-list",
     "plugin:install": "node scripts/install-plugin.mjs",
+    "runtime:update": "node scripts/update-runtime-macos.mjs",
     "package:verify": "node scripts/verify-package.mjs",
     "package:macos": "node scripts/release-macos.mjs",
     "e2e:tibo": "node scripts/e2e-tibo-feed.mjs",

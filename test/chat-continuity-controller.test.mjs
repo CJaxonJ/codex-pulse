@@ -11,7 +11,7 @@ function summary(remainingPercent, resetsAt = 2_000_000_000) {
   };
 }
 
-function pausedChat() {
+function pausedChat(overrides = {}) {
   return {
     id: "chat:thread-1",
     sessionId: "thread-1",
@@ -29,6 +29,7 @@ function pausedChat() {
     },
     createdAt: 1,
     updatedAt: 1,
+    ...overrides,
   };
 }
 
@@ -109,6 +110,32 @@ test("ordinary chat resumes the same thread exactly once and releases its lock",
   assert.equal(record.worktreeLock, null);
   assert.equal(locks.size, 0);
   assert.deepEqual(emitted, ["chat_continuity_resumed", "chat_continuity_complete"]);
+});
+
+test("a quota-paused chat emits one user-visible pause event", async () => {
+  const store = new MemoryChatContinuityStore([
+    pausedChat({ sessionId: "paused-thread", id: "chat:paused-thread", pauseNotifiedAt: null }),
+  ]);
+  const emitted = [];
+  const controller = new ChatContinuityController({
+    client: new FakeClient(),
+    store,
+    workspace: {
+      async exists() {
+        return true;
+      },
+      async fingerprint() {
+        return "same";
+      },
+    },
+    onEvent: async (event) => emitted.push(event.type),
+  });
+
+  await controller.reconcile({ fiveHour: { remainingPercent: 9, resetsAt: 100 } }, { now: 10 });
+  await controller.reconcile({ fiveHour: { remainingPercent: 9, resetsAt: 100 } }, { now: 11 });
+
+  assert.deepEqual(emitted, ["chat_continuity_paused"]);
+  assert.equal((await store.get("paused-thread")).pauseNotifiedAt, 10);
 });
 
 test("ordinary chat refuses resume after workspace divergence", async () => {
