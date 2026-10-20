@@ -15,6 +15,17 @@ function fileAgeSeconds(filePath, now) {
   return Math.max(0, Math.round((now - statSync(filePath).mtimeMs) / 1000));
 }
 
+function newestFile(directory, suffix = "") {
+  if (!existsSync(directory)) return null;
+  const candidates = readdirSync(directory, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(suffix))
+    .map((entry) => path.join(directory, entry.name));
+  if (candidates.length === 0) return null;
+  return candidates.sort(
+    (left, right) => statSync(right).mtimeMs - statSync(left).mtimeMs,
+  )[0];
+}
+
 function enabledPlugin(configPath) {
   if (!existsSync(configPath)) return false;
   const config = readFileSync(configPath, "utf8");
@@ -81,6 +92,10 @@ export function inspectLocalInstallation({
   const configPath = path.join(homeDir, ".codex", "config.toml");
   const statePath = path.join(dataDir, "state.json");
   const logPath = path.join(dataDir, "monitor.log");
+  const latestHookDecisionPath = newestFile(
+    path.join(dataDir, "hook-decisions"),
+    ".json",
+  );
 
   let serviceLoaded = false;
   try {
@@ -97,6 +112,25 @@ export function inspectLocalInstallation({
   const pluginVersions = installedPluginVersions(homeDir);
   const pluginEnabled = enabledPlugin(configPath);
   const newestPluginVersion = pluginVersions.at(-1) || null;
+  const newestPluginPath = newestPluginVersion
+    ? path.join(
+        homeDir,
+        ".codex",
+        "plugins",
+        "cache",
+        "codex-pulse-local",
+        "codex-pulse",
+        newestPluginVersion,
+      )
+    : null;
+  const hookDecisionAgeSeconds = latestHookDecisionPath
+    ? fileAgeSeconds(latestHookDecisionPath, now)
+    : null;
+  const hookObservedForInstalledPlugin = Boolean(
+    latestHookDecisionPath &&
+      newestPluginPath &&
+      statSync(latestHookDecisionPath).mtimeMs >= statSync(newestPluginPath).mtimeMs,
+  );
   const runtimeStatus = !existsSync(runtimePath)
     ? "fail"
     : expectedVersion && runtimeVersion !== expectedVersion
@@ -154,8 +188,10 @@ export function inspectLocalInstallation({
     ),
     check(
       "hook-trust",
-      "manual",
-      "请在重启 Codex 后打开终端运行 codex，再在 Codex CLI 中输入 /hooks，人工检查并信任 Codex Pulse hooks",
+      hookObservedForInstalledPlugin ? "pass" : "manual",
+      hookObservedForInstalledPlugin
+        ? `最近观察到 Codex Pulse Hook 已执行（距今 ${hookDecisionAgeSeconds} 秒）`
+        : "尚未观察到当前版本的 Hook 执行记录。请在重启 Codex 后打开终端运行 codex，再输入 /hooks，人工检查并信任 Codex Pulse hooks",
     ),
   ];
 
@@ -168,6 +204,8 @@ export function inspectLocalInstallation({
       pluginVersions,
       runtimeVersion,
       expectedVersion,
+      hookDecisionAgeSeconds,
+      hookObservedForInstalledPlugin,
     },
   };
 }

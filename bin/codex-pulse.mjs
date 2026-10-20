@@ -145,20 +145,23 @@ async function runDoctor() {
   });
   checks.push(...local.checks);
   const ok = checks.every((item) => item.status !== "fail");
+  const hookObserved = local.support.hookObservedForInstalledPlugin;
 
   console.log(
     JSON.stringify(
       {
         ok,
         installationOk: ok,
-        hookTrust: "manual_verification_required",
+        hookTrust: hookObserved ? "observed_active" : "manual_verification_required",
         generatedAt: new Date().toISOString(),
         checks,
         privacy:
           "This report excludes authentication material, reset-credit IDs, prompt text, and absolute home paths.",
-        nextStep: ok
-          ? "Restart Codex, open Codex CLI in a terminal, run /hooks, inspect the Codex Pulse commands, and trust them if their paths remain inside the installed plugin. /hooks is not a desktop composer command."
-          : "Re-run node scripts/install-macos.mjs, then run doctor again. If it still fails, share this report with the developer.",
+        nextStep: !ok
+          ? "Re-run node scripts/install-macos.mjs, then run doctor again. If it still fails, share this report with the developer."
+          : hookObserved
+            ? "Codex Pulse is installed and its current hook has executed. No setup action is required."
+            : "Restart Codex, open Codex CLI in a terminal, run /hooks, inspect the Codex Pulse commands, and trust them if their paths remain inside the installed plugin. /hooks is not a desktop composer command.",
       },
       null,
       2,
