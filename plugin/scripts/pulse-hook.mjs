@@ -57,6 +57,9 @@ function inferPriority(prompt = "") {
 }
 
 function quotaPolicy(verdict, mode) {
+  if (verdict === "start_bounded") {
+    return "Codex Pulse weekly pacing advisory: the user explicitly submitted this task, so continue it. Keep the work bounded to the request, but do not treat weekly pacing as a hard stop. Only the configured five-hour hard floor may stop tool work.";
+  }
   if (mode === "deadline") {
     return "Codex Pulse deadline policy: the user chose to prioritize the current bounded deadline result. Keep moving toward that result, avoid optional exploration, and never redeem a reset credit without explicit confirmation.";
   }
@@ -65,9 +68,6 @@ function quotaPolicy(verdict, mode) {
   }
   if (verdict === "wait_for_reset") {
     return "Codex Pulse quota policy: the user submitted the prompt despite a nearby reset. Continue with one bounded, useful result only. Do not broaden scope, spawn optional subagents, perform unrelated refactors, or add nonessential verification. End with a concise checkpoint for deferred work.";
-  }
-  if (verdict === "wait_weekly") {
-    return "Codex Pulse quota policy: weekly capacity is critically low. Complete only the smallest high-value result supported by the user's prompt. Avoid exploration and leave explicit remaining steps.";
   }
   if (verdict === "consider_reset") {
     return "Codex Pulse quota policy: do not consume a reset credit automatically. Work only on a bounded result until the user explicitly confirms any reset-card action.";

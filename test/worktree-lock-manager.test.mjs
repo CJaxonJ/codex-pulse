@@ -29,7 +29,6 @@ function queuedTask(id, cwd, createdAt) {
     autoResume: true,
     startFloor: 50,
     resumeFloor: 50,
-    weeklyFloor: 10,
     threadId: null,
     turnId: null,
     lastPlan: [],

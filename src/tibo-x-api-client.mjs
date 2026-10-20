@@ -24,7 +24,7 @@ async function fetchJson(fetchImpl, url, bearerToken, timeoutMs) {
       headers: {
         Accept: "application/json",
         Authorization: `Bearer ${bearerToken}`,
-        "User-Agent": "CodexPulse/0.9.1 (+https://github.com/CJaxonJ/codex-pulse)",
+        "User-Agent": "CodexPulse/0.9.2 (+https://github.com/CJaxonJ/codex-pulse)",
       },
       signal: controller.signal,
     });

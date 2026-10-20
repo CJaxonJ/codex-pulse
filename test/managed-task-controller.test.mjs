@@ -248,7 +248,7 @@ test("managed task uses the desktop App Server sandbox enum and requeues a faile
 
 test("Pro starts managed work without inventing a five-hour window", async () => {
   const store = new MemoryTaskStore([
-    { ...queuedTask(), startFloor: 0, weeklyFloor: 10 },
+    { ...queuedTask(), startFloor: 0 },
   ]);
   const client = new FakeClient();
   const controller = new ManagedTaskController({
@@ -273,12 +273,11 @@ test("Pro starts managed work without inventing a five-hour window", async () =>
   assert.equal((await store.list())[0].status, "running");
 });
 
-test("normal-priority work waits when weekly capacity is in its final ten percent", async () => {
+test("weekly capacity alone does not hard-block explicitly queued work", async () => {
   const store = new MemoryTaskStore([
     {
       ...queuedTask(),
       startFloor: 20,
-      weeklyFloor: 10,
       priority: "normal",
     },
   ]);
@@ -300,8 +299,8 @@ test("normal-priority work waits when weekly capacity is in its final ten percen
     },
     { now: 800 },
   );
-  assert.equal((await store.list())[0].status, "queued");
-  assert.equal(client.calls.length, 0);
+  assert.equal((await store.list())[0].status, "running");
+  assert.equal(client.calls.some((call) => call.method === "turn/start"), true);
 });
 
 test("a user-input request disables auto-resume and records only request metadata", async () => {

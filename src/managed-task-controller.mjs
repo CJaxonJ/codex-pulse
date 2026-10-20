@@ -243,9 +243,6 @@ export class ManagedTaskController {
       } else if (
         task.status === "queued" &&
         quota >= (task.startFloor ?? MIN_START_REMAINING) &&
-        (summary.weekly?.remainingPercent == null ||
-          summary.weekly.remainingPercent > (task.weeklyFloor ?? 10) ||
-          task.priority === "high") &&
         (task.retryNotBefore == null || now >= task.retryNotBefore)
       ) {
         event = await this.#start(task, summary, now);

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.9.2 — 2026-10-20
+
+- Changed weekly quota pacing from a hard admission gate to an advisory for
+  explicit ordinary and managed tasks on both Plus and Pro.
+- Kept strict-reserve hard stops scoped to the personal five-hour window only.
+- Removed the obsolete managed-task `weeklyFloor` field and added regression
+  coverage proving weekly warnings cannot block prompts or tool calls.
+
 ## 0.9.1 — 2026-10-19
 
 - Kept `codex-reset.com` as the zero-configuration default and added an optional
