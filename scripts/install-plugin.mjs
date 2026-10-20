@@ -15,6 +15,7 @@ const marketplaceName = "codex-pulse-local";
 const pluginName = "codex-pulse";
 const pluginId = `${pluginName}@${marketplaceName}`;
 const configPath = path.join(os.homedir(), ".codex", "config.toml");
+const CLI_COMMAND_TIMEOUT_MS = 90_000;
 
 if (process.platform !== "darwin") {
   throw new Error("The current Codex Pulse plugin installer supports macOS only.");
@@ -36,7 +37,7 @@ function runJson(codexPath, args) {
   const output = execFileSync(codexPath, args, {
     encoding: "utf8",
     env: process.env,
-    timeout: 20_000,
+    timeout: CLI_COMMAND_TIMEOUT_MS,
     maxBuffer: 10 * 1024 * 1024,
   });
   return JSON.parse(output);
