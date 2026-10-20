@@ -10,7 +10,7 @@ async function fetchJson(url, timeoutMs, fetchImpl = fetch) {
     const response = await fetchImpl(url, {
       headers: {
         Accept: "application/json",
-        "User-Agent": "CodexPulse/0.9.2 (+https://github.com/CJaxonJ/codex-pulse)",
+        "User-Agent": "CodexPulse/0.9.3 (+https://github.com/CJaxonJ/codex-pulse)",
       },
       signal: controller.signal,
     });

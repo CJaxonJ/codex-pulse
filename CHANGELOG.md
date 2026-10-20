@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.9.3 — 2026-10-20
+
+- Increased the Codex CLI plugin-management timeout from 20 to 90 seconds after
+  a valid local `plugin list --json` call took about 58 seconds during upgrade.
+
 ## 0.9.2 — 2026-10-20
 
 - Changed weekly quota pacing from a hard admission gate to an advisory for
