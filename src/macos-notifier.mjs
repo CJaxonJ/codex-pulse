@@ -107,6 +107,7 @@ export function notificationForEvent(event) {
     return {
       title: "Tibo 发出 Codex 重置信号",
       body: `${quote}。这是预告，不代表你的账户已到账；我会继续监控。数据：${source}`,
+      interruptionLevel: "time-sensitive",
     };
   }
   if (event.type === "tibo_limits_update") {
@@ -133,12 +134,21 @@ export function notificationForEvent(event) {
     return {
       title: "Codex 公共重置已确认",
       body: "公共侧已观察到重置，但你的账户可能稍后到账；我会继续盯个人额度。",
+      interruptionLevel: "time-sensitive",
+    };
+  }
+  if (event.type === "public_reset_landed") {
+    return {
+      title: "确认：刚才是 Codex 公共重置",
+      body: `公共重置已经确认；你的账户已从 ${Math.round(event.previousRemainingPercent)}% 回到 ${Math.round(event.remainingPercent)}%，这次已经到账，无需使用重置卡。`,
+      interruptionLevel: "time-sensitive",
     };
   }
   if (event.type === "personal_landed") {
     return {
       title: "你的 Codex 重置已到账",
       body: `已从你的账户读到额度回升，当前 5 小时额度剩余 ${Math.round(event.remainingPercent)}%。`,
+      interruptionLevel: "time-sensitive",
     };
   }
   if (event.type === "threshold") {
@@ -153,13 +163,20 @@ export function notificationForEvent(event) {
       body: `按最近速度，约 ${event.minutesToTarget} 分钟后剩余 ${event.targetRemaining}%。当前剩余 ${Math.round(event.remainingPercent)}%。`,
     };
   }
+  if (event.type === "reset") {
+    return {
+      title: `Codex 额度突然回升：${Math.round(event.previousRemainingPercent)}% → ${Math.round(event.remainingPercent)}%`,
+      body: "暂时无法判断是普通 5 小时恢复还是公共重置；Codex Pulse 正在继续核对 Tibo 的公开信号。",
+      interruptionLevel: "time-sensitive",
+    };
+  }
   return {
-    title: "Codex 5 小时额度已恢复",
-    body: `当前剩余 ${Math.round(event.remainingPercent)}%，可以继续被额度打断的任务。`,
+    title: "Codex Pulse",
+    body: "检测到新的额度事件，请打开 Codex 查看详情。",
   };
 }
 
-export function sendMacNotification({ title, body }) {
+export function sendMacNotification({ title, body, interruptionLevel }) {
   if (process.env.CODEX_PULSE_DISABLE_NOTIFICATIONS === "1") {
     return Promise.resolve();
   }
@@ -168,9 +185,11 @@ export function sendMacNotification({ title, body }) {
     path.join(os.homedir(), "Applications", "Codex Pulse.app");
   if (existsSync(nativeApp)) {
     return new Promise((resolve, reject) => {
+      const args = ["-W", "-g", "-n", nativeApp, "--args", title, body];
+      if (interruptionLevel === "time-sensitive") args.push("--time-sensitive");
       const child = spawn(
         "/usr/bin/open",
-        ["-W", "-g", "-n", nativeApp, "--args", title, body],
+        args,
         { stdio: ["ignore", "pipe", "pipe"] },
       );
       let stderr = "";

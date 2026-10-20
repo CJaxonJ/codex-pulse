@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   attachPersonalLanding,
+  correlateRecentPersonalReset,
   evaluateTiboFetchFailure,
   evaluateTiboSnapshot,
   normalizeTiboSnapshot,
@@ -89,6 +90,47 @@ test("a later public reset is confirmed once and waits for personal landing", ()
   );
   assert.equal(landing.events[0].type, "personal_landed");
   assert.equal(landing.tiboState.pendingPublicReset, null);
+});
+
+test("a public confirmation shortly after personal recovery is correlated backwards", () => {
+  const now = 2_000_000;
+  const result = correlateRecentPersonalReset(
+    [{ type: "tibo_confirmed", occurredAt: now }],
+    { pendingPublicReset: { key: "reset-1", confirmedAt: now } },
+    {
+      lastDetectedReset: {
+        detectedAt: now - 180,
+        previousRemainingPercent: 24,
+        remainingPercent: 100,
+      },
+    },
+    { now },
+  );
+
+  assert.equal(result.events[0].type, "public_reset_landed");
+  assert.equal(result.events[0].previousRemainingPercent, 24);
+  assert.equal(result.events[0].remainingPercent, 100);
+  assert.equal(result.tiboState.pendingPublicReset, null);
+});
+
+test("an old personal recovery is not attached to a later public reset", () => {
+  const now = 2_000_000;
+  const pending = { key: "reset-2", confirmedAt: now };
+  const result = correlateRecentPersonalReset(
+    [{ type: "tibo_confirmed", occurredAt: now }],
+    { pendingPublicReset: pending },
+    {
+      lastDetectedReset: {
+        detectedAt: now - 16 * 60,
+        previousRemainingPercent: 10,
+        remainingPercent: 100,
+      },
+    },
+    { now },
+  );
+
+  assert.equal(result.events[0].type, "tibo_confirmed");
+  assert.deepEqual(result.tiboState.pendingPublicReset, pending);
 });
 
 test("a new limits post creates one informational event and is then deduplicated", () => {

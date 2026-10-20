@@ -103,10 +103,14 @@ export function evaluateFiveHourSample(previousState, summary, options = {}) {
   ) {
     events.push({
       type: "reset",
+      previousRemainingPercent: previous.lastRemainingPercent,
       remainingPercent: window.remainingPercent,
       resetsAt: window.resetsAt,
+      detectedAt: now,
     });
   }
+
+  const detectedReset = events.find((event) => event.type === "reset") || null;
 
   const crossed =
     previous.lastRemainingPercent == null
@@ -156,6 +160,14 @@ export function evaluateFiveHourSample(previousState, summary, options = {}) {
       notifiedThresholds,
       forecastAlreadySent: nextForecastAlreadySent,
       samples: trimmedSamples,
+      lastDetectedReset: detectedReset
+        ? {
+            detectedAt: detectedReset.detectedAt,
+            previousRemainingPercent: detectedReset.previousRemainingPercent,
+            remainingPercent: detectedReset.remainingPercent,
+            resetsAt: detectedReset.resetsAt,
+          }
+        : previous.lastDetectedReset || null,
     },
     events,
   };

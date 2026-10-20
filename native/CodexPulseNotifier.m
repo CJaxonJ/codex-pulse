@@ -5,6 +5,7 @@
 @property(nonatomic, copy) NSString *notificationTitle;
 @property(nonatomic, copy) NSString *notificationBody;
 @property(nonatomic, assign) BOOL setupMode;
+@property(nonatomic, assign) BOOL timeSensitive;
 @end
 
 @implementation CodexPulseDelegate
@@ -96,6 +97,11 @@
         content.title = self.notificationTitle;
         content.body = self.notificationBody;
         content.sound = [UNNotificationSound defaultSound];
+        if (self.timeSensitive) {
+            if (@available(macOS 12.0, *)) {
+                content.interruptionLevel = UNNotificationInterruptionLevelTimeSensitive;
+            }
+        }
         NSString *identifier = [NSString stringWithFormat:@"codex-pulse-%@", NSUUID.UUID.UUIDString];
         UNNotificationRequest *request = [UNNotificationRequest requestWithIdentifier:identifier
                                                                                content:content
@@ -128,6 +134,7 @@ int main(int argc, const char * argv[]) {
         [app setActivationPolicy:NSApplicationActivationPolicyAccessory];
         CodexPulseDelegate *delegate = [[CodexPulseDelegate alloc] init];
         delegate.setupMode = [arguments containsObject:@"--setup"];
+        delegate.timeSensitive = [arguments containsObject:@"--time-sensitive"];
         delegate.notificationTitle = title;
         delegate.notificationBody = body;
         app.delegate = delegate;

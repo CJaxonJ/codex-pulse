@@ -39,3 +39,23 @@ test("source health notifications preserve the personal quota distinction", () =
   const recovered = notificationForEvent({ type: "tibo_source_recovered" });
   assert.match(recovered.title, /已恢复/);
 });
+
+test("reset notifications explain ambiguity and later public correlation", () => {
+  const first = notificationForEvent({
+    type: "reset",
+    previousRemainingPercent: 24,
+    remainingPercent: 100,
+  });
+  assert.match(first.title, /24% → 100%/);
+  assert.match(first.body, /普通 5 小时恢复还是公共重置/);
+  assert.equal(first.interruptionLevel, "time-sensitive");
+
+  const confirmed = notificationForEvent({
+    type: "public_reset_landed",
+    previousRemainingPercent: 24,
+    remainingPercent: 100,
+  });
+  assert.match(confirmed.title, /刚才是 Codex 公共重置/);
+  assert.match(confirmed.body, /无需使用重置卡/);
+  assert.equal(confirmed.interruptionLevel, "time-sensitive");
+});
