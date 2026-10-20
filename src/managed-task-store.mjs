@@ -21,7 +21,6 @@ export class ManagedTaskStore {
       autoResume: input.autoResume !== false,
       resumeFloor: input.resumeFloor ?? 50,
       startFloor: input.startFloor ?? input.resumeFloor ?? 50,
-      weeklyFloor: input.weeklyFloor ?? 10,
       threadId: null,
       turnId: null,
       lastPlan: [],

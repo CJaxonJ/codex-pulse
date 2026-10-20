@@ -99,7 +99,7 @@ test("learns from ordinary Codex turns captured by trusted hooks", () => {
   assert.equal(advice.confidence, "medium");
 });
 
-test("protects the last weekly capacity for high-priority work", () => {
+test("treats the final weekly capacity as advisory for explicit work", () => {
   const advice = adviseTaskStart(
     {
       summary: summary({ remaining: 90, weekly: 8 }),
@@ -109,10 +109,11 @@ test("protects the last weekly capacity for high-priority work", () => {
     },
     { now: NOW },
   );
-  assert.equal(advice.verdict, "wait_weekly");
+  assert.equal(advice.verdict, "start_bounded");
+  assert.match(advice.action, /不会阻止/);
 });
 
-test("Plus pauses normal new work when weekly burn is far ahead of pace", () => {
+test("Plus warns without pausing when weekly burn is far ahead of pace", () => {
   const advice = adviseTaskStart(
     {
       summary: summary({ remaining: 90, weekly: 40 }),
@@ -122,12 +123,12 @@ test("Plus pauses normal new work when weekly burn is far ahead of pace", () => 
     },
     { now: NOW },
   );
-  assert.equal(advice.verdict, "wait_weekly");
+  assert.equal(advice.verdict, "start_bounded");
   assert.equal(advice.weeklyPacing.status, "at_risk");
-  assert.match(advice.action, /今天/);
+  assert.match(advice.action, /任务仍会继续/);
 });
 
-test("Pro receives the same weekly pacing guard without inventing a short window", () => {
+test("Pro receives a weekly pacing advisory without inventing a short-window stop", () => {
   const advice = adviseTaskStart(
     {
       summary: { ...summary({ remaining: null, weekly: 40 }), planType: "pro" },
@@ -137,7 +138,7 @@ test("Pro receives the same weekly pacing guard without inventing a short window
     },
     { now: NOW },
   );
-  assert.equal(advice.verdict, "wait_weekly");
+  assert.equal(advice.verdict, "start_bounded");
   assert.equal(advice.weeklyPacing.status, "at_risk");
 });
 

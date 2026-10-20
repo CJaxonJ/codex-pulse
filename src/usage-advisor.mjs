@@ -85,39 +85,26 @@ export function adviseTaskStart(input, options = {}) {
   const weeklyRemaining = summary.weekly?.remainingPercent ?? null;
   const weeklyPacing = evaluateWeeklyPacing(summary, { now });
   const weeklyReason = describeWeeklyPacing(weeklyPacing);
+  const weeklyCaution =
+    weeklyRemaining != null &&
+    (weeklyRemaining <= 10 || weeklyPacing?.status === "at_risk");
+  const weeklyAction =
+    weeklyRemaining != null && weeklyRemaining <= 10
+      ? "周额度已进入最后 10%。这是节奏提醒，不会阻止你明确发起的任务；先完成当前可验收结果，再决定是否扩展。"
+      : weeklyPacing?.status === "at_risk"
+        ? `周消耗速度偏快。任务仍会继续，但建议今天把新增工作控制在约 ${weeklyPacing.dailyBudgetPercent}% 周额度内。`
+        : null;
   const resetInMinutes = minutesUntil(summary.fiveHour?.resetsAt, now);
   const confidence = confidenceFor(samples.length);
   const basis = samples.length
     ? `参考 ${samples.length} 个同类托管任务，中位消耗约 ${estimatedCostPercent}%`
     : `暂无同类历史，暂按${taskSize === "small" ? "小" : taskSize === "large" ? "大" : "中等"}任务保守估算 ${estimatedCostPercent}%`;
 
-  if (
-    weeklyRemaining != null &&
-    priority !== "high" &&
-    (weeklyRemaining <= 10 || weeklyPacing?.status === "at_risk")
-  ) {
-    return {
-      verdict: "wait_weekly",
-      confidence,
-      taskSize,
-      priority,
-      estimatedCostPercent,
-      safetyReservePercent,
-      recommendedStartFloor,
-      weeklyPacing,
-      title: "先别开这项任务",
-      action:
-        weeklyRemaining <= 10
-          ? "周额度已进入最后 10%，把它留给高优先级工作，普通任务等周窗口恢复。"
-          : `当前周消耗速度过快，今天先把新增任务控制在约 ${weeklyPacing.dailyBudgetPercent}% 周额度内。`,
-      reason: `${basis}；${weeklyReason}`,
-    };
-  }
-
-  // Pro currently has no five-hour window. Weekly capacity remains the relevant gate.
+  // Weekly pacing is advisory. Only the personal short-window hard floor may
+  // stop an explicitly submitted task.
   if (remaining == null) {
     return {
-      verdict: "start_now",
+      verdict: weeklyCaution ? "start_bounded" : "start_now",
       confidence,
       taskSize,
       priority,
@@ -125,18 +112,18 @@ export function adviseTaskStart(input, options = {}) {
       safetyReservePercent,
       recommendedStartFloor: 0,
       weeklyPacing,
-      title: "可以开始",
+      title: weeklyCaution ? "可以继续，留意周额度" : "可以开始",
       action:
-        weeklyPacing?.status === "tight"
+        weeklyAction || (weeklyPacing?.status === "tight"
           ? "可以开始，但周额度节奏偏紧；先完成一个可验收结果，再决定是否扩展。"
-          : "当前没有可用的 5 小时窗口约束；继续关注周额度与任务范围。",
+          : "当前没有可用的 5 小时窗口约束；继续关注周额度与任务范围。"),
       reason: weeklyReason ? `${basis}；${weeklyReason}` : basis,
     };
   }
 
   if (remaining >= recommendedStartFloor) {
     return {
-      verdict: "start_now",
+      verdict: weeklyCaution ? "start_bounded" : "start_now",
       confidence,
       taskSize,
       priority,
@@ -144,8 +131,10 @@ export function adviseTaskStart(input, options = {}) {
       safetyReservePercent,
       recommendedStartFloor,
       weeklyPacing,
-      title: "现在可以开工",
-      action: `按当前估算，完成后至少保留 ${safetyReservePercent}% 安全余量。`,
+      title: weeklyCaution ? "可以继续，留意周额度" : "现在可以开工",
+      action:
+        weeklyAction ||
+        `按当前估算，完成后至少保留 ${safetyReservePercent}% 安全余量。`,
       reason: `${basis}；当前 5 小时额度剩余 ${Math.round(remaining)}%。${weeklyReason ? ` ${weeklyReason}` : ""}`,
     };
   }
@@ -198,7 +187,7 @@ export function adviseTaskStart(input, options = {}) {
     estimatedCostPercent,
     safetyReservePercent,
     recommendedStartFloor,
-      weeklyPacing,
+    weeklyPacing,
     title: "可以做，但先缩小这一轮",
     action:
       taskSize === "small"

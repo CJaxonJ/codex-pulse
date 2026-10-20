@@ -132,6 +132,50 @@ test("healthy quota records a turn but does not add model context", async () => 
   assert.equal(await new ChatContinuityStore(dataDir).get("session-2"), null);
 });
 
+test("weekly pacing is advisory and never hard-stops an explicit prompt", async () => {
+  const dataDir = await createDataDir(90);
+  await writeFile(
+    path.join(dataDir, "preferences.json"),
+    JSON.stringify({ quotaPolicy: "strict_reserve" }),
+  );
+  const statePath = path.join(dataDir, "state.json");
+  const state = JSON.parse(await readFile(statePath, "utf8"));
+  state.lastSummary.weekly = {
+    remainingPercent: 8,
+    usedPercent: 92,
+    resetsAt: NOW + 4 * 86400,
+  };
+  await writeFile(statePath, JSON.stringify(state));
+
+  const output = await handleHook(
+    {
+      hook_event_name: "UserPromptSubmit",
+      session_id: "weekly-advisory-session",
+      turn_id: "weekly-advisory-turn",
+      model: "gpt-6.1-sol",
+      prompt: "继续完成这个明确指定的任务",
+    },
+    { dataDir, appRoot: APP_ROOT, now: NOW },
+  );
+
+  assert.equal(output.decision, undefined);
+  assert.match(output.systemMessage, /可以继续/);
+  assert.match(output.hookSpecificOutput.additionalContext, /continue it/);
+  assert.match(output.hookSpecificOutput.additionalContext, /Only the configured five-hour/);
+
+  const toolCheck = await handleHook(
+    {
+      hook_event_name: "PreToolUse",
+      session_id: "weekly-advisory-session",
+      turn_id: "weekly-advisory-turn",
+      model: "gpt-6.1-sol",
+      tool_name: "apply_patch",
+    },
+    { dataDir, appRoot: APP_ROOT, now: NOW + 1 },
+  );
+  assert.equal(toolCheck, null);
+});
+
 test("Stop closes the local observation with real percentage consumption", async () => {
   const dataDir = await createDataDir(30);
   const base = {
