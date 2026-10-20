@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.9.4 — 2026-10-20
+
+- Updated `doctor` to recognize a hook execution observed after the current
+  plugin was installed, so an already-working setup no longer keeps asking the
+  user to review `/hooks`.
+- Kept hook trust manual and reported only execution evidence; Codex Pulse still
+  cannot approve hooks on the user's behalf.
+
 ## 0.9.3 — 2026-10-20
 
 - Increased the Codex CLI plugin-management timeout from 20 to 90 seconds after

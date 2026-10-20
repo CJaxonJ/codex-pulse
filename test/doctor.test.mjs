@@ -63,7 +63,39 @@ test("doctor reports a healthy installed runtime without exposing account data",
   assert.equal(result.checks.find((item) => item.id === "plugin").status, "pass");
   assert.deepEqual(result.support.pluginVersions, ["0.9.0"]);
   assert.equal(result.support.runtimeVersion, "0.9.0");
+  assert.equal(result.support.hookObservedForInstalledPlugin, false);
+  assert.equal(result.checks.find((item) => item.id === "hook-trust").status, "manual");
   assert.equal(JSON.stringify(result).includes(homeDir), false);
+});
+
+test("doctor reports an observed current hook as active", () => {
+  const homeDir = createInstalledFixture();
+  const decisionsDir = path.join(
+    homeDir,
+    "Library",
+    "Application Support",
+    "Codex Pulse",
+    "hook-decisions",
+  );
+  mkdirSync(decisionsDir, { recursive: true });
+  writeFileSync(
+    path.join(decisionsDir, "session.json"),
+    JSON.stringify({ verdict: "start_now", updatedAt: Math.floor(Date.now() / 1000) }),
+  );
+
+  const result = inspectLocalInstallation({
+    homeDir,
+    uid: 501,
+    expectedVersion: "0.9.0",
+    run: () => "service exists",
+  });
+
+  assert.equal(result.support.hookObservedForInstalledPlugin, true);
+  assert.equal(result.checks.find((item) => item.id === "hook-trust").status, "pass");
+  assert.match(
+    result.checks.find((item) => item.id === "hook-trust").detail,
+    /Hook 已执行/,
+  );
 });
 
 test("doctor fails when runtime or plugin versions are stale", () => {

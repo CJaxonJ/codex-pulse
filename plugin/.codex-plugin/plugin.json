@@ -1,6 +1,6 @@
 {
   "name": "codex-pulse",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "description": "Quota-aware guidance for ordinary Codex chats, backed by the user's local Codex Pulse monitor.",
   "author": {
     "name": "CJaxonJ",
