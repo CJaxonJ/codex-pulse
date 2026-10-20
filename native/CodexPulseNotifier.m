@@ -7,6 +7,7 @@
 @property(nonatomic, assign) BOOL setupMode;
 @property(nonatomic, assign) BOOL timeSensitive;
 @property(nonatomic, assign) BOOL statusMode;
+@property(nonatomic, assign) BOOL persistentMode;
 @end
 
 @implementation CodexPulseDelegate
@@ -53,6 +54,30 @@
         }
         [NSApp terminate:nil];
     });
+}
+
+- (void)showPersistentAlert {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.messageText = self.notificationTitle;
+        alert.informativeText = self.notificationBody;
+        [alert addButtonWithTitle:@"知道了"];
+        [alert addButtonWithTitle:@"查看状态"];
+        [NSApp activateIgnoringOtherApps:YES];
+        if ([alert runModal] == NSAlertSecondButtonReturn) {
+            [self showStatusPanel];
+        } else {
+            [NSApp terminate:nil];
+        }
+    });
+}
+
+- (void)finishDelivery {
+    if (self.persistentMode) {
+        [self showPersistentAlert];
+    } else {
+        [self finishAfterDelay];
+    }
 }
 
 - (NSDictionary *)readJSON:(NSString *)name {
@@ -159,7 +184,7 @@
             if (self.setupMode) {
                 [self showPermissionHelp:@"请在“系统设置 → 通知 → Codex Pulse”中打开“允许通知”。"];
             } else {
-                [self finishAfterDelay];
+                [self finishDelivery];
             }
             return;
         }
@@ -168,7 +193,7 @@
             if (self.setupMode) {
                 [self showPermissionHelp:@"监控仍会运行，但不会弹出预警。可以稍后在系统通知设置中重新开启 Codex Pulse。"];
             } else {
-                [self finishAfterDelay];
+                [self finishDelivery];
             }
             return;
         }
@@ -192,7 +217,7 @@
             } else {
                 [self writeLog:[NSString stringWithFormat:@"notification delivered: %@", self.notificationTitle]];
             }
-            [self finishAfterDelay];
+            [self finishDelivery];
         }];
     }];
 }
@@ -222,6 +247,7 @@ int main(int argc, const char * argv[]) {
         CodexPulseDelegate *delegate = [[CodexPulseDelegate alloc] init];
         delegate.setupMode = [arguments containsObject:@"--setup"];
         delegate.timeSensitive = [arguments containsObject:@"--time-sensitive"];
+        delegate.persistentMode = [arguments containsObject:@"--persistent"];
         delegate.statusMode = arguments.count == 1 || [arguments containsObject:@"--status"];
         delegate.notificationTitle = title;
         delegate.notificationBody = body;

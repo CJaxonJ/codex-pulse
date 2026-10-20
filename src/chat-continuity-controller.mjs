@@ -264,7 +264,11 @@ export class ChatContinuityController {
     const claim = await this.#claimLock(original);
     if (!claim.acquired) return null;
     const record = claim.record;
-    const fingerprint = await this.workspace.fingerprint(record.cwd);
+    const fingerprint = await this.workspace.fingerprint(record.cwd, {
+      strategy: String(record.checkpoint?.workspaceFingerprint || "").startsWith("fs:")
+        ? "filesystem"
+        : undefined,
+    });
     if (
       record.checkpoint?.workspaceFingerprint == null ||
       fingerprint == null

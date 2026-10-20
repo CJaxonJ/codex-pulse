@@ -548,7 +548,11 @@ export class ManagedTaskController {
     const claim = await this.#claimLock(task);
     if (!claim.acquired) return null;
     task = claim.task;
-    const currentFingerprint = await this.workspace.fingerprint(task.cwd);
+    const currentFingerprint = await this.workspace.fingerprint(task.cwd, {
+      strategy: String(task.checkpoint?.workspaceFingerprint || "").startsWith("fs:")
+        ? "filesystem"
+        : undefined,
+    });
     if (
       task.checkpoint?.workspaceFingerprint == null ||
       currentFingerprint == null

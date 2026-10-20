@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { access, lstat, readFile, readlink } from "node:fs/promises";
+import { access, lstat, readFile, readdir, readlink } from "node:fs/promises";
 import { promisify } from "node:util";
 import path from "node:path";
 
@@ -8,6 +8,15 @@ const execFileAsync = promisify(execFile);
 const MAX_UNTRACKED_FILES = 2_000;
 const MAX_UNTRACKED_BYTES = 20 * 1024 * 1024;
 const MAX_FINGERPRINT_MS = 2_200;
+const MAX_FALLBACK_ENTRIES = 20_000;
+const MAX_FALLBACK_CONTENT_BYTES = 20 * 1024 * 1024;
+const FALLBACK_EXCLUDED_DIRECTORIES = new Set([
+  ".git",
+  "node_modules",
+  ".venv",
+  "venv",
+  ".cache",
+]);
 
 async function git(cwd, args) {
   const { stdout } = await execFileAsync("git", ["-C", cwd, ...args], {
@@ -54,6 +63,56 @@ async function hashUntracked(cwd, list, startedAt) {
   return hash.digest("hex");
 }
 
+async function filesystemFingerprint(cwd) {
+  const startedAt = Date.now();
+  const root = path.resolve(cwd);
+  const queue = [""];
+  const hash = createHash("sha256");
+  let entries = 0;
+  let contentBytes = 0;
+
+  while (queue.length) {
+    if (Date.now() - startedAt > MAX_FINGERPRINT_MS) {
+      throw new Error("filesystem fingerprint timed out");
+    }
+    const relativeDirectory = queue.shift();
+    const absoluteDirectory = path.join(root, relativeDirectory);
+    const children = await readdir(absoluteDirectory, { withFileTypes: true });
+    children.sort((a, b) => a.name.localeCompare(b.name));
+    for (const child of children) {
+      if (relativeDirectory === "" && FALLBACK_EXCLUDED_DIRECTORIES.has(child.name)) {
+        continue;
+      }
+      entries += 1;
+      if (entries > MAX_FALLBACK_ENTRIES) {
+        throw new Error("filesystem fingerprint entry limit exceeded");
+      }
+      const relative = path.join(relativeDirectory, child.name);
+      const absolute = path.resolve(root, relative);
+      if (!inside(root, absolute)) throw new Error("filesystem path escaped workspace");
+      const details = await lstat(absolute);
+      hash
+        .update(relative)
+        .update("\0")
+        .update(String(details.mode))
+        .update("\0")
+        .update(String(details.size))
+        .update("\0")
+        .update(String(details.mtimeMs))
+        .update("\0");
+      if (details.isDirectory()) {
+        queue.push(relative);
+      } else if (details.isSymbolicLink()) {
+        hash.update("symlink\0").update(await readlink(absolute)).update("\0");
+      } else if (details.isFile() && contentBytes + details.size <= MAX_FALLBACK_CONTENT_BYTES) {
+        hash.update("file\0").update(await readFile(absolute)).update("\0");
+        contentBytes += details.size;
+      }
+    }
+  }
+  return `fs:${hash.digest("hex")}`;
+}
+
 export class WorkspaceInspector {
   async exists(cwd) {
     try {
@@ -64,7 +123,14 @@ export class WorkspaceInspector {
     }
   }
 
-  async fingerprint(cwd) {
+  async fingerprint(cwd, options = {}) {
+    if (options.strategy === "filesystem") {
+      try {
+        return await filesystemFingerprint(cwd);
+      } catch {
+        return null;
+      }
+    }
     try {
       const startedAt = Date.now();
       const [head, status, diff, untracked] = await Promise.all([
@@ -84,7 +150,11 @@ export class WorkspaceInspector {
         .update(untrackedHash)
         .digest("hex");
     } catch {
-      return null;
+      try {
+        return await filesystemFingerprint(cwd);
+      } catch {
+        return null;
+      }
     }
   }
 }

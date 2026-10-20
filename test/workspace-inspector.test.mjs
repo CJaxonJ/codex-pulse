@@ -30,3 +30,18 @@ test("workspace fingerprint changes when untracked file content changes", async 
   assert.notEqual(second, null);
   assert.notEqual(first, second);
 });
+
+test("non-git workspaces use a stable filesystem fallback that detects edits", async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), "codex-pulse-non-git-"));
+  const filePath = path.join(cwd, "work.txt");
+  await writeFile(filePath, "first\n");
+  const inspector = new WorkspaceInspector();
+  const first = await inspector.fingerprint(cwd);
+  const repeat = await inspector.fingerprint(cwd, { strategy: "filesystem" });
+  await writeFile(filePath, "second\n");
+  const second = await inspector.fingerprint(cwd, { strategy: "filesystem" });
+
+  assert.match(first, /^fs:/);
+  assert.equal(repeat, first);
+  assert.notEqual(second, first);
+});

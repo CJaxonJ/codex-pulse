@@ -17,6 +17,7 @@ export function notificationForEvent(event) {
     return {
       title: "Codex 聊天已自动续跑",
       body: "个人额度已经恢复，正在原聊天中根据本机检查点继续未完成工作。",
+      persistent: true,
     };
   }
   if (event.type === "chat_continuity_paused") {
@@ -52,6 +53,7 @@ export function notificationForEvent(event) {
     return {
       title: "Codex 聊天续跑需要确认",
       body: `${reasons[event.reason] || "恢复条件不再安全"}，已停止自动续跑。`,
+      persistent: true,
     };
   }
   if (event.type === "managed_task_started") {
@@ -76,6 +78,7 @@ export function notificationForEvent(event) {
     return {
       title: "Codex 托管任务已恢复",
       body: "个人额度已经恢复，任务正在原线程从第一个未完成步骤继续。",
+      persistent: true,
     };
   }
   if (event.type === "managed_task_complete") {
@@ -149,6 +152,7 @@ export function notificationForEvent(event) {
       title: "确认：刚才是 Codex 公共重置",
       body: `公共重置已经确认；你的账户已从 ${Math.round(event.previousRemainingPercent)}% 回到 ${Math.round(event.remainingPercent)}%，这次已经到账，无需使用重置卡。`,
       interruptionLevel: "time-sensitive",
+      persistent: true,
     };
   }
   if (event.type === "personal_landed") {
@@ -156,6 +160,7 @@ export function notificationForEvent(event) {
       title: "你的 Codex 重置已到账",
       body: `已从你的账户读到额度回升，当前 5 小时额度剩余 ${Math.round(event.remainingPercent)}%。`,
       interruptionLevel: "time-sensitive",
+      persistent: true,
     };
   }
   if (event.type === "threshold") {
@@ -182,6 +187,7 @@ export function notificationForEvent(event) {
       title: `Codex 额度突然回升：${Math.round(event.previousRemainingPercent)}% → ${Math.round(event.remainingPercent)}%`,
       body: "暂时无法判断是普通 5 小时恢复还是公共重置；Codex Pulse 正在继续核对 Tibo 的公开信号。",
       interruptionLevel: "time-sensitive",
+      persistent: true,
     };
   }
   return {
@@ -190,7 +196,7 @@ export function notificationForEvent(event) {
   };
 }
 
-export function sendMacNotification({ title, body, interruptionLevel }) {
+export function sendMacNotification({ title, body, interruptionLevel, persistent }) {
   if (process.env.CODEX_PULSE_DISABLE_NOTIFICATIONS === "1") {
     return Promise.resolve();
   }
@@ -201,6 +207,7 @@ export function sendMacNotification({ title, body, interruptionLevel }) {
     return new Promise((resolve, reject) => {
       const args = ["-W", "-g", "-n", nativeApp, "--args", title, body];
       if (interruptionLevel === "time-sensitive") args.push("--time-sensitive");
+      if (persistent) args.push("--persistent");
       const child = spawn(
         "/usr/bin/open",
         args,
