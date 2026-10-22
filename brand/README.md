@@ -1,14 +1,14 @@
 # Codex Pulse brand assets
 
-The mark combines four product ideas in one continuous shape:
+The mark combines four product ideas in one compact shape:
 
-- the open loop is a task lifecycle rather than an endless background process;
-- the center pulse is local quota observation and early warning;
-- the cyan arc is the handoff from quota recovery back to useful work;
-- the small upper peak is a restrained cat-ear detail inspired by Meiqiu.
+- the open loop is a task that may pause without being abandoned;
+- the two center bars are the protected reserve and the deliberate pause at 10%;
+- the upper pulse is local quota observation and early warning;
+- the green recovery stroke becomes a subtle cat tail inspired by Meiqiu.
 
-The gap in the loop is intentional. Codex Pulse protects a reserve instead of
-trying to consume every last token.
+The pulse and tail share one continuous recovery stroke: quota returns, then
+useful work continues. The cat reference stays secondary to the product idea.
 
 ## Files
 
@@ -24,12 +24,12 @@ macOS to regenerate PNG and ICNS outputs after changing a master.
 
 ## Colors
 
-- Ink: `#17191F`
-- Pulse cyan: `#08A9D6`
-- Dark-theme ink: `#F5F7FA`
-- Dark-theme pulse: `#2CC8F5`
-- Soft surface: `#F7F8FA`
+- Ink: `#171D1C` to `#29312F`
+- Recovery green: `#2E8477` to `#67B7A8`
+- Dark-theme ink: `#D8DED9` to `#F4F6F3`
+- Dark-theme recovery green: `#3B9583` to `#7BC3B4`
+- Soft surface: `#F3F5F2`
 
-Do not add gradients, shadows, eyes, whiskers, or extra cat details. The mark is
-a quota and task-continuity symbol first; the personal detail should be noticed
-only on a second look.
+Keep gradients within the listed color families. Do not add shadows, eyes,
+whiskers, or extra cat details. The mark is a quota and task-continuity symbol
+first; the personal detail should be noticed only on a second look.

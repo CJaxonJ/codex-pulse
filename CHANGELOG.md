@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.15 — 2026-10-23
+
+- Replaced the provisional identity with the selected pause-loop mark: protected
+  reserve bars, a quota pulse, and a restrained Meiqiu-inspired recovery tail.
+- Reworked the palette from high-contrast cyan to warm graphite and calm recovery
+  green, including dedicated light- and dark-surface variants.
+- Regenerated the macOS app icon, plugin icons, PNG fallbacks, and GitHub social
+  preview from the corrected source artwork.
+
 ## 0.9.14 — 2026-10-23
 
 - Added an original two-color Codex Pulse identity built around the task loop,
