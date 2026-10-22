@@ -58,6 +58,16 @@ function closestCrossedThreshold(previousRemaining, currentRemaining, thresholds
   return crossed.length ? Math.min(...crossed) : null;
 }
 
+function resetKind(summary) {
+  const fiveHourRemaining = summary.fiveHour?.remainingPercent;
+  const weeklyRemaining = summary.weekly?.remainingPercent;
+  const fiveHourFull = fiveHourRemaining != null && Math.round(fiveHourRemaining) === 100;
+  const weeklyFull = weeklyRemaining != null && Math.round(weeklyRemaining) === 100;
+  if (fiveHourFull && weeklyFull) return "full";
+  if (fiveHourFull && weeklyRemaining != null && !weeklyFull) return "five_hour";
+  return "unknown";
+}
+
 function startupThreshold(currentRemaining, thresholds) {
   const eligible = thresholds.filter((threshold) => currentRemaining <= threshold);
   return eligible.length ? Math.min(...eligible) : null;
@@ -103,8 +113,10 @@ export function evaluateFiveHourSample(previousState, summary, options = {}) {
   ) {
     events.push({
       type: "reset",
+      resetKind: resetKind(summary),
       previousRemainingPercent: previous.lastRemainingPercent,
       remainingPercent: window.remainingPercent,
+      weeklyRemainingPercent: summary.weekly?.remainingPercent ?? null,
       resetsAt: window.resetsAt,
       detectedAt: now,
     });
@@ -165,6 +177,8 @@ export function evaluateFiveHourSample(previousState, summary, options = {}) {
             detectedAt: detectedReset.detectedAt,
             previousRemainingPercent: detectedReset.previousRemainingPercent,
             remainingPercent: detectedReset.remainingPercent,
+            weeklyRemainingPercent: detectedReset.weeklyRemainingPercent,
+            resetKind: detectedReset.resetKind,
             resetsAt: detectedReset.resetsAt,
           }
         : previous.lastDetectedReset || null,

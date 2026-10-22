@@ -43,16 +43,29 @@ test("source health notifications preserve the personal quota distinction", () =
   assert.match(recovered.title, /已恢复/);
 });
 
-test("reset notifications explain ambiguity and later public correlation", () => {
-  const first = notificationForEvent({
+test("reset notifications distinguish five-hour recovery from full reset", () => {
+  const rolling = notificationForEvent({
     type: "reset",
+    resetKind: "five_hour",
     previousRemainingPercent: 24,
     remainingPercent: 100,
+    weeklyRemainingPercent: 58,
   });
-  assert.match(first.title, /24% → 100%/);
-  assert.match(first.body, /普通 5 小时恢复还是公共重置/);
-  assert.equal(first.interruptionLevel, "time-sensitive");
-  assert.equal(first.persistent, true);
+  assert.match(rolling.title, /5 小时额度已恢复/);
+  assert.match(rolling.body, /周额度仍剩 58%/);
+  assert.match(rolling.body, /不是全量重置/);
+
+  const full = notificationForEvent({
+    type: "reset",
+    resetKind: "full",
+    previousRemainingPercent: 24,
+    remainingPercent: 100,
+    weeklyRemainingPercent: 100,
+  });
+  assert.match(full.title, /Tibo 全量重置已到账/);
+  assert.match(full.body, /周额度都已回到 100%/);
+  assert.equal(full.interruptionLevel, "time-sensitive");
+  assert.equal(full.persistent, true);
 
   const confirmed = notificationForEvent({
     type: "public_reset_landed",

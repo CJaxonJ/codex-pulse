@@ -20,6 +20,17 @@ function summary(remainingPercent, resetsAt = 2_000_000_000) {
   };
 }
 
+function summaryWithWeekly(remainingPercent, weeklyRemainingPercent, resetsAt = 2_000_000_000) {
+  return {
+    ...summary(remainingPercent, resetsAt),
+    weekly: {
+      usedPercent: 100 - weeklyRemainingPercent,
+      remainingPercent: weeklyRemainingPercent,
+      resetsAt: resetsAt + 500_000,
+    },
+  };
+}
+
 test("summarizes the five-hour and weekly windows", () => {
   const result = summarizeRateLimits({
     planType: "plus",
@@ -64,6 +75,28 @@ test("detects a five-hour reset", () => {
   assert.equal(reset.previousRemainingPercent, 8);
   assert.equal(reset.remainingPercent, 100);
   assert.equal(second.state.lastDetectedReset.detectedAt, 1_060);
+  assert.equal(reset.resetKind, "unknown");
+});
+
+test("distinguishes a rolling five-hour recovery from a full reset", () => {
+  const first = evaluateFiveHourSample(
+    null,
+    summaryWithWeekly(8, 58),
+    { now: 1_000 },
+  );
+  const rolling = evaluateFiveHourSample(
+    first.state,
+    summaryWithWeekly(100, 58, 2_000_018_000),
+    { now: 1_060 },
+  );
+  assert.equal(rolling.events.find((event) => event.type === "reset").resetKind, "five_hour");
+
+  const full = evaluateFiveHourSample(
+    first.state,
+    summaryWithWeekly(100, 100, 2_000_018_000),
+    { now: 1_060 },
+  );
+  assert.equal(full.events.find((event) => event.type === "reset").resetKind, "full");
 });
 
 test("warns for a reset credit at 24h, 6h, and 1h without duplicates", () => {

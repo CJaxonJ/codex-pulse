@@ -166,6 +166,14 @@ export function notificationForEvent(event) {
     };
   }
   if (event.type === "personal_landed") {
+    if (event.resetKind === "full") {
+      return {
+        title: "Tibo 全量重置已到账",
+        body: "5 小时额度和周额度都已回到 100%，无需使用重置卡。",
+        interruptionLevel: "time-sensitive",
+        persistent: true,
+      };
+    }
     return {
       title: "你的 Codex 重置已到账",
       body: `已从你的账户读到额度回升，当前 5 小时额度剩余 ${Math.round(event.remainingPercent)}%。`,
@@ -193,9 +201,25 @@ export function notificationForEvent(event) {
     };
   }
   if (event.type === "reset") {
+    if (event.resetKind === "five_hour") {
+      return {
+        title: "Codex 5 小时额度已恢复",
+        body: `5 小时额度已回到 ${Math.round(event.remainingPercent)}%，周额度仍剩 ${Math.round(event.weeklyRemainingPercent)}%。这是普通 5 小时窗口恢复，不是全量重置。`,
+        interruptionLevel: "time-sensitive",
+        persistent: true,
+      };
+    }
+    if (event.resetKind === "full") {
+      return {
+        title: "Tibo 全量重置已到账",
+        body: "5 小时额度和周额度都已回到 100%，无需使用重置卡。",
+        interruptionLevel: "time-sensitive",
+        persistent: true,
+      };
+    }
     return {
       title: `Codex 额度突然回升：${Math.round(event.previousRemainingPercent)}% → ${Math.round(event.remainingPercent)}%`,
-      body: "暂时无法判断是普通 5 小时恢复还是公共重置；Codex Pulse 正在继续核对 Tibo 的公开信号。",
+      body: "周额度数据暂时不可用，Codex Pulse 无法可靠判断是普通 5 小时恢复还是全量重置。",
       interruptionLevel: "time-sensitive",
       persistent: true,
     };
