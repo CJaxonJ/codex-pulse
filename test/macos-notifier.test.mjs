@@ -90,6 +90,7 @@ test("recovery and resume outcomes stay visible until the user dismisses them", 
 test("missing pause-time fingerprints explain why recovery cannot safely auto-resume", () => {
   const paused = notificationForEvent({
     type: "chat_continuity_paused",
+    resumeMode: "native_goal",
     resumePrepared: false,
   });
   assert.match(paused.title, /无法保证自动续跑/);
@@ -137,8 +138,23 @@ test("strict reserve makes the ten-percent action explicit and persistent", () =
   assert.match(threshold.body, /保存检查点/);
   assert.equal(threshold.interruptionLevel, "time-sensitive");
 
-  const paused = notificationForEvent({ type: "chat_continuity_paused" });
+  const paused = notificationForEvent({
+    type: "chat_continuity_paused",
+    resumeMode: "native_goal",
+  });
   assert.match(paused.title, /安全暂停/);
   assert.match(paused.body, /个人额度恢复后只会续跑一次/);
   assert.equal(paused.interruptionLevel, "time-sensitive");
+});
+
+test("a chat without a native Goal promises only a manual continuation", () => {
+  const paused = notificationForEvent({
+    type: "chat_continuity_paused",
+    resumeMode: "manual",
+    resumePrepared: true,
+  });
+  assert.match(paused.title, /需要手动继续/);
+  assert.match(paused.body, /\/goal/);
+  assert.match(paused.body, /额度恢复后请回到这里发送“继续”/);
+  assert.equal(paused.persistent, true);
 });

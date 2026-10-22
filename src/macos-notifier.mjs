@@ -16,11 +16,22 @@ export function notificationForEvent(event) {
   if (event.type === "chat_continuity_resumed") {
     return {
       title: "Codex 聊天已自动续跑",
-      body: "个人额度已经恢复，正在原聊天中根据本机检查点继续未完成工作。",
+      body:
+        event.resumeMode === "native_goal"
+          ? "个人额度已经恢复，原生 Goal 已重新激活，Codex 正在当前聊天继续未完成工作。"
+          : "个人额度已经恢复，正在原聊天中根据本机检查点继续未完成工作。",
       persistent: true,
     };
   }
   if (event.type === "chat_continuity_paused") {
+    if (event.resumeMode !== "native_goal") {
+      return {
+        title: "Codex 检查点已保存，需要手动继续",
+        body: "当前聊天没有原生 Goal。额度恢复后请回到这里发送“继续”；下次长任务可先使用 /goal 开启同聊天自动续跑。",
+        interruptionLevel: "time-sensitive",
+        persistent: true,
+      };
+    }
     if (event.resumePrepared === false) {
       return {
         title: "Codex 已暂停，但无法保证自动续跑",
@@ -33,6 +44,7 @@ export function notificationForEvent(event) {
       title: "Codex 已在 10% 保护线安全暂停",
       body: "本机检查点已保存：包含已完成、验证结果、剩余工作和下一步。个人额度恢复后只会续跑一次。",
       interruptionLevel: "time-sensitive",
+      persistent: true,
     };
   }
   if (event.type === "chat_continuity_complete") {
@@ -56,6 +68,10 @@ export function notificationForEvent(event) {
       checkpoint_missing_fingerprint:
         "暂停时没有保存到工作区指纹（可能是旧版记录或当时校验失败）",
       resume_state_unknown: "后台重启后无法确认续跑任务是否仍在执行",
+      native_goal_required: "当前聊天没有原生 Goal，外部 watcher 无权写入 Desktop 正在持有的聊天",
+      native_goal_missing: "原生 Goal 已被清除",
+      native_goal_paused: "原生 Goal 仍处于暂停状态",
+      native_goal_state_unavailable: "暂时无法读取原生 Goal 状态",
       resume_failed: "恢复后的任务执行失败",
       resume_interrupted: "恢复后的任务被中断",
       resume_incomplete: "恢复请求未能完整启动",
@@ -185,7 +201,7 @@ export function notificationForEvent(event) {
     if (event.threshold <= 10 && event.quotaPolicy === "strict_reserve") {
       return {
         title: "Codex Pulse：已到 10% 保护线",
-        body: `当前剩余 ${Math.round(event.remainingPercent)}%。将拦截后续工具调用，要求 Codex 保存检查点；预计 ${formatResetTime(event.resetsAt)} 恢复后安全续跑。`,
+        body: `当前剩余 ${Math.round(event.remainingPercent)}%。将拦截后续工具调用并保存检查点；预计 ${formatResetTime(event.resetsAt)} 恢复。当前聊天启用了原生 Goal 才会自动续跑。`,
         interruptionLevel: "time-sensitive",
       };
     }

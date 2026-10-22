@@ -5,12 +5,24 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { handleHook } from "../plugin/scripts/pulse-hook.mjs";
+import { handleHook as handleHookImpl } from "../plugin/scripts/pulse-hook.mjs";
 import { ChatContinuityStore } from "../src/chat-continuity-store.mjs";
 import { WorkspaceInspector } from "../src/workspace-inspector.mjs";
 
 const NOW = 2_000_000_000;
 const APP_ROOT = path.resolve(import.meta.dirname, "..");
+const noGoalCoordinator = {
+  async pauseIfActive() {
+    return { paused: false, status: null };
+  },
+};
+
+function handleHook(input, options = {}) {
+  return handleHookImpl(input, {
+    goalCoordinator: noGoalCoordinator,
+    ...options,
+  });
+}
 
 async function createDataDir(remaining) {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "codex-pulse-hook-"));
@@ -341,7 +353,56 @@ test("ordinary chat blocks further tools and saves one local checkpoint without 
   assert.equal(record.status, "paused_quota");
   assert.equal(record.turnId, "turn-work");
   assert.equal(record.checkpoint.summary, checkpointSummary);
+  assert.equal(record.resumeMode, "manual");
+  assert.equal(record.goalWasActive, false);
+  assert.equal(record.autoResume, false);
+  assert.equal(record.resumeUnavailableReason, "native_goal_required");
   assert.equal(JSON.stringify(record).includes(originalPrompt), false);
+});
+
+test("ordinary chat with an active native Goal is paused and prepared for Goal recovery", async () => {
+  const dataDir = await createDataDir(9);
+  await writeFile(
+    path.join(dataDir, "preferences.json"),
+    JSON.stringify({ quotaPolicy: "strict_reserve" }),
+  );
+  const calls = [];
+  const goalCoordinator = {
+    async pauseIfActive(threadId) {
+      calls.push(threadId);
+      return { paused: true, status: "paused" };
+    },
+  };
+  const base = {
+    session_id: "goal-thread",
+    turn_id: "goal-turn",
+    model: "gpt-6.1-sol",
+    cwd: process.cwd(),
+    permission_mode: "default",
+  };
+
+  const stopped = await handleHookImpl(
+    { ...base, hook_event_name: "PostToolUse", tool_name: "Bash" },
+    { dataDir, appRoot: APP_ROOT, now: NOW, goalCoordinator },
+  );
+  assert.equal(stopped.decision, "block");
+
+  const checkpoint = await handleHookImpl(
+    {
+      ...base,
+      hook_event_name: "Stop",
+      last_assistant_message: "Completed: one. Remaining: two.",
+    },
+    { dataDir, appRoot: APP_ROOT, now: NOW + 1, goalCoordinator },
+  );
+  const record = await new ChatContinuityStore(dataDir).get(base.session_id);
+  assert.deepEqual(calls, ["goal-thread"]);
+  assert.equal(record.status, "paused_quota");
+  assert.equal(record.resumeMode, "native_goal");
+  assert.equal(record.goalWasActive, true);
+  assert.equal(record.autoResume, true);
+  assert.match(checkpoint.systemMessage, /原生 Goal/);
+  assert.match(checkpoint.systemMessage, /当前聊天续跑/);
 });
 
 test("ordinary chat checkpoint scopes workspace verification to the repo touched by the turn", async () => {

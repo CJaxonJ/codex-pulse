@@ -25,23 +25,6 @@ function recoveryReady(record, summary, quota) {
   );
 }
 
-function recoveryPrompt(record) {
-  const checkpoint = record.checkpoint || {};
-  const summary = String(checkpoint.summary || "No textual checkpoint was captured.").slice(
-    0,
-    6_000,
-  );
-  return [
-    "Codex Pulse restored this chat after its personal quota recovered.",
-    "Continue the user's unfinished task in this same chat.",
-    "First inspect the current workspace and the checkpoint below. Preserve existing changes.",
-    "Do not redo completed work. Stop and ask the user if the workspace diverged, a permission is required, newer user activity exists, or the task is already complete.",
-    "",
-    "Local checkpoint:",
-    summary,
-  ].join("\n");
-}
-
 export class ChatContinuityController {
   constructor({ client, store, workspace, lockManager = null, onEvent = async () => {} }) {
     this.client = client;
@@ -88,9 +71,22 @@ export class ChatContinuityController {
         type: "chat_continuity_paused",
         sessionId: record.sessionId,
         resumePrepared: Boolean(record.checkpoint?.workspaceFingerprint),
+        resumeMode: record.resumeMode || "manual",
       };
       events.push(event);
       await this.onEvent(event);
+    }
+
+    records = await this.store.list();
+
+    for (const record of records.filter(
+      (candidate) => candidate.status === "native_goal_active",
+    )) {
+      const event = await this.#reconcileNativeGoal(record, now);
+      if (event) {
+        events.push(event);
+        await this.onEvent(event);
+      }
     }
 
     records = await this.store.list();
@@ -363,6 +359,21 @@ export class ChatContinuityController {
       };
     }
 
+    if (record.resumeMode !== "native_goal" || record.goalWasActive !== true) {
+      const blocked = await this.store.put({
+        ...record,
+        status: "needs_attention",
+        autoResume: false,
+        blocker: "native_goal_required",
+      });
+      await this.#releaseLock(blocked);
+      return {
+        type: "chat_continuity_attention",
+        sessionId: record.sessionId,
+        reason: "native_goal_required",
+      };
+    }
+
     const resuming = await this.store.put({
       ...record,
       status: "resuming",
@@ -371,26 +382,32 @@ export class ChatContinuityController {
       lastResumeError: null,
     });
     try {
-      await this.client.request("thread/resume", {
+      const currentGoal = await this.client.request("thread/goal/get", {
         threadId: record.sessionId,
-        excludeTurns: true,
       });
-      const turn = await this.client.request("turn/start", {
-        threadId: record.sessionId,
-        input: [{ type: "text", text: recoveryPrompt(record) }],
-      });
+      if (!currentGoal.goal) {
+        throw new Error("native goal no longer exists");
+      }
+      if (currentGoal.goal.status !== "active") {
+        await this.client.request("thread/goal/set", {
+          threadId: record.sessionId,
+          status: "active",
+          origin: "automatic",
+        });
+      }
       await this.store.put({
         ...resuming,
-        status: "running",
+        status: "native_goal_active",
         holdWorktreeLock: false,
-        turnId: turn.turn.id,
+        pausedTurnId: record.turnId,
         resumedAt: now,
         resumeCount: (record.resumeCount || 0) + 1,
       });
       return {
         type: "chat_continuity_resumed",
+        threadId: record.sessionId,
         sessionId: record.sessionId,
-        turnId: turn.turn.id,
+        resumeMode: "native_goal",
       };
     } catch (error) {
       const blocked = await this.store.put({
@@ -406,6 +423,75 @@ export class ChatContinuityController {
         reason: "resume_incomplete",
       };
     }
+  }
+
+  async #reconcileNativeGoal(record, now) {
+    let goal;
+    let latestTurn;
+    try {
+      const [goalResult, history] = await Promise.all([
+        this.client.request("thread/goal/get", { threadId: record.sessionId }),
+        this.client.request("thread/turns/list", {
+          threadId: record.sessionId,
+          limit: 1,
+          sortDirection: "desc",
+          itemsView: "notLoaded",
+        }),
+      ]);
+      goal = goalResult.goal || null;
+      latestTurn = history.data?.[0] || null;
+    } catch (error) {
+      const blocked = await this.store.put({
+        ...record,
+        status: "needs_attention",
+        blocker: "native_goal_state_unavailable",
+        lastResumeError: error.message,
+      });
+      await this.#releaseOrReclaimLock(blocked);
+      return {
+        type: "chat_continuity_attention",
+        sessionId: record.sessionId,
+        reason: "native_goal_state_unavailable",
+      };
+    }
+
+    if (goal?.status === "complete") {
+      const completed = await this.store.put({
+        ...record,
+        status: "complete",
+        turnId: latestTurn?.id || record.turnId,
+        completedAt: now,
+        holdWorktreeLock: false,
+      });
+      await this.#releaseOrReclaimLock(completed);
+      return {
+        type: "chat_continuity_complete",
+        sessionId: record.sessionId,
+        turnId: latestTurn?.id || record.turnId,
+      };
+    }
+
+    if (!goal || ["blocked", "paused"].includes(goal.status)) {
+      const reason = !goal ? "native_goal_missing" : `native_goal_${goal.status}`;
+      const blocked = await this.store.put({
+        ...record,
+        status: "needs_attention",
+        blocker: reason,
+        turnId: latestTurn?.id || record.turnId,
+        holdWorktreeLock: false,
+      });
+      await this.#releaseOrReclaimLock(blocked);
+      return {
+        type: "chat_continuity_attention",
+        sessionId: record.sessionId,
+        reason,
+      };
+    }
+
+    if (latestTurn?.id && latestTurn.id !== record.turnId) {
+      await this.store.put({ ...record, turnId: latestTurn.id });
+    }
+    return null;
   }
 
   async #handleNotification(message) {

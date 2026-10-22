@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { handleHook } from "../plugin/scripts/pulse-hook.mjs";
+import { handleHook as handleHookImpl } from "../plugin/scripts/pulse-hook.mjs";
 import { ChatContinuityController } from "../src/chat-continuity-controller.mjs";
 import { ChatContinuityStore } from "../src/chat-continuity-store.mjs";
 import { WorkspaceInspector } from "../src/workspace-inspector.mjs";
@@ -23,6 +23,24 @@ const store = new ChatContinuityStore(dataDir);
 const inspector = new WorkspaceInspector();
 const timeline = [];
 let succeeded = false;
+const goalState = { status: "active" };
+const threadState = {
+  latestTurnId: "simulated-initial-turn",
+  latestTurnStatus: "completed",
+};
+const goalCoordinator = {
+  async pauseIfActive() {
+    if (goalState.status !== "active") {
+      return { paused: false, status: goalState.status };
+    }
+    goalState.status = "paused";
+    return { paused: true, status: "paused" };
+  },
+};
+
+function handleHook(input, options = {}) {
+  return handleHookImpl(input, { goalCoordinator, ...options });
+}
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -66,24 +84,31 @@ async function exists(filePath) {
 class SimulatedAppServer {
   constructor(name, initialTurnId) {
     this.name = name;
-    this.latestTurnId = initialTurnId;
+    threadState.latestTurnId = initialTurnId;
     this.calls = [];
   }
 
   async request(method, params) {
     this.calls.push({ method, params });
     if (method === "thread/turns/list") {
-      return { data: [{ id: this.latestTurnId, status: "completed" }] };
+      return {
+        data: [{ id: threadState.latestTurnId, status: threadState.latestTurnStatus }],
+      };
     }
-    if (method === "thread/resume") return { thread: { id: params.threadId } };
-    if (method === "turn/start") {
-      const prompt = params.input?.[0]?.text || "";
-      for (const label of ["Completed", "Verification", "Remaining", "Next action", "Blockers"]) {
-        assert(prompt.includes(label), `resume prompt lost checkpoint section: ${label}`);
+    if (method === "thread/goal/get") {
+      return { goal: goalState.status ? { status: goalState.status } : null };
+    }
+    if (method === "thread/goal/set") {
+      goalState.status = params.status;
+      if (params.status === "active") {
+        threadState.latestTurnId = "simulated-native-goal-turn";
+        threadState.latestTurnStatus = "inProgress";
+        await writeFile(proofPath, "RESUME_OK\n", "utf8");
       }
-      this.latestTurnId = `${this.name}-resumed-turn`;
-      await writeFile(proofPath, "RESUME_OK\n", "utf8");
-      return { turn: { id: this.latestTurnId, status: "inProgress" } };
+      return { goal: { status: goalState.status } };
+    }
+    if (["thread/resume", "turn/start"].includes(method)) {
+      throw new Error(`ordinary Desktop chat must not call ${method}`);
     }
     return {};
   }
@@ -232,35 +257,47 @@ try {
     controllerB.reconcile(recovered, { now: now + 120 }),
   ]);
 
-  const startsA = clientA.calls.filter((call) => call.method === "turn/start");
-  const startsB = clientB.calls.filter((call) => call.method === "turn/start");
-  assert(startsA.length + startsB.length === 1, "concurrent watchers started the chat more than once");
+  const activationsA = clientA.calls.filter(
+    (call) => call.method === "thread/goal/set" && call.params.status === "active",
+  );
+  const activationsB = clientB.calls.filter(
+    (call) => call.method === "thread/goal/set" && call.params.status === "active",
+  );
+  assert(
+    activationsA.length + activationsB.length === 1,
+    "concurrent watchers activated the native Goal more than once",
+  );
+  assert(
+    [...clientA.calls, ...clientB.calls].every(
+      (call) => !["thread/resume", "turn/start"].includes(call.method),
+    ),
+    "ordinary Desktop chat used the external writer path",
+  );
   record = await store.get(sessionId);
-  assert(record?.status === "running", "recovered chat did not enter running state");
+  assert(record?.status === "native_goal_active", "recovered chat did not enter native Goal state");
   assert(record.resumeCount === 1, "resume count was not exactly one");
   assert(await exists(proofPath), "simulated resumed task did not execute the next action");
-  timeline.push("80%: concurrent watchers detected recovery and exactly one resumed the same chat");
+  timeline.push("80%: concurrent watchers detected recovery and exactly one reactivated the native Goal");
 
   await Promise.all([
     controllerA.reconcile(recovered, { now: now + 121 }),
     controllerB.reconcile(recovered, { now: now + 121 }),
   ]);
   assert(
-    clientA.calls.filter((call) => call.method === "turn/start").length +
-      clientB.calls.filter((call) => call.method === "turn/start").length ===
+    clientA.calls.filter(
+      (call) => call.method === "thread/goal/set" && call.params.status === "active",
+    ).length +
+      clientB.calls.filter(
+        (call) => call.method === "thread/goal/set" && call.params.status === "active",
+      ).length ===
       1,
-    "a later watcher poll started a duplicate turn",
+    "a later watcher poll activated the native Goal twice",
   );
 
-  const ownerController = startsA.length ? controllerA : controllerB;
-  await ownerController.handleNotification({
-    method: "turn/completed",
-    params: {
-      threadId: sessionId,
-      turnId: record.turnId,
-      turn: { id: record.turnId, status: "completed" },
-    },
-  });
+  const ownerController = activationsA.length ? controllerA : controllerB;
+  goalState.status = "complete";
+  threadState.latestTurnStatus = "completed";
+  await ownerController.reconcile(recovered, { now: now + 122 });
   record = await store.get(sessionId);
   assert(record?.status === "complete", "resumed task completion was not persisted");
   assert(record.worktreeLock == null, "worktree lock was not released after completion");
@@ -274,7 +311,7 @@ try {
     JSON.stringify(
       {
         ok: true,
-        mode: "offline_full_chain_with_synthetic_quota_and_simulated_app_server",
+        mode: "offline_full_chain_with_synthetic_quota_and_native_goal_protocol",
         quotaSpent: 0,
         timeline,
         checkpoint: checkpointText,

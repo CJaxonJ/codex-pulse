@@ -1,10 +1,10 @@
 {
   "name": "codex-pulse",
-  "version": "0.9.9",
+  "version": "0.9.10",
   "private": true,
   "license": "MIT",
   "codexPulse": {
-    "compatiblePluginVersions": ["0.9.5", "0.9.6", "0.9.7", "0.9.9"]
+    "compatiblePluginVersions": ["0.9.10"]
   },
   "engines": {
     "node": ">=20"
@@ -25,8 +25,6 @@
     "e2e:tibo:live": "node scripts/e2e-tibo-live.mjs",
     "e2e:managed": "node scripts/e2e-managed-task.mjs",
     "e2e:chat": "node scripts/e2e-chat-continuity-simulated.mjs",
-    "e2e:chat:live": "node scripts/e2e-chat-continuity.mjs",
-    "e2e:chat:watcher:live": "node scripts/e2e-chat-continuity-watcher.mjs",
     "e2e:notifier": "node scripts/e2e-notifier-persistent-macos.mjs",
     "test": "node --test"
   }

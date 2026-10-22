@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.10 — 2026-10-22
+
+- Replaced the invalid external-writer path for ordinary Desktop chats with
+  native Codex Goal pause/reactivation. Chats without a user-created Goal now
+  save a checkpoint and clearly require manual continuation.
+- Removed the misleading App-Server-owned “ordinary chat” live gate and made
+  real Desktop Goal acceptance an explicit release requirement.
+- Added concurrent native-Goal recovery coverage and fixed colliding temporary
+  filenames when two watcher processes update the same continuity record.
+- Made native-Goal pause outcomes persistent and clarified that the 10% warning
+  promises automatic continuation only when the chat has a native Goal.
+
 ## 0.9.9 — 2026-10-22
 
 - Scoped ordinary-chat recovery checks to repositories actually touched by the

@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { ChatContinuityController } from "../src/chat-continuity-controller.mjs";
-import { MemoryChatContinuityStore } from "../src/chat-continuity-store.mjs";
+import {
+  ChatContinuityStore,
+  MemoryChatContinuityStore,
+} from "../src/chat-continuity-store.mjs";
+import { mkdtemp } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 function summary(remainingPercent, resetsAt = 2_000_000_000) {
   return {
@@ -19,6 +25,8 @@ function pausedChat(overrides = {}) {
     cwd: "/tmp/project",
     turnId: "turn-1",
     autoResume: true,
+    resumeMode: "native_goal",
+    goalWasActive: true,
     resumeFloor: 50,
     pausedWindowKey: 100,
     pausedRemaining: 9,
@@ -37,11 +45,22 @@ class FakeClient {
   constructor() {
     this.calls = [];
     this.latestTurnId = "turn-1";
+    this.latestTurnStatus = "completed";
+    this.goalStatus = "paused";
   }
 
   async request(method, params) {
     this.calls.push({ method, params });
-    if (method === "thread/turns/list") return { data: [{ id: this.latestTurnId }] };
+    if (method === "thread/turns/list") {
+      return { data: [{ id: this.latestTurnId, status: this.latestTurnStatus }] };
+    }
+    if (method === "thread/goal/get") {
+      return { goal: this.goalStatus ? { status: this.goalStatus } : null };
+    }
+    if (method === "thread/goal/set") {
+      this.goalStatus = params.status;
+      return { goal: { status: this.goalStatus } };
+    }
     if (method === "thread/resume") return { thread: { id: params.threadId } };
     if (method === "turn/start") {
       this.latestTurnId = "turn-2";
@@ -51,7 +70,7 @@ class FakeClient {
   }
 }
 
-test("ordinary chat resumes the same thread exactly once and releases its lock", async () => {
+test("ordinary chat reactivates its native Goal exactly once and releases its lock", async () => {
   const store = new MemoryChatContinuityStore([pausedChat()]);
   const client = new FakeClient();
   const locks = new Map();
@@ -86,30 +105,74 @@ test("ordinary chat resumes the same thread exactly once and releases its lock",
   const events = await controller.reconcile(summary(85, 200), { now: 20 });
   let record = await store.get("thread-1");
   assert.equal(events[0].type, "chat_continuity_resumed");
-  assert.equal(record.status, "running");
-  assert.equal(record.turnId, "turn-2");
+  assert.equal(record.status, "native_goal_active");
+  assert.equal(record.turnId, "turn-1");
   assert.equal(record.resumeCount, 1);
-  assert.match(
-    client.calls.find((call) => call.method === "turn/start").params.input[0].text,
-    /Completed phase one/,
+  assert.deepEqual(
+    client.calls.find((call) => call.method === "thread/goal/set")?.params,
+    { threadId: "thread-1", status: "active", origin: "automatic" },
   );
+  assert.equal(client.calls.some((call) => call.method === "thread/resume"), false);
+  assert.equal(client.calls.some((call) => call.method === "turn/start"), false);
 
   await controller.reconcile(summary(85, 200), { now: 21 });
-  assert.equal(client.calls.filter((call) => call.method === "turn/start").length, 1);
+  assert.equal(client.calls.filter((call) => call.method === "thread/goal/set").length, 1);
 
-  await controller.handleNotification({
-    method: "turn/completed",
-    params: {
-      threadId: "thread-1",
-      turnId: "turn-2",
-      turn: { id: "turn-2", status: "completed" },
-    },
-  });
+  client.latestTurnId = "turn-native";
+  client.goalStatus = "complete";
+  await controller.reconcile(summary(85, 200), { now: 22 });
   record = await store.get("thread-1");
   assert.equal(record.status, "complete");
+  assert.equal(record.turnId, "turn-native");
   assert.equal(record.worktreeLock, null);
   assert.equal(locks.size, 0);
   assert.deepEqual(emitted, ["chat_continuity_resumed", "chat_continuity_complete"]);
+});
+
+test("file-backed chat records tolerate concurrent atomic writes in one process", async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), "codex-pulse-chat-store-"));
+  const first = new ChatContinuityStore(dataDir);
+  const second = new ChatContinuityStore(dataDir);
+
+  await Promise.all([
+    first.put(pausedChat({ updatedBy: "first" })),
+    second.put(pausedChat({ updatedBy: "second" })),
+  ]);
+
+  const saved = await first.get("thread-1");
+  assert.equal(saved.sessionId, "thread-1");
+  assert.ok(["first", "second"].includes(saved.updatedBy));
+});
+
+test("ordinary chat without a native Goal stays manual and never starts an external turn", async () => {
+  const store = new MemoryChatContinuityStore([
+    pausedChat({
+      autoResume: true,
+      resumeMode: "manual",
+      goalWasActive: false,
+    }),
+  ]);
+  const client = new FakeClient();
+  const controller = new ChatContinuityController({
+    client,
+    store,
+    workspace: {
+      async exists() {
+        return true;
+      },
+      async fingerprint() {
+        return "same";
+      },
+    },
+  });
+
+  const events = await controller.reconcile(summary(85, 200), { now: 20 });
+  const record = await store.get("thread-1");
+  assert.equal(events[0].reason, "native_goal_required");
+  assert.equal(record.status, "needs_attention");
+  assert.equal(record.autoResume, false);
+  assert.equal(client.calls.some((call) => call.method === "thread/resume"), false);
+  assert.equal(client.calls.some((call) => call.method === "turn/start"), false);
 });
 
 test("a quota-paused chat emits one user-visible pause event", async () => {
