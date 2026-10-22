@@ -16,7 +16,7 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-node scripts/install-macos.mjs
+CODEX_PULSE_INTERACTIVE_INSTALL=1 node scripts/install-macos.mjs
 
 echo ""
 echo "安装流程已结束。若你刚才选择了‘稍后’，请重新运行安装程序完成 Hook 信任。"

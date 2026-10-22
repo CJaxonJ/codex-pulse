@@ -1,7 +1,11 @@
 # Changelog
 
-## 0.9.12 — 2026-10-22
+## 0.9.12 — 2026-10-23
 
+- Made first-run Hook setup explicitly guided: Finder-launched installs always
+  show the native review prompt, open the correct CLI, and offer an explicit
+  one-click ChatGPT restart after the user completes Codex's required trust
+  review.
 - Fixed the missed recovery path where the five-hour quota crossed the 10%
   reserve after the turn's last tool call: the Stop hook now pauses the active
   Goal and persists the checkpoint even without another tool event.

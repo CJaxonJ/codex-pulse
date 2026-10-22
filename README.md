@@ -117,10 +117,12 @@ marketplace. The extracted folder can then be deleted.
 At the end of an interactive installation, a native guide offers to open Codex
 CLI in the same Terminal window. The user only needs to run `/hooks`, inspect the
 Codex Pulse hook commands, press `t` when their paths stay inside the installed
-plugin, exit the CLI, and restart the desktop app. `/hooks` is not a command in
-the desktop chat composer. Non-interactive installs print the same instructions.
-Codex intentionally requires this one-time review; the installer opens the right
-surface but never bypasses hook trust.
+plugin, and exit the CLI. A second native dialog then offers to restart ChatGPT
+immediately, while warning that active Codex work will stop; users can defer the
+restart. `/hooks` is not a command in the desktop chat composer. Non-interactive
+installs print the same instructions. Codex intentionally requires this one-time
+review; the installer opens the right surface and handles the restart flow but
+never bypasses hook trust.
 
 Once trusted, normal Codex chats get automatic guidance:
 

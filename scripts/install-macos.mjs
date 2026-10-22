@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   hookReviewMessage,
+  offerCodexRestart,
   openHookReview,
 } from "../src/hook-review-onboarding.mjs";
 
@@ -27,6 +28,7 @@ const monitorPath = path.join(runtimeDir, "bin", "codex-pulse.mjs");
 const nodePath = process.execPath;
 const desktopCodex =
   "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex";
+const chatgptApp = "/Applications/ChatGPT.app";
 const uid = process.getuid();
 const service = `gui/${uid}/com.cjaxonj.codex-pulse`;
 
@@ -150,7 +152,12 @@ const hookReview = openHookReview({ codexPath });
 if (!hookReview.launched) {
   console.log(`\n${hookReviewMessage()}\n`);
 } else {
-  console.log(
-    "\nCodex CLI 已关闭。请彻底退出并重新打开 Codex 桌面端，Codex Pulse 随后会自动工作。\n",
-  );
+  const restart = offerCodexRestart({ chatgptInstalled: existsSync(chatgptApp) });
+  if (restart.restarted) {
+    console.log("\nCodex 已重新打开。Hook 会在新会话中开始工作。\n");
+  } else if (restart.reason === "desktop_unavailable") {
+    console.log("\nCodex CLI 已关闭。下次重新打开 Codex CLI 后，Hook 会开始工作。\n");
+  } else {
+    console.log("\nCodex CLI 已关闭。请在方便时彻底退出并重新打开 Codex。\n");
+  }
 }
