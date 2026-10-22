@@ -561,6 +561,10 @@ export class ManagedTaskController {
         ...task,
         status: "needs_attention",
         blocker: "workspace_unverifiable",
+        blockerDetails:
+          this.workspace.failureDiagnostic?.() ||
+          task.checkpoint?.workspaceFingerprintFailure ||
+          null,
       });
       await this.#releaseLock(blocked);
       return {

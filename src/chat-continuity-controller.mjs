@@ -290,6 +290,11 @@ export class ChatContinuityController {
         ...record,
         status: "needs_attention",
         blocker: reason,
+        blockerDetails:
+          snapshotComparison?.failure ||
+          this.workspace.failureDiagnostic?.() ||
+          record.checkpoint?.workspaceFingerprintFailure ||
+          null,
       });
       await this.#releaseLock(blocked);
       return {

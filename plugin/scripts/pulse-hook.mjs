@@ -200,10 +200,14 @@ async function rememberWorkspaceHints(continuityStore, input, cwd) {
 
 async function captureWorkspace(workspace, cwd, hints) {
   const workspaceSnapshot = await workspace.snapshot(cwd, { hints });
+  const workspaceFingerprint =
+    workspaceSnapshot?.digest || (await workspace.fingerprint(cwd));
   return {
     workspaceSnapshot,
-    workspaceFingerprint:
-      workspaceSnapshot?.digest || (await workspace.fingerprint(cwd)),
+    workspaceFingerprint,
+    ...(workspaceFingerprint == null
+      ? { workspaceFingerprintFailure: workspace.failureDiagnostic?.() || null }
+      : {}),
   };
 }
 
