@@ -98,6 +98,32 @@ test("doctor reports an observed current hook as active", () => {
   );
 });
 
+test("a runtime-only release accepts an explicitly compatible trusted plugin", () => {
+  const homeDir = createInstalledFixture();
+  writeFileSync(
+    path.join(
+      homeDir,
+      "Library",
+      "Application Support",
+      "Codex Pulse",
+      "app",
+      "package.json",
+    ),
+    JSON.stringify({ version: "0.9.8" }),
+  );
+  const result = inspectLocalInstallation({
+    homeDir,
+    uid: 501,
+    expectedVersion: "0.9.8",
+    compatiblePluginVersions: ["0.9.0"],
+    run: () => "service exists",
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.checks.find((item) => item.id === "runtime").status, "pass");
+  assert.equal(result.checks.find((item) => item.id === "plugin").status, "pass");
+});
+
 test("doctor fails when runtime or plugin versions are stale", () => {
   const homeDir = createInstalledFixture();
   writeFileSync(

@@ -1,14 +1,28 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { handleHook } from "../plugin/scripts/pulse-hook.mjs";
+import { handleHook as handleHookImpl } from "../plugin/scripts/pulse-hook.mjs";
 import { ChatContinuityStore } from "../src/chat-continuity-store.mjs";
+import { WorkspaceInspector } from "../src/workspace-inspector.mjs";
 
 const NOW = 2_000_000_000;
 const APP_ROOT = path.resolve(import.meta.dirname, "..");
+const noGoalCoordinator = {
+  async pauseIfActive() {
+    return { paused: false, status: null };
+  },
+};
+
+function handleHook(input, options = {}) {
+  return handleHookImpl(input, {
+    goalCoordinator: noGoalCoordinator,
+    ...options,
+  });
+}
 
 async function createDataDir(remaining) {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "codex-pulse-hook-"));
@@ -339,7 +353,217 @@ test("ordinary chat blocks further tools and saves one local checkpoint without 
   assert.equal(record.status, "paused_quota");
   assert.equal(record.turnId, "turn-work");
   assert.equal(record.checkpoint.summary, checkpointSummary);
+  assert.equal(record.resumeMode, "manual");
+  assert.equal(record.goalWasActive, false);
+  assert.equal(record.autoResume, false);
+  assert.equal(record.resumeUnavailableReason, "native_goal_required");
   assert.equal(JSON.stringify(record).includes(originalPrompt), false);
+});
+
+test("ordinary chat with an active native Goal is paused and prepared for Goal recovery", async () => {
+  const dataDir = await createDataDir(9);
+  await writeFile(
+    path.join(dataDir, "preferences.json"),
+    JSON.stringify({ quotaPolicy: "strict_reserve" }),
+  );
+  const calls = [];
+  const goalCoordinator = {
+    async pauseIfActive(threadId) {
+      calls.push(threadId);
+      return {
+        paused: true,
+        status: "paused",
+        goalSnapshot: {
+          objective: "Deliver the user's original outcome without expanding scope.",
+          tokenBudget: 40_000,
+          createdAt: NOW - 100,
+          updatedAt: NOW - 10,
+        },
+      };
+    },
+  };
+  const base = {
+    session_id: "goal-thread",
+    turn_id: "goal-turn",
+    model: "gpt-6.1-sol",
+    cwd: process.cwd(),
+    permission_mode: "default",
+  };
+
+  const stopped = await handleHookImpl(
+    { ...base, hook_event_name: "PostToolUse", tool_name: "Bash" },
+    { dataDir, appRoot: APP_ROOT, now: NOW, goalCoordinator },
+  );
+  assert.equal(stopped.decision, "block");
+
+  const checkpoint = await handleHookImpl(
+    {
+      ...base,
+      hook_event_name: "Stop",
+      last_assistant_message: "Completed: one. Remaining: two.",
+    },
+    { dataDir, appRoot: APP_ROOT, now: NOW + 1, goalCoordinator },
+  );
+  const record = await new ChatContinuityStore(dataDir).get(base.session_id);
+  assert.deepEqual(calls, ["goal-thread"]);
+  assert.equal(record.status, "paused_quota");
+  assert.equal(record.resumeMode, "native_goal");
+  assert.equal(record.goalWasActive, true);
+  assert.equal(record.autoResume, true);
+  assert.equal(
+    record.initialGoal.objective,
+    "Deliver the user's original outcome without expanding scope.",
+  );
+  assert.equal(
+    record.checkpoint.continuationGoal.originalObjective,
+    record.initialGoal.objective,
+  );
+  assert.match(record.checkpoint.continuationGoal.objective, /Completed:\n.*one/);
+  assert.match(record.checkpoint.continuationGoal.objective, /Remaining:\n.*two/);
+  assert.match(checkpoint.systemMessage, /原生 Goal/);
+  assert.match(checkpoint.systemMessage, /当前聊天续跑/);
+});
+
+test("Stop backfills the checkpoint when quota crosses 10% after the last tool", async () => {
+  const dataDir = await createDataDir(70);
+  await writeFile(
+    path.join(dataDir, "preferences.json"),
+    JSON.stringify({ quotaPolicy: "strict_reserve" }),
+  );
+  const calls = [];
+  const goalCoordinator = {
+    async pauseIfActive(threadId) {
+      calls.push(threadId);
+      return {
+        paused: true,
+        status: "paused",
+        goalSnapshot: {
+          objective: "Finish the original user task and verify the main path.",
+          tokenBudget: null,
+        },
+      };
+    },
+  };
+  const base = {
+    session_id: "late-crossing-thread",
+    turn_id: "late-crossing-turn",
+    model: "gpt-6.1-sol",
+    cwd: process.cwd(),
+    permission_mode: "default",
+  };
+
+  await handleHookImpl(
+    {
+      ...base,
+      hook_event_name: "PostToolUse",
+      tool_name: "apply_patch",
+      tool_input: { file_path: path.join(process.cwd(), "README.md") },
+    },
+    { dataDir, appRoot: APP_ROOT, now: NOW, goalCoordinator },
+  );
+
+  const statePath = path.join(dataDir, "state.json");
+  const state = JSON.parse(await readFile(statePath, "utf8"));
+  state.fiveHour.lastCheckedAt = NOW + 60;
+  state.lastSummary.fiveHour.remainingPercent = 9;
+  state.lastSummary.fiveHour.usedPercent = 91;
+  await writeFile(statePath, JSON.stringify(state));
+
+  const checkpointSummary = [
+    "Completed: reproduced the recovery gap.",
+    "Verification: the watcher observed the quota drop.",
+    "Remaining: finish the fix and run the full chain.",
+    "Next action: resume from this checkpoint.",
+    "Blockers: none.",
+  ].join("\n");
+  const stopped = await handleHookImpl(
+    {
+      ...base,
+      hook_event_name: "Stop",
+      last_assistant_message: checkpointSummary,
+    },
+    { dataDir, appRoot: APP_ROOT, now: NOW + 61, goalCoordinator },
+  );
+
+  const record = await new ChatContinuityStore(dataDir).get(base.session_id);
+  assert.equal(stopped.continue, false);
+  assert.deepEqual(calls, [base.session_id]);
+  assert.equal(record.status, "paused_quota");
+  assert.equal(record.resumeMode, "native_goal");
+  assert.equal(record.autoResume, true);
+  assert.equal(record.checkpoint.summary, checkpointSummary);
+  assert.equal(
+    record.initialGoal.objective,
+    "Finish the original user task and verify the main path.",
+  );
+  assert.match(record.checkpoint.continuationGoal.objective, /resume from this checkpoint/);
+});
+
+test("ordinary chat checkpoint scopes workspace verification to the repo touched by the turn", async () => {
+  const dataDir = await createDataDir(80);
+  await writeFile(
+    path.join(dataDir, "preferences.json"),
+    JSON.stringify({ quotaPolicy: "strict_reserve" }),
+  );
+  const cwd = await mkdtemp(path.join(os.tmpdir(), "codex-pulse-hook-scope-"));
+  const repo = path.join(cwd, "product", "app");
+  const sibling = path.join(cwd, "output");
+  await mkdir(repo, { recursive: true });
+  await mkdir(sibling, { recursive: true });
+  await writeFile(path.join(repo, "work.txt"), "baseline\n");
+  await writeFile(path.join(sibling, "unrelated.txt"), "first\n");
+  execFileSync("git", ["-C", repo, "init", "-q"]);
+  execFileSync("git", ["-C", repo, "config", "user.name", "Codex Pulse Test"]);
+  execFileSync("git", ["-C", repo, "config", "user.email", "codex-pulse@example.invalid"]);
+  execFileSync("git", ["-C", repo, "add", "work.txt"]);
+  execFileSync("git", ["-C", repo, "commit", "-q", "-m", "baseline"]);
+
+  const base = {
+    session_id: "scoped-thread",
+    turn_id: "scoped-turn",
+    model: "gpt-6.1-sol",
+    cwd,
+    permission_mode: "default",
+  };
+  await handleHook(
+    {
+      ...base,
+      hook_event_name: "PostToolUse",
+      tool_name: "apply_patch",
+      tool_input: { file_path: path.join(repo, "work.txt") },
+    },
+    { dataDir, appRoot: APP_ROOT, now: NOW },
+  );
+
+  const statePath = path.join(dataDir, "state.json");
+  const state = JSON.parse(await readFile(statePath, "utf8"));
+  state.fiveHour.lastCheckedAt = NOW + 60;
+  state.lastSummary.fiveHour.remainingPercent = 9;
+  state.lastSummary.fiveHour.usedPercent = 91;
+  await writeFile(statePath, JSON.stringify(state));
+  await handleHook(
+    { ...base, hook_event_name: "PostToolUse", tool_name: "Bash" },
+    { dataDir, appRoot: APP_ROOT, now: NOW + 60 },
+  );
+  await handleHook(
+    {
+      ...base,
+      hook_event_name: "Stop",
+      last_assistant_message: "Completed: scoped checkpoint. Remaining: continue.",
+    },
+    { dataDir, appRoot: APP_ROOT, now: NOW + 61 },
+  );
+
+  const record = await new ChatContinuityStore(dataDir).get(base.session_id);
+  assert.deepEqual(record.checkpoint.workspaceSnapshot.scopes.map((scope) => scope.root), [
+    path.join("product", "app"),
+  ]);
+  await writeFile(path.join(sibling, "unrelated.txt"), "changed elsewhere\n");
+  const comparison = await new WorkspaceInspector().compareSnapshot(
+    cwd,
+    record.checkpoint.workspaceSnapshot,
+  );
+  assert.equal(comparison.same, true);
 });
 
 test("deadline mode stays quiet at fifteen percent and drains at five", async () => {

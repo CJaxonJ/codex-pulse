@@ -308,7 +308,7 @@ export function attachPersonalLanding(quotaEvents, tiboState, options = {}) {
   }
   let landed = false;
   const events = quotaEvents.map((event) => {
-    if (!landed && event.type === "reset") {
+    if (!landed && event.type === "reset" && event.resetKind !== "five_hour") {
       landed = true;
       return { ...event, type: "personal_landed", publicResetAt: pending.confirmedAt };
     }
@@ -328,6 +328,7 @@ export function correlateRecentPersonalReset(tiboEvents, tiboState, fiveHourStat
     hasConfirmation &&
     tiboState?.pendingPublicReset &&
     recentReset?.detectedAt != null &&
+    recentReset?.resetKind !== "five_hour" &&
     now - recentReset.detectedAt >= 0 &&
     now - recentReset.detectedAt <= LATE_CONFIRMATION_MAX_AGE_SECONDS;
   if (!canCorrelate) return { events: tiboEvents, tiboState };

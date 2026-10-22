@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { handleHook } from "../plugin/scripts/pulse-hook.mjs";
+import { handleHook as handleHookImpl } from "../plugin/scripts/pulse-hook.mjs";
 import { ChatContinuityController } from "../src/chat-continuity-controller.mjs";
 import { ChatContinuityStore } from "../src/chat-continuity-store.mjs";
 import { WorkspaceInspector } from "../src/workspace-inspector.mjs";
@@ -16,18 +16,41 @@ const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".
 const root = await mkdtemp(path.join(os.tmpdir(), "codex-pulse-simulated-continuity-"));
 const dataDir = path.join(root, "data");
 const workspace = path.join(root, "workspace");
-const proofPath = path.join(workspace, "resume-proof.txt");
+const projectWorkspace = path.join(workspace, "product", "app");
+const unrelatedWorkspace = path.join(workspace, "output");
+const proofPath = path.join(projectWorkspace, "resume-proof.txt");
 const store = new ChatContinuityStore(dataDir);
 const inspector = new WorkspaceInspector();
 const timeline = [];
 let succeeded = false;
+const originalGoalObjective =
+  "Deliver the requested feature with proof, without expanding scope or consuming reset cards.";
+const goalState = { status: "active", objective: originalGoalObjective };
+const threadState = {
+  latestTurnId: "simulated-initial-turn",
+  latestTurnStatus: "completed",
+};
+const goalCoordinator = {
+  async pauseIfActive() {
+    if (goalState.status !== "active") {
+      return { paused: false, status: goalState.status, goalSnapshot: { ...goalState } };
+    }
+    const goalSnapshot = { ...goalState };
+    goalState.status = "paused";
+    return { paused: true, status: "paused", goalSnapshot };
+  },
+};
+
+function handleHook(input, options = {}) {
+  return handleHookImpl(input, { goalCoordinator, ...options });
+}
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
 function git(args) {
-  execFileSync("git", ["-C", workspace, ...args], { stdio: "ignore" });
+  execFileSync("git", ["-C", projectWorkspace, ...args], { stdio: "ignore" });
 }
 
 function quotaSummary(remainingPercent, resetsAt) {
@@ -64,33 +87,42 @@ async function exists(filePath) {
 class SimulatedAppServer {
   constructor(name, initialTurnId) {
     this.name = name;
-    this.latestTurnId = initialTurnId;
+    threadState.latestTurnId = initialTurnId;
     this.calls = [];
   }
 
   async request(method, params) {
     this.calls.push({ method, params });
     if (method === "thread/turns/list") {
-      return { data: [{ id: this.latestTurnId, status: "completed" }] };
+      return {
+        data: [{ id: threadState.latestTurnId, status: threadState.latestTurnStatus }],
+      };
     }
-    if (method === "thread/resume") return { thread: { id: params.threadId } };
-    if (method === "turn/start") {
-      const prompt = params.input?.[0]?.text || "";
-      for (const label of ["Completed", "Verification", "Remaining", "Next action", "Blockers"]) {
-        assert(prompt.includes(label), `resume prompt lost checkpoint section: ${label}`);
+    if (method === "thread/goal/get") {
+      return { goal: goalState.status ? { ...goalState } : null };
+    }
+    if (method === "thread/goal/set") {
+      Object.assign(goalState, params);
+      if (params.status === "active") {
+        threadState.latestTurnId = "simulated-native-goal-turn";
+        threadState.latestTurnStatus = "inProgress";
+        await writeFile(proofPath, "RESUME_OK\n", "utf8");
       }
-      this.latestTurnId = `${this.name}-resumed-turn`;
-      await writeFile(proofPath, "RESUME_OK\n", "utf8");
-      return { turn: { id: this.latestTurnId, status: "inProgress" } };
+      return { goal: { ...goalState } };
+    }
+    if (["thread/resume", "turn/start"].includes(method)) {
+      throw new Error(`ordinary Desktop chat must not call ${method}`);
     }
     return {};
   }
 }
 
 try {
-  await mkdir(workspace, { recursive: true });
+  await mkdir(projectWorkspace, { recursive: true });
+  await mkdir(unrelatedWorkspace, { recursive: true });
   await mkdir(dataDir, { recursive: true });
-  await writeFile(path.join(workspace, ".gitkeep"), "", "utf8");
+  await writeFile(path.join(projectWorkspace, ".gitkeep"), "", "utf8");
+  await writeFile(path.join(unrelatedWorkspace, "unrelated.txt"), "first\n", "utf8");
   git(["init", "-q"]);
   git(["config", "user.name", "Codex Pulse Simulation"]);
   git(["config", "user.email", "codex-pulse-simulation@example.invalid"]);
@@ -125,20 +157,17 @@ try {
     },
     { dataDir, appRoot: projectDir, now },
   );
+  await handleHook(
+    {
+      ...baseHook,
+      hook_event_name: "PostToolUse",
+      tool_name: "apply_patch",
+      tool_input: { file_path: path.join(projectWorkspace, ".gitkeep") },
+    },
+    { dataDir, appRoot: projectDir, now: now + 1 },
+  );
 
   await writeHookState(quotaSummary(10, firstWindow), now + 60);
-  const hardFloor = await handleHook(
-    { ...baseHook, hook_event_name: "PostToolUse", tool_name: "Bash" },
-    { dataDir, appRoot: projectDir, now: now + 60 },
-  );
-  assert(hardFloor?.decision === "block", "10% did not stop the active turn");
-
-  const extraTool = await handleHook(
-    { ...baseHook, hook_event_name: "PreToolUse", tool_name: "apply_patch" },
-    { dataDir, appRoot: projectDir, now: now + 61 },
-  );
-  assert(extraTool?.decision === "block", "a new tool escaped the 10% guard");
-
   const checkpointText = [
     "Completed: implemented phase one.",
     "Verification: phase-one checks passed.",
@@ -153,15 +182,36 @@ try {
       stop_hook_active: false,
       last_assistant_message: checkpointText,
     },
-    { dataDir, appRoot: projectDir, now: now + 62 },
+    { dataDir, appRoot: projectDir, now: now + 60 },
   );
-  assert(stopped?.continue === false, "Stop hook did not end the guarded turn");
+  assert(
+    stopped?.continue === false,
+    "Stop hook did not checkpoint a turn whose quota crossed after the last tool",
+  );
   let record = await store.get(sessionId);
   assert(record?.status === "paused_quota", "checkpoint was not persisted as paused");
   assert(record.checkpoint?.summary === checkpointText, "checkpoint plan was not preserved");
+  assert(
+    record.initialGoal?.objective === originalGoalObjective,
+    "the original user-approved Goal was not preserved exactly",
+  );
+  assert(
+    record.checkpoint?.continuationGoal?.objective?.includes(originalGoalObjective),
+    "the continuation Goal lost the original objective",
+  );
+  assert(
+    record.checkpoint?.continuationGoal?.objective?.includes(
+      "create resume-proof.txt with RESUME_OK",
+    ),
+    "the continuation Goal lost the checkpoint next action",
+  );
+  assert(
+    record.checkpoint?.workspaceSnapshot?.scopes?.[0]?.root === path.join("product", "app"),
+    "checkpoint did not scope verification to the touched nested repository",
+  );
   assert(!JSON.stringify(record).includes(privateMarker), "private prompt leaked into checkpoint state");
   assert(!(await exists(proofPath)), "remaining work ran before quota recovery");
-  timeline.push("10%: tool blocked, turn stopped, structured checkpoint persisted");
+  timeline.push("10% after the last tool: Stop still paused the Goal and persisted the checkpoint");
 
   const pausedEvents = [];
   const pausedController = new ChatContinuityController({
@@ -169,13 +219,27 @@ try {
     store,
     workspace: inspector,
     lockManager: new WorktreeLockManager(dataDir, { holderId: "paused-watcher" }),
-    onEvent: async (event) => pausedEvents.push(event.type),
+    onEvent: async (event) => pausedEvents.push(event),
   });
   await pausedController.reconcile(quotaSummary(10, firstWindow), { now: now + 63 });
   await pausedController.reconcile(quotaSummary(49, recoveredWindow), { now: now + 64 });
-  assert(pausedEvents.filter((type) => type === "chat_continuity_paused").length === 1, "pause notification was not deduplicated");
+  const pauseNotifications = pausedEvents.filter(
+    (event) => event.type === "chat_continuity_paused",
+  );
+  assert(pauseNotifications.length === 1, "pause notification was not deduplicated");
+  assert(
+    pauseNotifications[0].resumePrepared === true,
+    "pause notification promised recovery without a workspace fingerprint",
+  );
   assert(!(await exists(proofPath)), "task resumed below the 50% recovery floor");
   timeline.push("10%-49%: stayed paused; no duplicate notification and no early resume");
+
+  await writeFile(
+    path.join(unrelatedWorkspace, "unrelated.txt"),
+    "changed while the task was paused\n",
+    "utf8",
+  );
+  timeline.push("pause: unrelated sibling workspace changed without invalidating the task checkpoint");
 
   const clientA = new SimulatedAppServer("watcher-a", initialTurnId);
   const clientB = new SimulatedAppServer("watcher-b", initialTurnId);
@@ -201,35 +265,52 @@ try {
     controllerB.reconcile(recovered, { now: now + 120 }),
   ]);
 
-  const startsA = clientA.calls.filter((call) => call.method === "turn/start");
-  const startsB = clientB.calls.filter((call) => call.method === "turn/start");
-  assert(startsA.length + startsB.length === 1, "concurrent watchers started the chat more than once");
+  const activationsA = clientA.calls.filter(
+    (call) => call.method === "thread/goal/set" && call.params.status === "active",
+  );
+  const activationsB = clientB.calls.filter(
+    (call) => call.method === "thread/goal/set" && call.params.status === "active",
+  );
+  assert(
+    activationsA.length + activationsB.length === 1,
+    "concurrent watchers activated the native Goal more than once",
+  );
+  const activation = activationsA[0] || activationsB[0];
+  assert(
+    activation.params.objective === record.checkpoint.continuationGoal.objective,
+    "recovery did not activate the composed continuation Goal",
+  );
+  assert(
+    [...clientA.calls, ...clientB.calls].every(
+      (call) => !["thread/resume", "turn/start"].includes(call.method),
+    ),
+    "ordinary Desktop chat used the external writer path",
+  );
   record = await store.get(sessionId);
-  assert(record?.status === "running", "recovered chat did not enter running state");
+  assert(record?.status === "native_goal_active", "recovered chat did not enter native Goal state");
   assert(record.resumeCount === 1, "resume count was not exactly one");
   assert(await exists(proofPath), "simulated resumed task did not execute the next action");
-  timeline.push("80%: concurrent watchers detected recovery and exactly one resumed the same chat");
+  timeline.push("80%: concurrent watchers detected recovery and exactly one reactivated the native Goal");
 
   await Promise.all([
     controllerA.reconcile(recovered, { now: now + 121 }),
     controllerB.reconcile(recovered, { now: now + 121 }),
   ]);
   assert(
-    clientA.calls.filter((call) => call.method === "turn/start").length +
-      clientB.calls.filter((call) => call.method === "turn/start").length ===
+    clientA.calls.filter(
+      (call) => call.method === "thread/goal/set" && call.params.status === "active",
+    ).length +
+      clientB.calls.filter(
+        (call) => call.method === "thread/goal/set" && call.params.status === "active",
+      ).length ===
       1,
-    "a later watcher poll started a duplicate turn",
+    "a later watcher poll activated the native Goal twice",
   );
 
-  const ownerController = startsA.length ? controllerA : controllerB;
-  await ownerController.handleNotification({
-    method: "turn/completed",
-    params: {
-      threadId: sessionId,
-      turnId: record.turnId,
-      turn: { id: record.turnId, status: "completed" },
-    },
-  });
+  const ownerController = activationsA.length ? controllerA : controllerB;
+  goalState.status = "complete";
+  threadState.latestTurnStatus = "completed";
+  await ownerController.reconcile(recovered, { now: now + 122 });
   record = await store.get(sessionId);
   assert(record?.status === "complete", "resumed task completion was not persisted");
   assert(record.worktreeLock == null, "worktree lock was not released after completion");
@@ -243,7 +324,7 @@ try {
     JSON.stringify(
       {
         ok: true,
-        mode: "offline_full_chain_with_synthetic_quota_and_simulated_app_server",
+        mode: "offline_full_chain_with_synthetic_quota_and_native_goal_protocol",
         quotaSpent: 0,
         timeline,
         checkpoint: checkpointText,

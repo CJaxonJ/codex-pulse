@@ -14,19 +14,52 @@ export function hookReviewMessage() {
     "",
     ...HOOK_REVIEW_STEPS.map((step, index) => `${index + 1}. ${step}`),
     "",
-    "完成后，请彻底退出并重新打开 Codex 桌面端。",
+    "完成后退出 CLI，安装程序会再弹窗询问是否立即重启 Codex。",
   ].join("\n");
 }
 
-function appleScriptDialog(message) {
+export function restartPromptMessage() {
+  return [
+    "如果刚才已经看到 Active 变为 1，Hook 信任就完成了。",
+    "",
+    "Codex 需要重启一次才能在桌面端加载新 Hook。点击“立即重启 Codex”会退出并重新打开 ChatGPT；正在运行的 Codex 任务会停止。",
+    "",
+    "如果还有任务在运行，请选择“稍后重启”。",
+  ].join("\n");
+}
+
+function appleScriptDialog(
+  message,
+  {
+    title = "Codex Pulse 最后一步",
+    buttons = ["稍后", "打开 Codex CLI"],
+    defaultButton = buttons.at(-1),
+    cancelButton = buttons[0],
+  } = {},
+) {
   const escaped = message.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
-  return `display dialog "${escaped}" with title "Codex Pulse 最后一步" buttons {"稍后", "打开 Codex CLI"} default button "打开 Codex CLI" cancel button "稍后"`;
+  const escapedTitle = title.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+  const quotedButtons = buttons
+    .map((button) => `"${button.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`)
+    .join(", ");
+  return `display dialog "${escaped}" with title "${escapedTitle}" buttons {${quotedButtons}} default button "${defaultButton}" cancel button "${cancelButton}"`;
+}
+
+function restartCodexScript() {
+  return [
+    'tell application "ChatGPT" to quit',
+    "delay 2",
+    'tell application "ChatGPT" to activate',
+  ].join("\n");
 }
 
 export function openHookReview({
   codexPath,
   env = process.env,
-  interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY),
+  interactive = Boolean(
+    env.CODEX_PULSE_INTERACTIVE_INSTALL === "1" ||
+      (process.stdin.isTTY && process.stdout.isTTY),
+  ),
   run = spawnSync,
 } = {}) {
   const message = hookReviewMessage();
@@ -52,4 +85,55 @@ export function openHookReview({
     cliStatus: cli.status,
     cliSignal: cli.signal || null,
   };
+}
+
+export function offerCodexRestart({
+  env = process.env,
+  interactive = Boolean(
+    env.CODEX_PULSE_INTERACTIVE_INSTALL === "1" ||
+      (process.stdin.isTTY && process.stdout.isTTY),
+  ),
+  chatgptInstalled = true,
+  run = spawnSync,
+} = {}) {
+  const message = restartPromptMessage();
+  if (!interactive || env.CODEX_PULSE_SKIP_HOOK_REVIEW === "1") {
+    return { restarted: false, reason: "non_interactive", message };
+  }
+  if (!chatgptInstalled) {
+    return { restarted: false, reason: "desktop_unavailable", message };
+  }
+
+  const dialog = run(
+    "/usr/bin/osascript",
+    [
+      "-e",
+      appleScriptDialog(message, {
+        title: "Codex Pulse 已安装",
+        buttons: ["稍后重启", "立即重启 Codex"],
+        defaultButton: "立即重启 Codex",
+        cancelButton: "稍后重启",
+      }),
+    ],
+    { encoding: "utf8" },
+  );
+  if (
+    dialog.status !== 0 ||
+    !String(dialog.stdout || "").includes("立即重启 Codex")
+  ) {
+    return { restarted: false, reason: "deferred", message };
+  }
+
+  const restart = run("/usr/bin/osascript", ["-e", restartCodexScript()], {
+    encoding: "utf8",
+  });
+  if (restart.status !== 0) {
+    return {
+      restarted: false,
+      reason: "restart_failed",
+      message,
+      error: String(restart.stderr || "").trim() || null,
+    };
+  }
+  return { restarted: true, reason: "restarted", message };
 }

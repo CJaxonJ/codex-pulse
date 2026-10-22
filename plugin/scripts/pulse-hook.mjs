@@ -147,6 +147,171 @@ function matchesManagedSession(tasks, input) {
   );
 }
 
+function workspaceHints(input, cwd) {
+  const values = [];
+  const toolInput = input.tool_input;
+  if (toolInput && typeof toolInput === "object") {
+    for (const key of ["path", "file_path", "workdir", "cwd"]) {
+      if (typeof toolInput[key] === "string") values.push(toolInput[key]);
+    }
+  }
+  if (
+    input.tool_name === "apply_patch" &&
+    typeof toolInput?.command === "string"
+  ) {
+    for (const match of toolInput.command.matchAll(
+      /^\*\*\* (?:Update|Add|Delete) File: (.+)$/gm,
+    )) {
+      values.push(match[1].trim());
+    }
+  }
+  const root = path.resolve(cwd);
+  return [...new Set(values.flatMap((value) => {
+    const absolute = path.resolve(root, value);
+    const relative = path.relative(root, absolute);
+    if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      return [];
+    }
+    return [relative || "."];
+  }))].slice(0, 100);
+}
+
+async function rememberWorkspaceHints(continuityStore, input, cwd) {
+  if (!input.session_id) return null;
+  const hints = workspaceHints(input, cwd);
+  if (!hints.length) return continuityStore.get(input.session_id);
+  const existing = await continuityStore.get(input.session_id);
+  const sameTurn =
+    existing && (!input.turn_id || !existing.turnId || input.turn_id === existing.turnId);
+  if (
+    existing &&
+    !sameTurn &&
+    ["paused_quota", "resuming", "running", "native_goal_active"].includes(existing.status)
+  ) {
+    return existing;
+  }
+  const base = sameTurn ? existing : { sessionId: input.session_id };
+  return continuityStore.put({
+    ...base,
+    status: base?.status || "observing",
+    cwd,
+    turnId: input.turn_id || base?.turnId || null,
+    model: input.model || base?.model || null,
+    permissionMode: input.permission_mode || base?.permissionMode || "default",
+    workspaceHints: [...new Set([...(base?.workspaceHints || []), ...hints])].slice(0, 100),
+  });
+}
+
+async function captureWorkspace(workspace, cwd, hints) {
+  const workspaceSnapshot = await workspace.snapshot(cwd, { hints });
+  const workspaceFingerprint =
+    workspaceSnapshot?.digest || (await workspace.fingerprint(cwd));
+  return {
+    workspaceSnapshot,
+    workspaceFingerprint,
+    ...(workspaceFingerprint == null
+      ? { workspaceFingerprintFailure: workspace.failureDiagnostic?.() || null }
+      : {}),
+  };
+}
+
+async function prepareNativeGoalPause(goalCoordinator, sessionId, existing, now) {
+  if (existing?.goalCheckedTurnId === existing?.turnId) {
+    return {
+      autoResume: existing.autoResume === true,
+      resumeMode: existing.resumeMode || "manual",
+      goalWasActive: existing.goalWasActive === true,
+      goalCheckedAt: existing.goalCheckedAt || now,
+      goalCheckedTurnId: existing.goalCheckedTurnId || existing.turnId || null,
+      resumeUnavailableReason: existing.resumeUnavailableReason || null,
+      initialGoal: existing.initialGoal || null,
+      goalAtPause: existing.goalAtPause || null,
+    };
+  }
+  try {
+    const result = await goalCoordinator.pauseIfActive(sessionId);
+    if (result.paused) {
+      return {
+        autoResume: true,
+        resumeMode: "native_goal",
+        goalWasActive: true,
+        goalCheckedAt: now,
+        goalCheckedTurnId: existing?.turnId || null,
+        resumeUnavailableReason: null,
+        initialGoal: existing?.initialGoal || result.goalSnapshot || null,
+        goalAtPause: result.goalSnapshot || existing?.goalAtPause || null,
+      };
+    }
+    return {
+      autoResume: false,
+      resumeMode: "manual",
+      goalWasActive: false,
+      goalCheckedAt: now,
+      goalCheckedTurnId: existing?.turnId || null,
+      resumeUnavailableReason: "native_goal_required",
+    };
+  } catch (error) {
+    return {
+      autoResume: false,
+      resumeMode: "manual",
+      goalWasActive: false,
+      goalCheckedAt: now,
+      goalCheckedTurnId: existing?.turnId || null,
+      resumeUnavailableReason: "native_goal_unavailable",
+      goalPauseError: String(error?.message || error).slice(0, 500),
+    };
+  }
+}
+
+async function requestQuotaCheckpoint({
+  continuityStore,
+  goalCoordinator,
+  input,
+  mode,
+  summary,
+  remaining,
+  now,
+}) {
+  if (!input.session_id) return null;
+  const existingChat = await continuityStore.get(input.session_id);
+  const sameTurn =
+    existingChat &&
+    (!input.turn_id || !existingChat.turnId || input.turn_id === existingChat.turnId);
+  const baseChat = sameTurn ? existingChat : { sessionId: input.session_id };
+  if (
+    sameTurn &&
+    ["paused_quota", "complete", "needs_attention"].includes(existingChat.status)
+  ) {
+    return existingChat;
+  }
+  const cwd = path.resolve(input.cwd || baseChat.cwd || process.cwd());
+  const goalPause = await prepareNativeGoalPause(
+    goalCoordinator,
+    input.session_id,
+    { ...baseChat, turnId: input.turn_id || baseChat.turnId || null },
+    now,
+  );
+  return continuityStore.put({
+    ...baseChat,
+    status: "checkpoint_requested",
+    cwd,
+    turnId: input.turn_id || baseChat.turnId || null,
+    model: input.model || baseChat.model || null,
+    permissionMode: input.permission_mode || baseChat.permissionMode || "default",
+    quotaPolicy: mode,
+    ...goalPause,
+    resumeFloor: baseChat.resumeFloor ?? 50,
+    pausedWindowKey: summary.fiveHour?.resetsAt || null,
+    pausedRemaining: remaining,
+    checkpointRequestedAt: now,
+    checkpoint: {
+      ...(baseChat.checkpoint || {}),
+      quotaAtPause: remaining,
+      requestedAt: now,
+    },
+  });
+}
+
 async function runtimeModules(appRoot) {
   const advisorUrl = pathToFileURL(path.join(appRoot, "src", "usage-advisor.mjs")).href;
   const storeUrl = pathToFileURL(
@@ -161,18 +326,28 @@ async function runtimeModules(appRoot) {
   const workspaceUrl = pathToFileURL(
     path.join(appRoot, "src", "workspace-inspector.mjs"),
   ).href;
+  const goalCoordinatorUrl = pathToFileURL(
+    path.join(appRoot, "src", "native-goal-coordinator.mjs"),
+  ).href;
+  const goalContinuationUrl = pathToFileURL(
+    path.join(appRoot, "src", "goal-continuation.mjs"),
+  ).href;
   const [
     { adviseTaskStart },
     { UsageObservationStore },
     { PulsePreferencesStore },
     { ChatContinuityStore },
     { WorkspaceInspector },
+    { NativeGoalCoordinator },
+    { buildContinuationGoal },
   ] = await Promise.all([
     import(advisorUrl),
     import(storeUrl),
     import(preferencesUrl),
     import(continuityStoreUrl),
     import(workspaceUrl),
+    import(goalCoordinatorUrl),
+    import(goalContinuationUrl),
   ]);
   return {
     adviseTaskStart,
@@ -180,6 +355,8 @@ async function runtimeModules(appRoot) {
     PulsePreferencesStore,
     ChatContinuityStore,
     WorkspaceInspector,
+    NativeGoalCoordinator,
+    buildContinuationGoal,
   };
 }
 
@@ -249,12 +426,16 @@ export async function handleHook(input, options = {}) {
     PulsePreferencesStore,
     ChatContinuityStore,
     WorkspaceInspector,
+    NativeGoalCoordinator,
+    buildContinuationGoal,
   } = await runtimeModules(appRoot);
   const preferences = await new PulsePreferencesStore(dataDir).get();
   const mode = preferences.quotaPolicy;
   const observationStore = new UsageObservationStore(dataDir);
   const continuityStore = new ChatContinuityStore(dataDir);
   const workspace = new WorkspaceInspector();
+  const goalCoordinator =
+    options.goalCoordinator || new NativeGoalCoordinator();
   const id = observationId(input);
 
   if (input.hook_event_name === "UserPromptSubmit") {
@@ -322,36 +503,15 @@ export async function handleHook(input, options = {}) {
     }
     if (matchesManagedSession(await loadManagedTasks(dataDir), input)) return null;
     if (input.session_id) {
-      const existingChat = await continuityStore.get(input.session_id);
-      const sameTurn =
-        existingChat &&
-        (!input.turn_id || !existingChat.turnId || input.turn_id === existingChat.turnId);
-      const baseChat = sameTurn ? existingChat : { sessionId: input.session_id };
-      if (
-        !sameTurn ||
-        !["paused_quota", "complete", "needs_attention"].includes(existingChat.status)
-      ) {
-        const cwd = path.resolve(input.cwd || baseChat.cwd || process.cwd());
-        await continuityStore.put({
-          ...baseChat,
-          status: "checkpoint_requested",
-          cwd,
-          turnId: input.turn_id || baseChat.turnId || null,
-          model: input.model || baseChat.model || null,
-          permissionMode: input.permission_mode || baseChat.permissionMode || "default",
-          quotaPolicy: mode,
-          autoResume: true,
-          resumeFloor: baseChat.resumeFloor ?? 50,
-          pausedWindowKey: summary.fiveHour?.resetsAt || null,
-          pausedRemaining: remaining,
-          checkpointRequestedAt: now,
-          checkpoint: {
-            ...(baseChat.checkpoint || {}),
-            quotaAtPause: remaining,
-            requestedAt: now,
-          },
-        });
-      }
+      await requestQuotaCheckpoint({
+        continuityStore,
+        goalCoordinator,
+        input,
+        mode,
+        summary,
+        remaining,
+        now,
+      });
     }
     return {
       decision: "block",
@@ -365,41 +525,22 @@ export async function handleHook(input, options = {}) {
     const remaining = summary.fiveHour?.remainingPercent;
     if (remaining == null) return null;
     if (matchesManagedSession(await loadManagedTasks(dataDir), input)) return null;
+    const observedCwd = path.resolve(input.cwd || process.cwd());
+    await rememberWorkspaceHints(continuityStore, input, observedCwd);
     const policy = thresholdPolicy(remaining, mode);
     if (!policy || !(await markThreshold(dataDir, input.turn_id, policy.band))) {
       return null;
     }
     if (policy.stop && input.session_id) {
-      const existingChat = await continuityStore.get(input.session_id);
-      const sameTurn =
-        existingChat &&
-        (!input.turn_id || !existingChat.turnId || input.turn_id === existingChat.turnId);
-      const baseChat = sameTurn ? existingChat : { sessionId: input.session_id };
-      if (
-        !sameTurn ||
-        !["paused_quota", "complete", "needs_attention"].includes(existingChat.status)
-      ) {
-        const cwd = path.resolve(input.cwd || baseChat.cwd || process.cwd());
-        await continuityStore.put({
-          ...baseChat,
-          status: "checkpoint_requested",
-          cwd,
-          turnId: input.turn_id || baseChat.turnId || null,
-          model: input.model || baseChat.model || null,
-          permissionMode: input.permission_mode || baseChat.permissionMode || "default",
-          quotaPolicy: mode,
-          autoResume: true,
-          resumeFloor: baseChat.resumeFloor ?? 50,
-          pausedWindowKey: summary.fiveHour?.resetsAt || null,
-          pausedRemaining: remaining,
-          checkpointRequestedAt: now,
-          checkpoint: {
-            ...(baseChat.checkpoint || {}),
-            quotaAtPause: remaining,
-            requestedAt: now,
-          },
-        });
-      }
+      await requestQuotaCheckpoint({
+        continuityStore,
+        goalCoordinator,
+        input,
+        mode,
+        summary,
+        remaining,
+        now,
+      });
     }
     return {
       ...(policy.stop
@@ -452,17 +593,56 @@ export async function handleHook(input, options = {}) {
         outcome: input.hook_event_name === "Stop" ? "completed" : "interrupted",
       });
     }
-    const chat = input.session_id
+    let chat = input.session_id
       ? await continuityStore.get(input.session_id)
       : null;
-    const matchingChatTurn =
+    let matchingChatTurn =
       chat && (!input.turn_id || !chat.turnId || input.turn_id === chat.turnId);
+    const remaining = summary.fiveHour?.remainingPercent;
+    if (
+      input.hook_event_name === "Stop" &&
+      mode === "strict_reserve" &&
+      remaining != null &&
+      remaining <= 10 &&
+      input.session_id &&
+      !matchesManagedSession(await loadManagedTasks(dataDir), input) &&
+      (!matchingChatTurn ||
+        !["paused_quota", "complete", "needs_attention"].includes(chat.status))
+    ) {
+      chat = await requestQuotaCheckpoint({
+        continuityStore,
+        goalCoordinator,
+        input,
+        mode,
+        summary,
+        remaining,
+        now,
+      });
+      matchingChatTurn =
+        chat && (!input.turn_id || !chat.turnId || input.turn_id === chat.turnId);
+    }
     if (
       input.hook_event_name === "Stop" &&
       matchingChatTurn &&
       ["checkpoint_requested", "checkpointing"].includes(chat.status)
     ) {
       const cwd = path.resolve(input.cwd || chat.cwd || process.cwd());
+      const workspaceCapture = await captureWorkspace(
+        workspace,
+        cwd,
+        chat.workspaceHints || [],
+      );
+      const checkpointSummary = String(
+        input.last_assistant_message ||
+          "The turn stopped at the strict quota reserve. Inspect the workspace before continuing.",
+      ).slice(0, 8_000);
+      const continuationGoal =
+        chat.resumeMode === "native_goal"
+          ? buildContinuationGoal({
+              originalObjective: chat.initialGoal?.objective,
+              checkpointSummary,
+            })
+          : null;
       await continuityStore.put({
         ...chat,
         status: "paused_quota",
@@ -471,18 +651,19 @@ export async function handleHook(input, options = {}) {
         pausedAt: now,
         checkpoint: {
           ...(chat.checkpoint || {}),
-          summary: String(
-            input.last_assistant_message ||
-              "The turn stopped at the strict quota reserve. Inspect the workspace before continuing.",
-          ).slice(0, 8_000),
-          workspaceFingerprint: await workspace.fingerprint(cwd),
+          summary: checkpointSummary,
+          ...(continuationGoal ? { continuationGoal } : {}),
+          ...workspaceCapture,
           completedAt: now,
         },
       });
       return {
         continue: false,
         stopReason: "Codex Pulse saved a local quota checkpoint.",
-        systemMessage: "Codex Pulse：检查点已保存在本机，额度恢复后将尝试继续当前聊天。",
+        systemMessage:
+          chat.resumeMode === "native_goal"
+            ? "Codex Pulse：检查点和原生 Goal 已暂停；额度恢复后将由 Codex 在当前聊天续跑。"
+            : "Codex Pulse：检查点已保存在本机；当前聊天没有原生 Goal，额度恢复后需要手动发送“继续”。",
       };
     }
     if (
@@ -491,6 +672,11 @@ export async function handleHook(input, options = {}) {
       chat.status === "checkpoint_requested"
     ) {
       const cwd = path.resolve(input.cwd || chat.cwd || process.cwd());
+      const workspaceCapture = await captureWorkspace(
+        workspace,
+        cwd,
+        chat.workspaceHints || [],
+      );
       await continuityStore.put({
         ...chat,
         status: "paused_quota",
@@ -501,7 +687,7 @@ export async function handleHook(input, options = {}) {
           ...(chat.checkpoint || {}),
           summary:
             "The turn was interrupted at the strict quota reserve. Inspect current workspace changes, then continue only the unfinished work.",
-          workspaceFingerprint: await workspace.fingerprint(cwd),
+          ...workspaceCapture,
           completedAt: now,
         },
       });

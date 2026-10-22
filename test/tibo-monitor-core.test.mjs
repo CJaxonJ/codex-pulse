@@ -84,12 +84,30 @@ test("a later public reset is confirmed once and waits for personal landing", ()
   assert.ok(confirmed.state.pendingPublicReset);
 
   const landing = attachPersonalLanding(
-    [{ type: "reset", remainingPercent: 98, resetsAt: 2_000_000_000 }],
+    [{ type: "reset", resetKind: "full", remainingPercent: 98, resetsAt: 2_000_000_000 }],
     confirmed.state,
     { now: firstNow + 3800 },
   );
   assert.equal(landing.events[0].type, "personal_landed");
   assert.equal(landing.tiboState.pendingPublicReset, null);
+});
+
+test("a rolling five-hour recovery is never relabeled as a Tibo landing", () => {
+  const now = 2_000_000;
+  const pending = { pendingPublicReset: { key: "reset-rolling", confirmedAt: now } };
+  const result = attachPersonalLanding(
+    [{
+      type: "reset",
+      resetKind: "five_hour",
+      remainingPercent: 100,
+      weeklyRemainingPercent: 58,
+    }],
+    pending,
+    { now },
+  );
+  assert.equal(result.events[0].type, "reset");
+  assert.equal(result.events[0].resetKind, "five_hour");
+  assert.deepEqual(result.tiboState, pending);
 });
 
 test("a public confirmation shortly after personal recovery is correlated backwards", () => {

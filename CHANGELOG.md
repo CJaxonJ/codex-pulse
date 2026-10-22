@@ -1,6 +1,64 @@
 # Changelog
 
-## Unreleased
+## 0.9.12 — 2026-10-23
+
+- Made first-run Hook setup explicitly guided: Finder-launched installs always
+  show the native review prompt, open the correct CLI, and offer an explicit
+  one-click ChatGPT restart after the user completes Codex's required trust
+  review.
+- Fixed the missed recovery path where the five-hour quota crossed the 10%
+  reserve after the turn's last tool call: the Stop hook now pauses the active
+  Goal and persists the checkpoint even without another tool event.
+- Increased the timeout only for tool/turn lifecycle hooks that may need to
+  start Codex App Server while preserving a Goal; lightweight startup and
+  prompt-planning hooks remain at three seconds.
+- Added regression and full-chain coverage for the exact late-crossing failure,
+  including exactly-once recovery under concurrent watchers.
+
+## 0.9.11 — 2026-10-22
+
+- Preserved the exact user-approved Goal across quota pauses, combined it with
+  the structured 10% checkpoint for continuation, and refused to overwrite a
+  Goal the user changed or completed while paused.
+
+## 0.9.10 — 2026-10-22
+
+- Replaced the invalid external-writer path for ordinary Desktop chats with
+  native Codex Goal pause/reactivation. Chats without a user-created Goal now
+  save a checkpoint and clearly require manual continuation.
+- Removed the misleading App-Server-owned “ordinary chat” live gate and made
+  real Desktop Goal acceptance an explicit release requirement.
+- Added concurrent native-Goal recovery coverage and fixed colliding temporary
+  filenames when two watcher processes update the same continuity record.
+- Made native-Goal pause outcomes persistent and clarified that the 10% warning
+  promises automatic continuation only when the chat has a native Goal.
+- Added an explicit current-Desktop-thread acceptance canary so release evidence
+  cannot substitute an App-Server-owned thread for the user's real chat.
+
+## 0.9.9 — 2026-10-22
+
+- Scoped ordinary-chat recovery checks to repositories actually touched by the
+  paused turn, preventing unrelated sibling files in a broad workspace from
+  incorrectly blocking automatic continuation.
+- Stored relative verification scopes and reported which scope changed while
+  continuing to fail closed for genuine target-repository changes.
+- Extended the full 10% pause-and-resume release gate with a nested repository
+  and an unrelated workspace mutation during the pause.
+
+## 0.9.8 — 2026-10-20
+
+- Added a native macOS E2E that proves must-see alerts remain visible for three
+  seconds before the test closes them automatically; it consumes no Codex quota.
+- Persistent alerts now use a floating window, stay open until explicit
+  dismissal, and launch without blocking the quota watcher.
+- Pause notifications now disclose whether a reliable workspace fingerprint
+  was captured. Missing pause-time evidence is explained as a manual-resume case
+  instead of promising unsafe automatic continuation.
+- The release gate now compiles the native notifier and runs its persistent
+  window E2E before packaging.
+- Runtime-only upgrades can explicitly retain a compatible already-trusted
+  plugin version, avoiding an unnecessary Hook review when Hook code did not
+  change.
 
 ## 0.9.7 — 2026-10-20
 

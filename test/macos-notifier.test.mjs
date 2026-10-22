@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { notificationForEvent } from "../src/macos-notifier.mjs";
+import {
+  nativeNotificationArgs,
+  notificationForEvent,
+} from "../src/macos-notifier.mjs";
 
 test("attention notifications tell the user what is actually blocking resume", () => {
   const input = notificationForEvent({
@@ -15,6 +18,16 @@ test("attention notifications tell the user what is actually blocking resume", (
   assert.match(input.body, /等待你的选择或回答/);
   assert.match(approval.body, /审批命令或文件修改/);
   assert.match(input.body, /阻止自动续跑/);
+});
+
+test("a Goal edited during the pause is never silently overwritten", () => {
+  const notice = notificationForEvent({
+    type: "chat_continuity_attention",
+    reason: "native_goal_changed",
+  });
+  assert.match(notice.body, /Goal 被修改/);
+  assert.match(notice.body, /旧计划覆盖你的新目标/);
+  assert.equal(notice.persistent, true);
 });
 
 test("limits updates are clearly separated from reset alerts", () => {
@@ -40,16 +53,29 @@ test("source health notifications preserve the personal quota distinction", () =
   assert.match(recovered.title, /已恢复/);
 });
 
-test("reset notifications explain ambiguity and later public correlation", () => {
-  const first = notificationForEvent({
+test("reset notifications distinguish five-hour recovery from full reset", () => {
+  const rolling = notificationForEvent({
     type: "reset",
+    resetKind: "five_hour",
     previousRemainingPercent: 24,
     remainingPercent: 100,
+    weeklyRemainingPercent: 58,
   });
-  assert.match(first.title, /24% → 100%/);
-  assert.match(first.body, /普通 5 小时恢复还是公共重置/);
-  assert.equal(first.interruptionLevel, "time-sensitive");
-  assert.equal(first.persistent, true);
+  assert.match(rolling.title, /5 小时额度已恢复/);
+  assert.match(rolling.body, /周额度仍剩 58%/);
+  assert.match(rolling.body, /不是全量重置/);
+
+  const full = notificationForEvent({
+    type: "reset",
+    resetKind: "full",
+    previousRemainingPercent: 24,
+    remainingPercent: 100,
+    weeklyRemainingPercent: 100,
+  });
+  assert.match(full.title, /Tibo 全量重置已到账/);
+  assert.match(full.body, /周额度都已回到 100%/);
+  assert.equal(full.interruptionLevel, "time-sensitive");
+  assert.equal(full.persistent, true);
 
   const confirmed = notificationForEvent({
     type: "public_reset_landed",
@@ -71,6 +97,44 @@ test("recovery and resume outcomes stay visible until the user dismisses them", 
   );
 });
 
+test("missing pause-time fingerprints explain why recovery cannot safely auto-resume", () => {
+  const paused = notificationForEvent({
+    type: "chat_continuity_paused",
+    resumeMode: "native_goal",
+    resumePrepared: false,
+  });
+  assert.match(paused.title, /无法保证自动续跑/);
+  assert.match(paused.body, /手动继续/);
+  assert.equal(paused.persistent, true);
+
+  const attention = notificationForEvent({
+    type: "chat_continuity_attention",
+    reason: "checkpoint_missing_fingerprint",
+  });
+  assert.match(attention.body, /旧版记录或当时校验失败/);
+  assert.match(attention.body, /发送“继续”/);
+  assert.equal(attention.persistent, true);
+});
+
+test("persistent native alerts do not block the quota watcher", () => {
+  const persistent = nativeNotificationArgs({
+    nativeApp: "/Applications/Codex Pulse.app",
+    title: "Recovered",
+    body: "Quota recovered",
+    persistent: true,
+  });
+  assert.equal(persistent.includes("-W"), false);
+  assert.equal(persistent.includes("--persistent"), true);
+
+  const banner = nativeNotificationArgs({
+    nativeApp: "/Applications/Codex Pulse.app",
+    title: "Threshold",
+    body: "20% remaining",
+    persistent: false,
+  });
+  assert.equal(banner.includes("-W"), true);
+});
+
 test("strict reserve makes the ten-percent action explicit and persistent", () => {
   const threshold = notificationForEvent({
     type: "threshold",
@@ -84,8 +148,23 @@ test("strict reserve makes the ten-percent action explicit and persistent", () =
   assert.match(threshold.body, /保存检查点/);
   assert.equal(threshold.interruptionLevel, "time-sensitive");
 
-  const paused = notificationForEvent({ type: "chat_continuity_paused" });
+  const paused = notificationForEvent({
+    type: "chat_continuity_paused",
+    resumeMode: "native_goal",
+  });
   assert.match(paused.title, /安全暂停/);
   assert.match(paused.body, /个人额度恢复后只会续跑一次/);
   assert.equal(paused.interruptionLevel, "time-sensitive");
+});
+
+test("a chat without a native Goal promises only a manual continuation", () => {
+  const paused = notificationForEvent({
+    type: "chat_continuity_paused",
+    resumeMode: "manual",
+    resumePrepared: true,
+  });
+  assert.match(paused.title, /需要手动继续/);
+  assert.match(paused.body, /\/goal/);
+  assert.match(paused.body, /额度恢复后请回到这里发送“继续”/);
+  assert.equal(paused.persistent, true);
 });
