@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.13 — 2026-10-23
+
+- Fixed the first-run review flow so the consent dialog brings Terminal forward
+  and clicking “Open CLI and continue trust” activates the actual CLI window.
+- After the user presses `t`, the installer now observes Codex's own six
+  `trusted_hash` records, closes only the review CLI it launched, and restarts
+  Codex without a second dialog. Existing trusted installs skip the review.
+- Kept the already-reviewed 0.9.12 Hook definition unchanged, so this installer
+  UX patch does not manufacture or silently replace Codex's trust decision.
+
 ## 0.9.12 — 2026-10-23
 
 - Made first-run Hook setup explicitly guided: Finder-launched installs always
