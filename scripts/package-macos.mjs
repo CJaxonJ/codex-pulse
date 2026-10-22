@@ -27,13 +27,14 @@ rmSync(zipPath, { force: true });
 rmSync(checksumPath, { force: true });
 mkdirSync(stagingDir, { recursive: true });
 
-for (const entry of [".agents", "bin", "native", "plugin", "src"]) {
+for (const entry of [".agents", "bin", "brand", "native", "plugin", "src"]) {
   cpSync(path.join(projectDir, entry), path.join(stagingDir, entry), {
     recursive: true,
   });
 }
 mkdirSync(path.join(stagingDir, "scripts"), { recursive: true });
 for (const entry of [
+  "build-brand-assets.mjs",
   "build-notifier-macos.mjs",
   "install-macos.mjs",
   "install-plugin.mjs",

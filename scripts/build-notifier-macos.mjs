@@ -19,6 +19,7 @@ const plistSource = path.join(projectDir, "native", "Info.plist");
 const buildDir = path.join(projectDir, "build", "Codex Pulse.app");
 const buildContents = path.join(buildDir, "Contents");
 const buildMacOS = path.join(buildContents, "MacOS");
+const buildResources = path.join(buildContents, "Resources");
 const buildExecutable = path.join(buildMacOS, "CodexPulseNotifier");
 const installDir = path.join(os.homedir(), "Applications");
 const installedApp = path.join(installDir, "Codex Pulse.app");
@@ -28,7 +29,12 @@ const packageVersion = JSON.parse(
 
 rmSync(buildDir, { recursive: true, force: true });
 mkdirSync(buildMacOS, { recursive: true });
+mkdirSync(buildResources, { recursive: true });
 copyFileSync(plistSource, path.join(buildContents, "Info.plist"));
+copyFileSync(
+  path.join(projectDir, "native", "AppIcon.icns"),
+  path.join(buildResources, "AppIcon.icns"),
+);
 const builtPlist = path.join(buildContents, "Info.plist");
 writeFileSync(
   builtPlist,

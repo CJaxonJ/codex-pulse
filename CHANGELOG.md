@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.14 — 2026-10-23
+
+- Added an original two-color Codex Pulse identity built around the task loop,
+  quota heartbeat, recovery handoff, and a restrained Meiqiu-inspired ear peak.
+- Added light and dark SVG plugin icons that meet Codex package requirements,
+  plus GitHub, PNG fallback, and macOS ICNS exports from one vector master.
+- Gave the native notifier its own app icon so system alerts no longer use the
+  default executable artwork.
+
 ## 0.9.13 — 2026-10-23
 
 - Fixed the first-run review flow so the consent dialog brings Terminal forward

@@ -1,4 +1,11 @@
-# Codex Pulse
+<p align="center">
+  <img src="brand/codex-pulse-mark.svg#gh-light-mode-only" width="152" alt="Codex Pulse logo">
+  <img src="brand/codex-pulse-mark-dark.svg#gh-dark-mode-only" width="152" alt="Codex Pulse logo">
+</p>
+
+<h1 align="center">Codex Pulse</h1>
+
+<p align="center"><strong>Protect the last 10%. Resume when quota returns.</strong></p>
 
 [![Tests](https://github.com/CJaxonJ/codex-pulse/actions/workflows/test.yml/badge.svg)](https://github.com/CJaxonJ/codex-pulse/actions/workflows/test.yml)
 [![CodeQL](https://github.com/CJaxonJ/codex-pulse/actions/workflows/codeql.yml/badge.svg)](https://github.com/CJaxonJ/codex-pulse/actions/workflows/codeql.yml)
