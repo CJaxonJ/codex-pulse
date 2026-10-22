@@ -85,6 +85,22 @@ async function saveState(state) {
   await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
 }
 
+async function readQuotaSummary(client) {
+  const fixturePath = process.env.CODEX_PULSE_TEST_QUOTA_SUMMARY_PATH;
+  if (!fixturePath) {
+    return summarizeRateLimits(await client.readRateLimits());
+  }
+  if (
+    process.env.NODE_ENV !== "test" ||
+    process.env.CODEX_PULSE_TEST_MODE !== "watcher-restart-e2e"
+  ) {
+    throw new Error(
+      "CODEX_PULSE_TEST_QUOTA_SUMMARY_PATH is restricted to the watcher restart E2E",
+    );
+  }
+  return JSON.parse(await readFile(fixturePath, "utf8"));
+}
+
 async function deliverUserEvent(
   event,
   {
@@ -532,7 +548,7 @@ async function watch() {
         }
       }
 
-      const summary = summarizeRateLimits(await client.readRateLimits());
+      const summary = await readQuotaSummary(client);
       if (summary.planType && !String(summary.planType).toLowerCase().includes("plus")) {
         log("five-hour watcher is intended for Plus; continuing read-only observation", {
           planType: summary.planType,
