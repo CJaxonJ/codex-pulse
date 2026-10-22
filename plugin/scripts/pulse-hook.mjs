@@ -147,6 +147,66 @@ function matchesManagedSession(tasks, input) {
   );
 }
 
+function workspaceHints(input, cwd) {
+  const values = [];
+  const toolInput = input.tool_input;
+  if (toolInput && typeof toolInput === "object") {
+    for (const key of ["path", "file_path", "workdir", "cwd"]) {
+      if (typeof toolInput[key] === "string") values.push(toolInput[key]);
+    }
+  }
+  if (
+    input.tool_name === "apply_patch" &&
+    typeof toolInput?.command === "string"
+  ) {
+    for (const match of toolInput.command.matchAll(
+      /^\*\*\* (?:Update|Add|Delete) File: (.+)$/gm,
+    )) {
+      values.push(match[1].trim());
+    }
+  }
+  const root = path.resolve(cwd);
+  return [...new Set(values.flatMap((value) => {
+    const absolute = path.resolve(root, value);
+    const relative = path.relative(root, absolute);
+    if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      return [];
+    }
+    return [relative || "."];
+  }))].slice(0, 100);
+}
+
+async function rememberWorkspaceHints(continuityStore, input, cwd) {
+  if (!input.session_id) return null;
+  const hints = workspaceHints(input, cwd);
+  if (!hints.length) return continuityStore.get(input.session_id);
+  const existing = await continuityStore.get(input.session_id);
+  const sameTurn =
+    existing && (!input.turn_id || !existing.turnId || input.turn_id === existing.turnId);
+  if (existing && !sameTurn && ["paused_quota", "resuming", "running"].includes(existing.status)) {
+    return existing;
+  }
+  const base = sameTurn ? existing : { sessionId: input.session_id };
+  return continuityStore.put({
+    ...base,
+    status: base?.status || "observing",
+    cwd,
+    turnId: input.turn_id || base?.turnId || null,
+    model: input.model || base?.model || null,
+    permissionMode: input.permission_mode || base?.permissionMode || "default",
+    workspaceHints: [...new Set([...(base?.workspaceHints || []), ...hints])].slice(0, 100),
+  });
+}
+
+async function captureWorkspace(workspace, cwd, hints) {
+  const workspaceSnapshot = await workspace.snapshot(cwd, { hints });
+  return {
+    workspaceSnapshot,
+    workspaceFingerprint:
+      workspaceSnapshot?.digest || (await workspace.fingerprint(cwd)),
+  };
+}
+
 async function runtimeModules(appRoot) {
   const advisorUrl = pathToFileURL(path.join(appRoot, "src", "usage-advisor.mjs")).href;
   const storeUrl = pathToFileURL(
@@ -365,6 +425,8 @@ export async function handleHook(input, options = {}) {
     const remaining = summary.fiveHour?.remainingPercent;
     if (remaining == null) return null;
     if (matchesManagedSession(await loadManagedTasks(dataDir), input)) return null;
+    const observedCwd = path.resolve(input.cwd || process.cwd());
+    await rememberWorkspaceHints(continuityStore, input, observedCwd);
     const policy = thresholdPolicy(remaining, mode);
     if (!policy || !(await markThreshold(dataDir, input.turn_id, policy.band))) {
       return null;
@@ -463,6 +525,11 @@ export async function handleHook(input, options = {}) {
       ["checkpoint_requested", "checkpointing"].includes(chat.status)
     ) {
       const cwd = path.resolve(input.cwd || chat.cwd || process.cwd());
+      const workspaceCapture = await captureWorkspace(
+        workspace,
+        cwd,
+        chat.workspaceHints || [],
+      );
       await continuityStore.put({
         ...chat,
         status: "paused_quota",
@@ -475,7 +542,7 @@ export async function handleHook(input, options = {}) {
             input.last_assistant_message ||
               "The turn stopped at the strict quota reserve. Inspect the workspace before continuing.",
           ).slice(0, 8_000),
-          workspaceFingerprint: await workspace.fingerprint(cwd),
+          ...workspaceCapture,
           completedAt: now,
         },
       });
@@ -491,6 +558,11 @@ export async function handleHook(input, options = {}) {
       chat.status === "checkpoint_requested"
     ) {
       const cwd = path.resolve(input.cwd || chat.cwd || process.cwd());
+      const workspaceCapture = await captureWorkspace(
+        workspace,
+        cwd,
+        chat.workspaceHints || [],
+      );
       await continuityStore.put({
         ...chat,
         status: "paused_quota",
@@ -501,7 +573,7 @@ export async function handleHook(input, options = {}) {
           ...(chat.checkpoint || {}),
           summary:
             "The turn was interrupted at the strict quota reserve. Inspect current workspace changes, then continue only the unfinished work.",
-          workspaceFingerprint: await workspace.fingerprint(cwd),
+          ...workspaceCapture,
           completedAt: now,
         },
       });

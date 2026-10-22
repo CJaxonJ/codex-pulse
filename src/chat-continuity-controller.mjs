@@ -265,16 +265,25 @@ export class ChatContinuityController {
     const claim = await this.#claimLock(original);
     if (!claim.acquired) return null;
     const record = claim.record;
-    const fingerprint = await this.workspace.fingerprint(record.cwd, {
-      strategy: String(record.checkpoint?.workspaceFingerprint || "").startsWith("fs:")
-        ? "filesystem"
-        : undefined,
-    });
+    const snapshotComparison = record.checkpoint?.workspaceSnapshot
+      ? await this.workspace.compareSnapshot(
+          record.cwd,
+          record.checkpoint.workspaceSnapshot,
+        )
+      : null;
+    const fingerprint = snapshotComparison
+      ? null
+      : await this.workspace.fingerprint(record.cwd, {
+          strategy: String(record.checkpoint?.workspaceFingerprint || "").startsWith("fs:")
+            ? "filesystem"
+            : undefined,
+        });
     if (
-      record.checkpoint?.workspaceFingerprint == null ||
-      fingerprint == null
+      snapshotComparison?.verifiable === false ||
+      (!snapshotComparison &&
+        (record.checkpoint?.workspaceFingerprint == null || fingerprint == null))
     ) {
-      const reason = record.checkpoint?.workspaceFingerprint == null
+      const reason = !snapshotComparison && record.checkpoint?.workspaceFingerprint == null
         ? "checkpoint_missing_fingerprint"
         : "workspace_unverifiable";
       const blocked = await this.store.put({
@@ -290,18 +299,24 @@ export class ChatContinuityController {
       };
     }
     if (
-      fingerprint !== record.checkpoint.workspaceFingerprint
+      snapshotComparison
+        ? !snapshotComparison.same
+        : fingerprint !== record.checkpoint.workspaceFingerprint
     ) {
       const blocked = await this.store.put({
         ...record,
         status: "needs_attention",
         blocker: "workspace_changed",
+        blockerDetails: snapshotComparison
+          ? { changedScopes: snapshotComparison.changedScopes }
+          : null,
       });
       await this.#releaseLock(blocked);
       return {
         type: "chat_continuity_attention",
         sessionId: record.sessionId,
         reason: "workspace_changed",
+        changedScopes: snapshotComparison?.changedScopes || [],
       };
     }
 

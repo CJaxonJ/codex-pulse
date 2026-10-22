@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { access, lstat, readFile, readdir, readlink } from "node:fs/promises";
+import { access, lstat, readFile, readdir, readlink, realpath } from "node:fs/promises";
 import { promisify } from "node:util";
 import path from "node:path";
 
@@ -26,6 +26,20 @@ async function git(cwd, args) {
     killSignal: "SIGKILL",
   });
   return stdout;
+}
+
+async function gitRoot(candidate) {
+  try {
+    const details = await lstat(candidate);
+    const cwd = details.isDirectory() ? candidate : path.dirname(candidate);
+    return (await git(cwd, ["rev-parse", "--show-toplevel"])).trim();
+  } catch {
+    try {
+      return (await git(path.dirname(candidate), ["rev-parse", "--show-toplevel"])).trim();
+    } catch {
+      return null;
+    }
+  }
 }
 
 function inside(root, candidate) {
@@ -156,5 +170,71 @@ export class WorkspaceInspector {
         return null;
       }
     }
+  }
+
+  async snapshot(cwd, options = {}) {
+    const base = await realpath(path.resolve(cwd));
+    const hints = [...new Set((options.hints || []).map((hint) => String(hint)).filter(Boolean))];
+    const scopeRoots = new Set();
+
+    for (const hint of hints) {
+      const candidate = path.resolve(base, hint);
+      if (!inside(base, candidate)) continue;
+      const root = await gitRoot(candidate);
+      if (root && inside(base, path.resolve(root))) scopeRoots.add(path.resolve(root));
+    }
+    if (!scopeRoots.size) scopeRoots.add(base);
+
+    const scopes = [];
+    for (const root of [...scopeRoots].sort()) {
+      const fingerprint = await this.fingerprint(root);
+      if (fingerprint == null) return null;
+      scopes.push({
+        root: path.relative(base, root) || ".",
+        fingerprint,
+      });
+    }
+    const digest = createHash("sha256").update(JSON.stringify(scopes)).digest("hex");
+    return { version: 1, digest, scopes };
+  }
+
+  async compareSnapshot(cwd, snapshot) {
+    if (!snapshot || snapshot.version !== 1 || !Array.isArray(snapshot.scopes)) {
+      return { verifiable: false, same: false, changedScopes: [] };
+    }
+    const base = await realpath(path.resolve(cwd));
+    const currentScopes = [];
+    const changedScopes = [];
+    for (const scope of snapshot.scopes) {
+      let root;
+      try {
+        root = await realpath(path.resolve(base, scope.root || "."));
+      } catch {
+        return { verifiable: false, same: false, changedScopes: [] };
+      }
+      if (!inside(base, root)) {
+        return { verifiable: false, same: false, changedScopes: [] };
+      }
+      const fingerprint = await this.fingerprint(root, {
+        strategy: String(scope.fingerprint || "").startsWith("fs:")
+          ? "filesystem"
+          : undefined,
+      });
+      if (fingerprint == null) {
+        return { verifiable: false, same: false, changedScopes: [] };
+      }
+      currentScopes.push({ root: scope.root || ".", fingerprint });
+      if (fingerprint !== scope.fingerprint) changedScopes.push(scope.root || ".");
+    }
+    return {
+      verifiable: true,
+      same: changedScopes.length === 0,
+      changedScopes,
+      current: {
+        version: 1,
+        digest: createHash("sha256").update(JSON.stringify(currentScopes)).digest("hex"),
+        scopes: currentScopes,
+      },
+    };
   }
 }

@@ -1,10 +1,10 @@
 {
   "name": "codex-pulse",
-  "version": "0.9.8",
+  "version": "0.9.9",
   "private": true,
   "license": "MIT",
   "codexPulse": {
-    "compatiblePluginVersions": ["0.9.5", "0.9.6", "0.9.7"]
+    "compatiblePluginVersions": ["0.9.5", "0.9.6", "0.9.7", "0.9.9"]
   },
   "engines": {
     "node": ">=20"

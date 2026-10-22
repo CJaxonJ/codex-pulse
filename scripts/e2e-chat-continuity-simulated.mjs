@@ -16,7 +16,9 @@ const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".
 const root = await mkdtemp(path.join(os.tmpdir(), "codex-pulse-simulated-continuity-"));
 const dataDir = path.join(root, "data");
 const workspace = path.join(root, "workspace");
-const proofPath = path.join(workspace, "resume-proof.txt");
+const projectWorkspace = path.join(workspace, "product", "app");
+const unrelatedWorkspace = path.join(workspace, "output");
+const proofPath = path.join(projectWorkspace, "resume-proof.txt");
 const store = new ChatContinuityStore(dataDir);
 const inspector = new WorkspaceInspector();
 const timeline = [];
@@ -27,7 +29,7 @@ function assert(condition, message) {
 }
 
 function git(args) {
-  execFileSync("git", ["-C", workspace, ...args], { stdio: "ignore" });
+  execFileSync("git", ["-C", projectWorkspace, ...args], { stdio: "ignore" });
 }
 
 function quotaSummary(remainingPercent, resetsAt) {
@@ -88,9 +90,11 @@ class SimulatedAppServer {
 }
 
 try {
-  await mkdir(workspace, { recursive: true });
+  await mkdir(projectWorkspace, { recursive: true });
+  await mkdir(unrelatedWorkspace, { recursive: true });
   await mkdir(dataDir, { recursive: true });
-  await writeFile(path.join(workspace, ".gitkeep"), "", "utf8");
+  await writeFile(path.join(projectWorkspace, ".gitkeep"), "", "utf8");
+  await writeFile(path.join(unrelatedWorkspace, "unrelated.txt"), "first\n", "utf8");
   git(["init", "-q"]);
   git(["config", "user.name", "Codex Pulse Simulation"]);
   git(["config", "user.email", "codex-pulse-simulation@example.invalid"]);
@@ -124,6 +128,15 @@ try {
       prompt: `Implement the remaining task. ${privateMarker}`,
     },
     { dataDir, appRoot: projectDir, now },
+  );
+  await handleHook(
+    {
+      ...baseHook,
+      hook_event_name: "PostToolUse",
+      tool_name: "apply_patch",
+      tool_input: { file_path: path.join(projectWorkspace, ".gitkeep") },
+    },
+    { dataDir, appRoot: projectDir, now: now + 1 },
   );
 
   await writeHookState(quotaSummary(10, firstWindow), now + 60);
@@ -159,6 +172,10 @@ try {
   let record = await store.get(sessionId);
   assert(record?.status === "paused_quota", "checkpoint was not persisted as paused");
   assert(record.checkpoint?.summary === checkpointText, "checkpoint plan was not preserved");
+  assert(
+    record.checkpoint?.workspaceSnapshot?.scopes?.[0]?.root === path.join("product", "app"),
+    "checkpoint did not scope verification to the touched nested repository",
+  );
   assert(!JSON.stringify(record).includes(privateMarker), "private prompt leaked into checkpoint state");
   assert(!(await exists(proofPath)), "remaining work ran before quota recovery");
   timeline.push("10%: tool blocked, turn stopped, structured checkpoint persisted");
@@ -183,6 +200,13 @@ try {
   );
   assert(!(await exists(proofPath)), "task resumed below the 50% recovery floor");
   timeline.push("10%-49%: stayed paused; no duplicate notification and no early resume");
+
+  await writeFile(
+    path.join(unrelatedWorkspace, "unrelated.txt"),
+    "changed while the task was paused\n",
+    "utf8",
+  );
+  timeline.push("pause: unrelated sibling workspace changed without invalidating the task checkpoint");
 
   const clientA = new SimulatedAppServer("watcher-a", initialTurnId);
   const clientB = new SimulatedAppServer("watcher-b", initialTurnId);

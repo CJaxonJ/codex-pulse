@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.9 — 2026-10-22
+
+- Scoped ordinary-chat recovery checks to repositories actually touched by the
+  paused turn, preventing unrelated sibling files in a broad workspace from
+  incorrectly blocking automatic continuation.
+- Stored relative verification scopes and reported which scope changed while
+  continuing to fail closed for genuine target-repository changes.
+- Extended the full 10% pause-and-resume release gate with a nested repository
+  and an unrelated workspace mutation during the pause.
+
 ## 0.9.8 — 2026-10-20
 
 - Added a native macOS E2E that proves must-see alerts remain visible for three

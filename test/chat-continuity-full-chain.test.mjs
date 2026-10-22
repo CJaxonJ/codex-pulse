@@ -20,5 +20,6 @@ test("10% pause, checkpoint plan, recovered quota, and exactly-once resume work 
   assert.equal(result.resumeCount, 1);
   assert.equal(result.proof, "RESUME_OK");
   assert.deepEqual(result.remainingLocks, []);
-  assert.equal(result.timeline.length, 4);
+  assert.equal(result.timeline.length, 5);
+  assert.match(result.timeline[2], /unrelated sibling workspace changed/);
 });

@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { handleHook } from "../plugin/scripts/pulse-hook.mjs";
 import { ChatContinuityStore } from "../src/chat-continuity-store.mjs";
+import { WorkspaceInspector } from "../src/workspace-inspector.mjs";
 
 const NOW = 2_000_000_000;
 const APP_ROOT = path.resolve(import.meta.dirname, "..");
@@ -340,6 +342,73 @@ test("ordinary chat blocks further tools and saves one local checkpoint without 
   assert.equal(record.turnId, "turn-work");
   assert.equal(record.checkpoint.summary, checkpointSummary);
   assert.equal(JSON.stringify(record).includes(originalPrompt), false);
+});
+
+test("ordinary chat checkpoint scopes workspace verification to the repo touched by the turn", async () => {
+  const dataDir = await createDataDir(80);
+  await writeFile(
+    path.join(dataDir, "preferences.json"),
+    JSON.stringify({ quotaPolicy: "strict_reserve" }),
+  );
+  const cwd = await mkdtemp(path.join(os.tmpdir(), "codex-pulse-hook-scope-"));
+  const repo = path.join(cwd, "product", "app");
+  const sibling = path.join(cwd, "output");
+  await mkdir(repo, { recursive: true });
+  await mkdir(sibling, { recursive: true });
+  await writeFile(path.join(repo, "work.txt"), "baseline\n");
+  await writeFile(path.join(sibling, "unrelated.txt"), "first\n");
+  execFileSync("git", ["-C", repo, "init", "-q"]);
+  execFileSync("git", ["-C", repo, "config", "user.name", "Codex Pulse Test"]);
+  execFileSync("git", ["-C", repo, "config", "user.email", "codex-pulse@example.invalid"]);
+  execFileSync("git", ["-C", repo, "add", "work.txt"]);
+  execFileSync("git", ["-C", repo, "commit", "-q", "-m", "baseline"]);
+
+  const base = {
+    session_id: "scoped-thread",
+    turn_id: "scoped-turn",
+    model: "gpt-6.1-sol",
+    cwd,
+    permission_mode: "default",
+  };
+  await handleHook(
+    {
+      ...base,
+      hook_event_name: "PostToolUse",
+      tool_name: "apply_patch",
+      tool_input: { file_path: path.join(repo, "work.txt") },
+    },
+    { dataDir, appRoot: APP_ROOT, now: NOW },
+  );
+
+  const statePath = path.join(dataDir, "state.json");
+  const state = JSON.parse(await readFile(statePath, "utf8"));
+  state.fiveHour.lastCheckedAt = NOW + 60;
+  state.lastSummary.fiveHour.remainingPercent = 9;
+  state.lastSummary.fiveHour.usedPercent = 91;
+  await writeFile(statePath, JSON.stringify(state));
+  await handleHook(
+    { ...base, hook_event_name: "PostToolUse", tool_name: "Bash" },
+    { dataDir, appRoot: APP_ROOT, now: NOW + 60 },
+  );
+  await handleHook(
+    {
+      ...base,
+      hook_event_name: "Stop",
+      last_assistant_message: "Completed: scoped checkpoint. Remaining: continue.",
+    },
+    { dataDir, appRoot: APP_ROOT, now: NOW + 61 },
+  );
+
+  const record = await new ChatContinuityStore(dataDir).get(base.session_id);
+  assert.deepEqual(record.checkpoint.workspaceSnapshot.scopes.map((scope) => scope.root), [
+    path.join("product", "app"),
+  ]);
+  await writeFile(path.join(sibling, "unrelated.txt"), "changed elsewhere\n");
+  const comparison = await new WorkspaceInspector().compareSnapshot(
+    cwd,
+    record.checkpoint.workspaceSnapshot,
+  );
+  assert.equal(comparison.same, true);
 });
 
 test("deadline mode stays quiet at fifteen percent and drains at five", async () => {

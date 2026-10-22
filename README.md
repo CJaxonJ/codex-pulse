@@ -158,7 +158,9 @@ and authentication material are never written to this journal.
 In strict-reserve mode, an ordinary chat can resume automatically after the
 personal five-hour window materially recovers. Pulse resumes the same thread only
 when its latest turn still matches the saved checkpoint and the workspace
-fingerprint is unchanged. Missing fingerprints, newer user activity, approvals,
+snapshot is unchanged. New checkpoints scope that snapshot to repositories
+touched by the turn, so unrelated files elsewhere under a broad workspace do not
+block recovery. Missing snapshots, newer user activity, approvals,
 questions, failed/interrupted turns, or an unknown App Server state stop the
 automation and require attention. Every active resume owns a durable lock for its
 canonical worktree, so a watcher restart cannot start a second turn in the same
@@ -183,7 +185,8 @@ Prompt text is inspected in memory only to estimate task size and priority; the
 original prompt is never written to Codex Pulse history. For strict-reserve
 continuity, Pulse does store the final assistant checkpoint (up to 8,000
 characters), thread/turn identifiers, local working-directory path, and a
-workspace fingerprint under the user's local application-support directory. The
+workspace snapshot under the user's local application-support directory. It
+contains relative scope paths and hashes, not source contents. The
 plugin never auto-approves permissions, expands sandbox access, calls App Server
 `turn/interrupt` on an ordinary chat, or consumes a reset card.
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -44,4 +44,33 @@ test("non-git workspaces use a stable filesystem fallback that detects edits", a
   assert.match(first, /^fs:/);
   assert.equal(repeat, first);
   assert.notEqual(second, first);
+});
+
+test("scoped snapshots ignore unrelated sibling changes but detect changes in the touched repo", async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), "codex-pulse-scoped-workspace-"));
+  const repo = path.join(cwd, "product", "app");
+  const sibling = path.join(cwd, "output");
+  await mkdir(repo, { recursive: true });
+  await mkdir(sibling, { recursive: true });
+  await writeFile(path.join(repo, "work.txt"), "baseline\n");
+  await writeFile(path.join(sibling, "unrelated.txt"), "first\n");
+  git(repo, ["init", "-q"]);
+  git(repo, ["config", "user.name", "Codex Pulse Test"]);
+  git(repo, ["config", "user.email", "codex-pulse@example.invalid"]);
+  git(repo, ["add", "work.txt"]);
+  git(repo, ["commit", "-q", "-m", "baseline"]);
+
+  const inspector = new WorkspaceInspector();
+  const snapshot = await inspector.snapshot(cwd, {
+    hints: [path.join("product", "app", "work.txt")],
+  });
+  assert.deepEqual(snapshot.scopes.map((scope) => scope.root), [path.join("product", "app")]);
+
+  await writeFile(path.join(sibling, "unrelated.txt"), "second\n");
+  assert.equal((await inspector.compareSnapshot(cwd, snapshot)).same, true);
+
+  await writeFile(path.join(repo, "work.txt"), "changed\n");
+  const changed = await inspector.compareSnapshot(cwd, snapshot);
+  assert.equal(changed.same, false);
+  assert.deepEqual(changed.changedScopes, [path.join("product", "app")]);
 });

@@ -160,6 +160,43 @@ test("ordinary chat refuses resume after workspace divergence", async () => {
   assert.equal(client.calls.some((call) => call.method === "turn/start"), false);
 });
 
+test("ordinary chat uses a scoped snapshot and reports the changed scope", async () => {
+  const store = new MemoryChatContinuityStore([
+    pausedChat({
+      checkpoint: {
+        summary: "Continue scoped work.",
+        workspaceFingerprint: "legacy",
+        workspaceSnapshot: {
+          version: 1,
+          digest: "before",
+          scopes: [{ root: "product/app", fingerprint: "before" }],
+        },
+      },
+    }),
+  ]);
+  const client = new FakeClient();
+  const controller = new ChatContinuityController({
+    client,
+    store,
+    workspace: {
+      async exists() {
+        return true;
+      },
+      async compareSnapshot() {
+        return { verifiable: true, same: false, changedScopes: ["product/app"] };
+      },
+    },
+  });
+
+  const events = await controller.reconcile(summary(85, 200), { now: 20 });
+  assert.equal(events[0].reason, "workspace_changed");
+  assert.deepEqual(events[0].changedScopes, ["product/app"]);
+  assert.deepEqual((await store.get("thread-1")).blockerDetails, {
+    changedScopes: ["product/app"],
+  });
+  assert.equal(client.calls.some((call) => call.method === "turn/start"), false);
+});
+
 test("ordinary chat fails closed when the workspace fingerprint is unavailable", async () => {
   const store = new MemoryChatContinuityStore([pausedChat()]);
   const client = new FakeClient();
