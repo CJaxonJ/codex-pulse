@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <title>Codex Pulse app icon</title>
+  <rect x="32" y="32" width="960" height="960" rx="224" fill="#F7F8FA"/>
+  <g transform="translate(91 91) scale(0.82)">
+    <path d="M260 748C338 825 492 848 635 805C808 753 885 581 815 421C786 354 742 310 690 274V177L596 256C545 237 487 228 429 228C238 228 101 350 101 513C101 584 129 646 182 682C213 703 250 712 290 712H421" stroke="#17191F" stroke-width="78" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M421 712L501 464L594 742L679 639H814" stroke="#17191F" stroke-width="78" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M745 320C835 386 878 493 853 596C824 718 716 807 588 825" stroke="#08A9D6" stroke-width="78" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

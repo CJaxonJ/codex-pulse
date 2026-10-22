@@ -97,7 +97,12 @@
     "developerName": "CJaxonJ",
     "category": "Developer Tools",
     "capabilities": ["Read"],
-    "brandColor": "#10A37F",
+    "brandColor": "#008DBB",
+    "brandColorDark": "#2CC8F5",
+    "logo": "./assets/logo.svg",
+    "logoDark": "./assets/logo-dark.svg",
+    "composerIcon": "./assets/composer-icon.svg",
+    "composerIconDark": "./assets/composer-icon-dark.svg",
     "defaultPrompt": [
       "Show my current Codex Pulse recommendation.",
       "Help me decide whether to start a large Codex task now."

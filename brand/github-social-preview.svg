@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="768" height="384" viewBox="0 0 1280 640" fill="none">
+  <title>Codex Pulse GitHub social preview</title>
+  <rect width="1280" height="640" fill="#F7F8FA"/>
+  <g transform="translate(96 72) scale(0.48)">
+    <path d="M260 748C338 825 492 848 635 805C808 753 885 581 815 421C786 354 742 310 690 274V177L596 256C545 237 487 228 429 228C238 228 101 350 101 513C101 584 129 646 182 682C213 703 250 712 290 712H421" stroke="#17191F" stroke-width="78" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M421 712L501 464L594 742L679 639H814" stroke="#17191F" stroke-width="78" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M745 320C835 386 878 493 853 596C824 718 716 807 588 825" stroke="#08A9D6" stroke-width="78" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <text x="580" y="280" fill="#17191F" font-family="-apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif" font-size="84" font-weight="700" letter-spacing="-3">Codex Pulse</text>
+  <text x="584" y="354" fill="#545B66" font-family="-apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif" font-size="34" font-weight="500">Protect the last 10%.</text>
+  <text x="584" y="405" fill="#545B66" font-family="-apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif" font-size="34" font-weight="500">Resume when quota returns.</text>
+</svg>

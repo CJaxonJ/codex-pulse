@@ -14,6 +14,8 @@
   <string>Codex Pulse</string>
   <key>CFBundleDisplayName</key>
   <string>Codex Pulse</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>

@@ -1,6 +1,6 @@
 {
   "name": "codex-pulse",
-  "version": "0.9.13",
+  "version": "0.9.14",
   "private": true,
   "license": "MIT",
   "codexPulse": {
@@ -11,6 +11,7 @@
   },
   "type": "module",
   "scripts": {
+    "brand:build": "node scripts/build-brand-assets.mjs",
     "status": "node bin/codex-pulse.mjs status",
     "watch": "node bin/codex-pulse.mjs watch",
     "watch:once": "node bin/codex-pulse.mjs watch --once",
