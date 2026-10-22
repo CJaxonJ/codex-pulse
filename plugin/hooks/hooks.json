@@ -35,7 +35,7 @@
           {
             "type": "command",
             "command": "/usr/bin/env node \"$PLUGIN_ROOT/scripts/pulse-hook.mjs\"",
-            "timeout": 3
+            "timeout": 15
           }
         ]
       }
@@ -47,7 +47,7 @@
           {
             "type": "command",
             "command": "/usr/bin/env node \"$PLUGIN_ROOT/scripts/pulse-hook.mjs\"",
-            "timeout": 3,
+            "timeout": 15,
             "additionalContextLimit": 800
           }
         ]
@@ -59,7 +59,7 @@
           {
             "type": "command",
             "command": "/usr/bin/env node \"$PLUGIN_ROOT/scripts/pulse-hook.mjs\"",
-            "timeout": 3
+            "timeout": 15
           }
         ]
       }
@@ -70,7 +70,7 @@
           {
             "type": "command",
             "command": "/usr/bin/env node \"$PLUGIN_ROOT/scripts/pulse-hook.mjs\"",
-            "timeout": 3
+            "timeout": 15
           }
         ]
       }

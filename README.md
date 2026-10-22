@@ -156,7 +156,9 @@ redacted text view, or double-click `~/Applications/Codex Pulse.app`; prompt tex
 and authentication material are never written to this journal.
 
 In strict-reserve mode, an ordinary Codex Desktop chat is always checkpointed at
-the hard floor. Same-chat automatic continuation additionally requires a native
+the hard floor, including when the quota crosses 10% after the turn's final tool
+call and is first observed by the Stop hook. Same-chat automatic continuation
+additionally requires a native
 Codex Goal created by the user with `/goal`. Pulse pauses that Goal at the reserve
 and snapshots its exact user-approved objective. The final checkpoint is parsed
 into completed work, verification, remaining work, next action, and blockers.

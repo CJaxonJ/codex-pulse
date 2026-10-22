@@ -168,18 +168,6 @@ try {
   );
 
   await writeHookState(quotaSummary(10, firstWindow), now + 60);
-  const hardFloor = await handleHook(
-    { ...baseHook, hook_event_name: "PostToolUse", tool_name: "Bash" },
-    { dataDir, appRoot: projectDir, now: now + 60 },
-  );
-  assert(hardFloor?.decision === "block", "10% did not stop the active turn");
-
-  const extraTool = await handleHook(
-    { ...baseHook, hook_event_name: "PreToolUse", tool_name: "apply_patch" },
-    { dataDir, appRoot: projectDir, now: now + 61 },
-  );
-  assert(extraTool?.decision === "block", "a new tool escaped the 10% guard");
-
   const checkpointText = [
     "Completed: implemented phase one.",
     "Verification: phase-one checks passed.",
@@ -194,9 +182,12 @@ try {
       stop_hook_active: false,
       last_assistant_message: checkpointText,
     },
-    { dataDir, appRoot: projectDir, now: now + 62 },
+    { dataDir, appRoot: projectDir, now: now + 60 },
   );
-  assert(stopped?.continue === false, "Stop hook did not end the guarded turn");
+  assert(
+    stopped?.continue === false,
+    "Stop hook did not checkpoint a turn whose quota crossed after the last tool",
+  );
   let record = await store.get(sessionId);
   assert(record?.status === "paused_quota", "checkpoint was not persisted as paused");
   assert(record.checkpoint?.summary === checkpointText, "checkpoint plan was not preserved");
@@ -220,7 +211,7 @@ try {
   );
   assert(!JSON.stringify(record).includes(privateMarker), "private prompt leaked into checkpoint state");
   assert(!(await exists(proofPath)), "remaining work ran before quota recovery");
-  timeline.push("10%: tool blocked, turn stopped, structured checkpoint persisted");
+  timeline.push("10% after the last tool: Stop still paused the Goal and persisted the checkpoint");
 
   const pausedEvents = [];
   const pausedController = new ChatContinuityController({

@@ -263,6 +263,55 @@ async function prepareNativeGoalPause(goalCoordinator, sessionId, existing, now)
   }
 }
 
+async function requestQuotaCheckpoint({
+  continuityStore,
+  goalCoordinator,
+  input,
+  mode,
+  summary,
+  remaining,
+  now,
+}) {
+  if (!input.session_id) return null;
+  const existingChat = await continuityStore.get(input.session_id);
+  const sameTurn =
+    existingChat &&
+    (!input.turn_id || !existingChat.turnId || input.turn_id === existingChat.turnId);
+  const baseChat = sameTurn ? existingChat : { sessionId: input.session_id };
+  if (
+    sameTurn &&
+    ["paused_quota", "complete", "needs_attention"].includes(existingChat.status)
+  ) {
+    return existingChat;
+  }
+  const cwd = path.resolve(input.cwd || baseChat.cwd || process.cwd());
+  const goalPause = await prepareNativeGoalPause(
+    goalCoordinator,
+    input.session_id,
+    { ...baseChat, turnId: input.turn_id || baseChat.turnId || null },
+    now,
+  );
+  return continuityStore.put({
+    ...baseChat,
+    status: "checkpoint_requested",
+    cwd,
+    turnId: input.turn_id || baseChat.turnId || null,
+    model: input.model || baseChat.model || null,
+    permissionMode: input.permission_mode || baseChat.permissionMode || "default",
+    quotaPolicy: mode,
+    ...goalPause,
+    resumeFloor: baseChat.resumeFloor ?? 50,
+    pausedWindowKey: summary.fiveHour?.resetsAt || null,
+    pausedRemaining: remaining,
+    checkpointRequestedAt: now,
+    checkpoint: {
+      ...(baseChat.checkpoint || {}),
+      quotaAtPause: remaining,
+      requestedAt: now,
+    },
+  });
+}
+
 async function runtimeModules(appRoot) {
   const advisorUrl = pathToFileURL(path.join(appRoot, "src", "usage-advisor.mjs")).href;
   const storeUrl = pathToFileURL(
@@ -454,42 +503,15 @@ export async function handleHook(input, options = {}) {
     }
     if (matchesManagedSession(await loadManagedTasks(dataDir), input)) return null;
     if (input.session_id) {
-      const existingChat = await continuityStore.get(input.session_id);
-      const sameTurn =
-        existingChat &&
-        (!input.turn_id || !existingChat.turnId || input.turn_id === existingChat.turnId);
-      const baseChat = sameTurn ? existingChat : { sessionId: input.session_id };
-      if (
-        !sameTurn ||
-        !["paused_quota", "complete", "needs_attention"].includes(existingChat.status)
-      ) {
-        const cwd = path.resolve(input.cwd || baseChat.cwd || process.cwd());
-        const goalPause = await prepareNativeGoalPause(
-          goalCoordinator,
-          input.session_id,
-          { ...baseChat, turnId: input.turn_id || baseChat.turnId || null },
-          now,
-        );
-        await continuityStore.put({
-          ...baseChat,
-          status: "checkpoint_requested",
-          cwd,
-          turnId: input.turn_id || baseChat.turnId || null,
-          model: input.model || baseChat.model || null,
-          permissionMode: input.permission_mode || baseChat.permissionMode || "default",
-          quotaPolicy: mode,
-          ...goalPause,
-          resumeFloor: baseChat.resumeFloor ?? 50,
-          pausedWindowKey: summary.fiveHour?.resetsAt || null,
-          pausedRemaining: remaining,
-          checkpointRequestedAt: now,
-          checkpoint: {
-            ...(baseChat.checkpoint || {}),
-            quotaAtPause: remaining,
-            requestedAt: now,
-          },
-        });
-      }
+      await requestQuotaCheckpoint({
+        continuityStore,
+        goalCoordinator,
+        input,
+        mode,
+        summary,
+        remaining,
+        now,
+      });
     }
     return {
       decision: "block",
@@ -510,42 +532,15 @@ export async function handleHook(input, options = {}) {
       return null;
     }
     if (policy.stop && input.session_id) {
-      const existingChat = await continuityStore.get(input.session_id);
-      const sameTurn =
-        existingChat &&
-        (!input.turn_id || !existingChat.turnId || input.turn_id === existingChat.turnId);
-      const baseChat = sameTurn ? existingChat : { sessionId: input.session_id };
-      if (
-        !sameTurn ||
-        !["paused_quota", "complete", "needs_attention"].includes(existingChat.status)
-      ) {
-        const cwd = path.resolve(input.cwd || baseChat.cwd || process.cwd());
-        const goalPause = await prepareNativeGoalPause(
-          goalCoordinator,
-          input.session_id,
-          { ...baseChat, turnId: input.turn_id || baseChat.turnId || null },
-          now,
-        );
-        await continuityStore.put({
-          ...baseChat,
-          status: "checkpoint_requested",
-          cwd,
-          turnId: input.turn_id || baseChat.turnId || null,
-          model: input.model || baseChat.model || null,
-          permissionMode: input.permission_mode || baseChat.permissionMode || "default",
-          quotaPolicy: mode,
-          ...goalPause,
-          resumeFloor: baseChat.resumeFloor ?? 50,
-          pausedWindowKey: summary.fiveHour?.resetsAt || null,
-          pausedRemaining: remaining,
-          checkpointRequestedAt: now,
-          checkpoint: {
-            ...(baseChat.checkpoint || {}),
-            quotaAtPause: remaining,
-            requestedAt: now,
-          },
-        });
-      }
+      await requestQuotaCheckpoint({
+        continuityStore,
+        goalCoordinator,
+        input,
+        mode,
+        summary,
+        remaining,
+        now,
+      });
     }
     return {
       ...(policy.stop
@@ -598,11 +593,34 @@ export async function handleHook(input, options = {}) {
         outcome: input.hook_event_name === "Stop" ? "completed" : "interrupted",
       });
     }
-    const chat = input.session_id
+    let chat = input.session_id
       ? await continuityStore.get(input.session_id)
       : null;
-    const matchingChatTurn =
+    let matchingChatTurn =
       chat && (!input.turn_id || !chat.turnId || input.turn_id === chat.turnId);
+    const remaining = summary.fiveHour?.remainingPercent;
+    if (
+      input.hook_event_name === "Stop" &&
+      mode === "strict_reserve" &&
+      remaining != null &&
+      remaining <= 10 &&
+      input.session_id &&
+      !matchesManagedSession(await loadManagedTasks(dataDir), input) &&
+      (!matchingChatTurn ||
+        !["paused_quota", "complete", "needs_attention"].includes(chat.status))
+    ) {
+      chat = await requestQuotaCheckpoint({
+        continuityStore,
+        goalCoordinator,
+        input,
+        mode,
+        summary,
+        remaining,
+        now,
+      });
+      matchingChatTurn =
+        chat && (!input.turn_id || !chat.turnId || input.turn_id === chat.turnId);
+    }
     if (
       input.hook_event_name === "Stop" &&
       matchingChatTurn &&

@@ -21,7 +21,7 @@ const installedPlugin = path.join(
   "cache",
   "codex-pulse-local",
   "codex-pulse",
-  "0.9.11",
+  "0.9.12",
   "scripts",
   "pulse-hook.mjs",
 );
@@ -111,22 +111,25 @@ try {
   };
   const goalCoordinator = new NativeGoalCoordinator();
 
-  await writeHookState(quotaSummary(9, oldWindow), now);
-  const stopped = await handleHook(
-    { ...hookInput, hook_event_name: "PostToolUse", tool_name: "Bash" },
+  await writeHookState(quotaSummary(70, oldWindow), now);
+  await handleHook(
+    {
+      ...hookInput,
+      hook_event_name: "PostToolUse",
+      tool_name: "apply_patch",
+      tool_input: { file_path: path.join(workspace, "README.md") },
+    },
     { dataDir, appRoot: installedRuntime, now, goalCoordinator },
   );
-  if (stopped?.decision !== "block") {
-    throw new Error("installed Hook did not enforce the synthetic 10% boundary");
-  }
 
   const checkpoint = [
-    "Completed: installed Hook paused the current native Goal at the synthetic 10% boundary.",
+    "Completed: installed Hook observed work before the synthetic quota boundary.",
     "Verification: the test uses the real Desktop thread and forbids external turn creation.",
     "Remaining: prove Desktop starts the next turn after Goal reactivation.",
     "Next action: after this turn becomes idle, inspect the canary and finish the acceptance.",
     "Blockers: none.",
   ].join("\n");
+  await writeHookState(quotaSummary(9, oldWindow), now + 1);
   const saved = await handleHook(
     {
       ...hookInput,
@@ -136,7 +139,9 @@ try {
     },
     { dataDir, appRoot: installedRuntime, now: now + 1, goalCoordinator },
   );
-  if (saved?.continue !== false) throw new Error("installed Hook did not save the checkpoint");
+  if (saved?.continue !== false) {
+    throw new Error("installed Stop hook missed the late 10% crossing");
+  }
 
   const pausedGoal = await client.request("thread/goal/get", { threadId });
   if (pausedGoal.goal?.status !== "paused") {
@@ -162,6 +167,21 @@ try {
     throw new Error("an external writer method was attempted");
   }
 
+  await client.request("thread/goal/set", {
+    threadId,
+    objective: before.goal.objective,
+    ...(before.goal.tokenBudget != null ? { tokenBudget: before.goal.tokenBudget } : {}),
+    status: "active",
+    origin: "automatic",
+  });
+  const restored = await client.request("thread/goal/get", { threadId });
+  if (
+    restored.goal?.status !== "active" ||
+    restored.goal?.objective !== before.goal.objective
+  ) {
+    throw new Error("the acceptance canary did not restore the original active Goal");
+  }
+
   const record = await store.get(threadId);
   const evidence = {
     ok: true,
@@ -170,7 +190,8 @@ try {
     pausedTurnId: turnId,
     resumeMode: record?.resumeMode,
     resumeCount: record?.resumeCount,
-    goalStatus: after.goal.status,
+    goalStatus: restored.goal.status,
+    originalGoalRestored: true,
     externalWriterCalls: calls.filter((call) =>
       ["thread/resume", "turn/start"].includes(call.method),
     ).length,

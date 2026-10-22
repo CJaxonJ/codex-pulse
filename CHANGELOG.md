@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.12 — 2026-10-22
+
+- Fixed the missed recovery path where the five-hour quota crossed the 10%
+  reserve after the turn's last tool call: the Stop hook now pauses the active
+  Goal and persists the checkpoint even without another tool event.
+- Increased the timeout only for tool/turn lifecycle hooks that may need to
+  start Codex App Server while preserving a Goal; lightweight startup and
+  prompt-planning hooks remain at three seconds.
+- Added regression and full-chain coverage for the exact late-crossing failure,
+  including exactly-once recovery under concurrent watchers.
+
 ## 0.9.11 — 2026-10-22
 
 - Preserved the exact user-approved Goal across quota pauses, combined it with

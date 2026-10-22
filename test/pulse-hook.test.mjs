@@ -424,6 +424,81 @@ test("ordinary chat with an active native Goal is paused and prepared for Goal r
   assert.match(checkpoint.systemMessage, /当前聊天续跑/);
 });
 
+test("Stop backfills the checkpoint when quota crosses 10% after the last tool", async () => {
+  const dataDir = await createDataDir(70);
+  await writeFile(
+    path.join(dataDir, "preferences.json"),
+    JSON.stringify({ quotaPolicy: "strict_reserve" }),
+  );
+  const calls = [];
+  const goalCoordinator = {
+    async pauseIfActive(threadId) {
+      calls.push(threadId);
+      return {
+        paused: true,
+        status: "paused",
+        goalSnapshot: {
+          objective: "Finish the original user task and verify the main path.",
+          tokenBudget: null,
+        },
+      };
+    },
+  };
+  const base = {
+    session_id: "late-crossing-thread",
+    turn_id: "late-crossing-turn",
+    model: "gpt-6.1-sol",
+    cwd: process.cwd(),
+    permission_mode: "default",
+  };
+
+  await handleHookImpl(
+    {
+      ...base,
+      hook_event_name: "PostToolUse",
+      tool_name: "apply_patch",
+      tool_input: { file_path: path.join(process.cwd(), "README.md") },
+    },
+    { dataDir, appRoot: APP_ROOT, now: NOW, goalCoordinator },
+  );
+
+  const statePath = path.join(dataDir, "state.json");
+  const state = JSON.parse(await readFile(statePath, "utf8"));
+  state.fiveHour.lastCheckedAt = NOW + 60;
+  state.lastSummary.fiveHour.remainingPercent = 9;
+  state.lastSummary.fiveHour.usedPercent = 91;
+  await writeFile(statePath, JSON.stringify(state));
+
+  const checkpointSummary = [
+    "Completed: reproduced the recovery gap.",
+    "Verification: the watcher observed the quota drop.",
+    "Remaining: finish the fix and run the full chain.",
+    "Next action: resume from this checkpoint.",
+    "Blockers: none.",
+  ].join("\n");
+  const stopped = await handleHookImpl(
+    {
+      ...base,
+      hook_event_name: "Stop",
+      last_assistant_message: checkpointSummary,
+    },
+    { dataDir, appRoot: APP_ROOT, now: NOW + 61, goalCoordinator },
+  );
+
+  const record = await new ChatContinuityStore(dataDir).get(base.session_id);
+  assert.equal(stopped.continue, false);
+  assert.deepEqual(calls, [base.session_id]);
+  assert.equal(record.status, "paused_quota");
+  assert.equal(record.resumeMode, "native_goal");
+  assert.equal(record.autoResume, true);
+  assert.equal(record.checkpoint.summary, checkpointSummary);
+  assert.equal(
+    record.initialGoal.objective,
+    "Finish the original user task and verify the main path.",
+  );
+  assert.match(record.checkpoint.continuationGoal.objective, /resume from this checkpoint/);
+});
+
 test("ordinary chat checkpoint scopes workspace verification to the repo touched by the turn", async () => {
   const dataDir = await createDataDir(80);
   await writeFile(
