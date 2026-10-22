@@ -158,7 +158,11 @@ and authentication material are never written to this journal.
 In strict-reserve mode, an ordinary Codex Desktop chat is always checkpointed at
 the hard floor. Same-chat automatic continuation additionally requires a native
 Codex Goal created by the user with `/goal`. Pulse pauses that Goal at the reserve
-and reactivates it after the personal five-hour window materially recovers; the
+and snapshots its exact user-approved objective. The final checkpoint is parsed
+into completed work, verification, remaining work, next action, and blockers.
+After the personal five-hour window materially recovers, Pulse reactivates the
+Goal with a continuation objective that keeps the original objective authoritative
+and starts from the first unfinished step; the
 Desktop-owned Goal dispatcher, rather than a second App Server writer, starts the
 next turn. Without a native Goal, Pulse stores the checkpoint and sends a
 persistent manual-resume notification instead of claiming it can write into a
@@ -169,7 +173,9 @@ saved checkpoint and the workspace snapshot is unchanged. New checkpoints scope
 that snapshot to repositories touched by the turn, so unrelated files elsewhere
 under a broad workspace do not block recovery. Missing snapshots, newer user
 activity, approvals, questions, or an unavailable Goal state stop the automation
-and require attention. Every active resume owns a durable lock for its canonical
+and require attention. If the user edits the Goal while Pulse is paused, Pulse
+never overwrites it with the old continuation plan and instead asks for attention.
+Every active resume owns a durable lock for its canonical
 worktree, so a watcher restart cannot start a second task in the same checkout.
 
 Checkpoints created by an older runtime may not contain a usable pause-time
@@ -190,7 +196,8 @@ prompt text, and absolute home paths.
 Prompt text is inspected in memory only to estimate task size and priority; the
 original prompt is never written to Codex Pulse history. For strict-reserve
 continuity, Pulse does store the final assistant checkpoint (up to 8,000
-characters), thread/turn identifiers, local working-directory path, and a
+characters), the exact objective of a user-created native Goal, thread/turn
+identifiers, local working-directory path, and a
 workspace snapshot under the user's local application-support directory. It
 contains relative scope paths and hashes, not source contents. The
 plugin never auto-approves permissions, expands sandbox access, calls App Server

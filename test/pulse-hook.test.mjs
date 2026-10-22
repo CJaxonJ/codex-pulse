@@ -370,7 +370,16 @@ test("ordinary chat with an active native Goal is paused and prepared for Goal r
   const goalCoordinator = {
     async pauseIfActive(threadId) {
       calls.push(threadId);
-      return { paused: true, status: "paused" };
+      return {
+        paused: true,
+        status: "paused",
+        goalSnapshot: {
+          objective: "Deliver the user's original outcome without expanding scope.",
+          tokenBudget: 40_000,
+          createdAt: NOW - 100,
+          updatedAt: NOW - 10,
+        },
+      };
     },
   };
   const base = {
@@ -401,6 +410,16 @@ test("ordinary chat with an active native Goal is paused and prepared for Goal r
   assert.equal(record.resumeMode, "native_goal");
   assert.equal(record.goalWasActive, true);
   assert.equal(record.autoResume, true);
+  assert.equal(
+    record.initialGoal.objective,
+    "Deliver the user's original outcome without expanding scope.",
+  );
+  assert.equal(
+    record.checkpoint.continuationGoal.originalObjective,
+    record.initialGoal.objective,
+  );
+  assert.match(record.checkpoint.continuationGoal.objective, /Completed:\n.*one/);
+  assert.match(record.checkpoint.continuationGoal.objective, /Remaining:\n.*two/);
   assert.match(checkpoint.systemMessage, /原生 Goal/);
   assert.match(checkpoint.systemMessage, /当前聊天续跑/);
 });

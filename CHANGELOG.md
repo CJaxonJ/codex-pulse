@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.11 — 2026-10-22
+
+- Preserved the exact user-approved Goal across quota pauses, combined it with
+  the structured 10% checkpoint for continuation, and refused to overwrite a
+  Goal the user changed or completed while paused.
+
 ## 0.9.10 — 2026-10-22
 
 - Replaced the invalid external-writer path for ordinary Desktop chats with

@@ -1,5 +1,15 @@
 import { AppServerClient } from "./app-server-client.mjs";
 
+function snapshotGoal(goal) {
+  if (!goal) return null;
+  return {
+    objective: goal.objective,
+    tokenBudget: goal.tokenBudget ?? null,
+    createdAt: goal.createdAt ?? null,
+    updatedAt: goal.updatedAt ?? null,
+  };
+}
+
 export class NativeGoalCoordinator {
   constructor({ clientFactory = () => new AppServerClient() } = {}) {
     this.clientFactory = clientFactory;
@@ -14,8 +24,10 @@ export class NativeGoalCoordinator {
         return {
           paused: false,
           status: current.goal?.status || null,
+          goalSnapshot: snapshotGoal(current.goal),
         };
       }
+      const goalSnapshot = snapshotGoal(current.goal);
       const updated = await client.request("thread/goal/set", {
         threadId,
         status: "paused",
@@ -24,6 +36,7 @@ export class NativeGoalCoordinator {
       return {
         paused: updated.goal?.status === "paused",
         status: updated.goal?.status || null,
+        goalSnapshot,
       };
     } finally {
       client.stop();

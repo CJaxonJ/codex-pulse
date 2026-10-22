@@ -20,6 +20,16 @@ test("attention notifications tell the user what is actually blocking resume", (
   assert.match(input.body, /阻止自动续跑/);
 });
 
+test("a Goal edited during the pause is never silently overwritten", () => {
+  const notice = notificationForEvent({
+    type: "chat_continuity_attention",
+    reason: "native_goal_changed",
+  });
+  assert.match(notice.body, /Goal 被修改/);
+  assert.match(notice.body, /旧计划覆盖你的新目标/);
+  assert.equal(notice.persistent, true);
+});
+
 test("limits updates are clearly separated from reset alerts", () => {
   const update = notificationForEvent({
     type: "tibo_limits_update",

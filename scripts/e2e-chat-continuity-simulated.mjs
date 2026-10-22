@@ -23,7 +23,9 @@ const store = new ChatContinuityStore(dataDir);
 const inspector = new WorkspaceInspector();
 const timeline = [];
 let succeeded = false;
-const goalState = { status: "active" };
+const originalGoalObjective =
+  "Deliver the requested feature with proof, without expanding scope or consuming reset cards.";
+const goalState = { status: "active", objective: originalGoalObjective };
 const threadState = {
   latestTurnId: "simulated-initial-turn",
   latestTurnStatus: "completed",
@@ -31,10 +33,11 @@ const threadState = {
 const goalCoordinator = {
   async pauseIfActive() {
     if (goalState.status !== "active") {
-      return { paused: false, status: goalState.status };
+      return { paused: false, status: goalState.status, goalSnapshot: { ...goalState } };
     }
+    const goalSnapshot = { ...goalState };
     goalState.status = "paused";
-    return { paused: true, status: "paused" };
+    return { paused: true, status: "paused", goalSnapshot };
   },
 };
 
@@ -96,16 +99,16 @@ class SimulatedAppServer {
       };
     }
     if (method === "thread/goal/get") {
-      return { goal: goalState.status ? { status: goalState.status } : null };
+      return { goal: goalState.status ? { ...goalState } : null };
     }
     if (method === "thread/goal/set") {
-      goalState.status = params.status;
+      Object.assign(goalState, params);
       if (params.status === "active") {
         threadState.latestTurnId = "simulated-native-goal-turn";
         threadState.latestTurnStatus = "inProgress";
         await writeFile(proofPath, "RESUME_OK\n", "utf8");
       }
-      return { goal: { status: goalState.status } };
+      return { goal: { ...goalState } };
     }
     if (["thread/resume", "turn/start"].includes(method)) {
       throw new Error(`ordinary Desktop chat must not call ${method}`);
@@ -198,6 +201,20 @@ try {
   assert(record?.status === "paused_quota", "checkpoint was not persisted as paused");
   assert(record.checkpoint?.summary === checkpointText, "checkpoint plan was not preserved");
   assert(
+    record.initialGoal?.objective === originalGoalObjective,
+    "the original user-approved Goal was not preserved exactly",
+  );
+  assert(
+    record.checkpoint?.continuationGoal?.objective?.includes(originalGoalObjective),
+    "the continuation Goal lost the original objective",
+  );
+  assert(
+    record.checkpoint?.continuationGoal?.objective?.includes(
+      "create resume-proof.txt with RESUME_OK",
+    ),
+    "the continuation Goal lost the checkpoint next action",
+  );
+  assert(
     record.checkpoint?.workspaceSnapshot?.scopes?.[0]?.root === path.join("product", "app"),
     "checkpoint did not scope verification to the touched nested repository",
   );
@@ -266,6 +283,11 @@ try {
   assert(
     activationsA.length + activationsB.length === 1,
     "concurrent watchers activated the native Goal more than once",
+  );
+  const activation = activationsA[0] || activationsB[0];
+  assert(
+    activation.params.objective === record.checkpoint.continuationGoal.objective,
+    "recovery did not activate the composed continuation Goal",
   );
   assert(
     [...clientA.calls, ...clientB.calls].every(

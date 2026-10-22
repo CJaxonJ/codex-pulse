@@ -69,6 +69,7 @@ export function notificationForEvent(event) {
         "暂停时没有保存到工作区指纹（可能是旧版记录或当时校验失败）",
       resume_state_unknown: "后台重启后无法确认续跑任务是否仍在执行",
       native_goal_required: "当前聊天没有原生 Goal，外部 watcher 无权写入 Desktop 正在持有的聊天",
+      native_goal_changed: "暂停期间原生 Goal 被修改，为避免旧计划覆盖你的新目标",
       native_goal_missing: "原生 Goal 已被清除",
       native_goal_paused: "原生 Goal 仍处于暂停状态",
       native_goal_state_unavailable: "暂时无法读取原生 Goal 状态",

@@ -388,9 +388,67 @@ export class ChatContinuityController {
       if (!currentGoal.goal) {
         throw new Error("native goal no longer exists");
       }
-      if (currentGoal.goal.status !== "active") {
+      const continuationObjective = record.checkpoint?.continuationGoal?.objective || null;
+      const expectedObjectives = new Set(
+        [
+          record.goalAtPause?.objective,
+          record.initialGoal?.objective,
+          continuationObjective,
+        ].filter((value) => typeof value === "string" && value.length > 0),
+      );
+      if (
+        expectedObjectives.size > 0 &&
+        !expectedObjectives.has(currentGoal.goal.objective)
+      ) {
+        const blocked = await this.store.put({
+          ...resuming,
+          status: "needs_attention",
+          blocker: "native_goal_changed",
+          lastResumeError: "The native Goal changed while Codex Pulse was paused.",
+        });
+        await this.#releaseLock(blocked);
+        return {
+          type: "chat_continuity_attention",
+          sessionId: record.sessionId,
+          reason: "native_goal_changed",
+        };
+      }
+      if (currentGoal.goal.status === "complete") {
+        const completed = await this.store.put({
+          ...resuming,
+          status: "complete",
+          holdWorktreeLock: false,
+          completedAt: now,
+        });
+        await this.#releaseLock(completed);
+        return {
+          type: "chat_continuity_complete",
+          sessionId: record.sessionId,
+          turnId: record.turnId,
+        };
+      }
+      if (!["active", "paused"].includes(currentGoal.goal.status)) {
+        const reason = `native_goal_${currentGoal.goal.status || "state_unavailable"}`;
+        const blocked = await this.store.put({
+          ...resuming,
+          status: "needs_attention",
+          blocker: reason,
+          lastResumeError: "The native Goal is no longer safely resumable.",
+        });
+        await this.#releaseLock(blocked);
+        return {
+          type: "chat_continuity_attention",
+          sessionId: record.sessionId,
+          reason,
+        };
+      }
+      if (
+        currentGoal.goal.status !== "active" ||
+        (continuationObjective && currentGoal.goal.objective !== continuationObjective)
+      ) {
         await this.client.request("thread/goal/set", {
           threadId: record.sessionId,
+          ...(continuationObjective ? { objective: continuationObjective } : {}),
           status: "active",
           origin: "automatic",
         });

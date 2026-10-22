@@ -224,6 +224,8 @@ async function prepareNativeGoalPause(goalCoordinator, sessionId, existing, now)
       goalCheckedAt: existing.goalCheckedAt || now,
       goalCheckedTurnId: existing.goalCheckedTurnId || existing.turnId || null,
       resumeUnavailableReason: existing.resumeUnavailableReason || null,
+      initialGoal: existing.initialGoal || null,
+      goalAtPause: existing.goalAtPause || null,
     };
   }
   try {
@@ -236,6 +238,8 @@ async function prepareNativeGoalPause(goalCoordinator, sessionId, existing, now)
         goalCheckedAt: now,
         goalCheckedTurnId: existing?.turnId || null,
         resumeUnavailableReason: null,
+        initialGoal: existing?.initialGoal || result.goalSnapshot || null,
+        goalAtPause: result.goalSnapshot || existing?.goalAtPause || null,
       };
     }
     return {
@@ -276,6 +280,9 @@ async function runtimeModules(appRoot) {
   const goalCoordinatorUrl = pathToFileURL(
     path.join(appRoot, "src", "native-goal-coordinator.mjs"),
   ).href;
+  const goalContinuationUrl = pathToFileURL(
+    path.join(appRoot, "src", "goal-continuation.mjs"),
+  ).href;
   const [
     { adviseTaskStart },
     { UsageObservationStore },
@@ -283,6 +290,7 @@ async function runtimeModules(appRoot) {
     { ChatContinuityStore },
     { WorkspaceInspector },
     { NativeGoalCoordinator },
+    { buildContinuationGoal },
   ] = await Promise.all([
     import(advisorUrl),
     import(storeUrl),
@@ -290,6 +298,7 @@ async function runtimeModules(appRoot) {
     import(continuityStoreUrl),
     import(workspaceUrl),
     import(goalCoordinatorUrl),
+    import(goalContinuationUrl),
   ]);
   return {
     adviseTaskStart,
@@ -298,6 +307,7 @@ async function runtimeModules(appRoot) {
     ChatContinuityStore,
     WorkspaceInspector,
     NativeGoalCoordinator,
+    buildContinuationGoal,
   };
 }
 
@@ -368,6 +378,7 @@ export async function handleHook(input, options = {}) {
     ChatContinuityStore,
     WorkspaceInspector,
     NativeGoalCoordinator,
+    buildContinuationGoal,
   } = await runtimeModules(appRoot);
   const preferences = await new PulsePreferencesStore(dataDir).get();
   const mode = preferences.quotaPolicy;
@@ -603,6 +614,17 @@ export async function handleHook(input, options = {}) {
         cwd,
         chat.workspaceHints || [],
       );
+      const checkpointSummary = String(
+        input.last_assistant_message ||
+          "The turn stopped at the strict quota reserve. Inspect the workspace before continuing.",
+      ).slice(0, 8_000);
+      const continuationGoal =
+        chat.resumeMode === "native_goal"
+          ? buildContinuationGoal({
+              originalObjective: chat.initialGoal?.objective,
+              checkpointSummary,
+            })
+          : null;
       await continuityStore.put({
         ...chat,
         status: "paused_quota",
@@ -611,10 +633,8 @@ export async function handleHook(input, options = {}) {
         pausedAt: now,
         checkpoint: {
           ...(chat.checkpoint || {}),
-          summary: String(
-            input.last_assistant_message ||
-              "The turn stopped at the strict quota reserve. Inspect the workspace before continuing.",
-          ).slice(0, 8_000),
+          summary: checkpointSummary,
+          ...(continuationGoal ? { continuationGoal } : {}),
           ...workspaceCapture,
           completedAt: now,
         },

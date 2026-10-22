@@ -129,6 +129,148 @@ test("ordinary chat reactivates its native Goal exactly once and releases its lo
   assert.deepEqual(emitted, ["chat_continuity_resumed", "chat_continuity_complete"]);
 });
 
+test("ordinary chat resumes with the original Goal plus the pause-time continuation plan", async () => {
+  const originalObjective = "Ship the requested feature with tests.";
+  const continuationObjective = [
+    "Original user-approved goal (authoritative; preserve exactly):",
+    originalObjective,
+    "Remaining: add the end-to-end test",
+    "Next action: implement the fixture",
+  ].join("\n");
+  const store = new MemoryChatContinuityStore([
+    pausedChat({
+      initialGoal: { objective: originalObjective, tokenBudget: null },
+      goalAtPause: { objective: originalObjective, tokenBudget: null },
+      checkpoint: {
+        summary: "Remaining: add the end-to-end test\nNext action: implement the fixture",
+        workspaceFingerprint: "same",
+        continuationGoal: {
+          originalObjective,
+          objective: continuationObjective,
+        },
+      },
+    }),
+  ]);
+  const client = new FakeClient();
+  client.request = async function request(method, params) {
+    this.calls.push({ method, params });
+    if (method === "thread/turns/list") {
+      return { data: [{ id: "turn-1", status: "completed" }] };
+    }
+    if (method === "thread/goal/get") {
+      return { goal: { status: "paused", objective: originalObjective } };
+    }
+    if (method === "thread/goal/set") {
+      return { goal: { status: params.status, objective: params.objective } };
+    }
+    return {};
+  };
+  const controller = new ChatContinuityController({
+    client,
+    store,
+    workspace: {
+      async exists() {
+        return true;
+      },
+      async fingerprint() {
+        return "same";
+      },
+    },
+  });
+
+  const events = await controller.reconcile(summary(85, 200), { now: 20 });
+  assert.equal(events[0].type, "chat_continuity_resumed");
+  const activation = client.calls.find((call) => call.method === "thread/goal/set");
+  assert.deepEqual(activation.params, {
+    threadId: "thread-1",
+    objective: continuationObjective,
+    status: "active",
+    origin: "automatic",
+  });
+});
+
+test("ordinary chat never overwrites a Goal changed by the user while paused", async () => {
+  const store = new MemoryChatContinuityStore([
+    pausedChat({
+      initialGoal: { objective: "Original goal" },
+      goalAtPause: { objective: "Original goal" },
+      checkpoint: {
+        summary: "Remaining: continue",
+        workspaceFingerprint: "same",
+        continuationGoal: {
+          originalObjective: "Original goal",
+          objective: "Original goal plus the continuation plan",
+        },
+      },
+    }),
+  ]);
+  const client = new FakeClient();
+  client.request = async function request(method, params) {
+    this.calls.push({ method, params });
+    if (method === "thread/turns/list") {
+      return { data: [{ id: "turn-1", status: "completed" }] };
+    }
+    if (method === "thread/goal/get") {
+      return { goal: { status: "paused", objective: "User changed this goal" } };
+    }
+    return {};
+  };
+  const controller = new ChatContinuityController({
+    client,
+    store,
+    workspace: {
+      async exists() {
+        return true;
+      },
+      async fingerprint() {
+        return "same";
+      },
+    },
+  });
+
+  const events = await controller.reconcile(summary(85, 200), { now: 20 });
+  assert.equal(events[0].reason, "native_goal_changed");
+  assert.equal((await store.get("thread-1")).status, "needs_attention");
+  assert.equal(client.calls.some((call) => call.method === "thread/goal/set"), false);
+});
+
+test("ordinary chat never reopens a Goal completed while Pulse was paused", async () => {
+  const store = new MemoryChatContinuityStore([
+    pausedChat({
+      initialGoal: { objective: "Original goal" },
+      goalAtPause: { objective: "Original goal" },
+    }),
+  ]);
+  const client = new FakeClient();
+  client.request = async function request(method, params) {
+    this.calls.push({ method, params });
+    if (method === "thread/turns/list") {
+      return { data: [{ id: "turn-1", status: "completed" }] };
+    }
+    if (method === "thread/goal/get") {
+      return { goal: { status: "complete", objective: "Original goal" } };
+    }
+    return {};
+  };
+  const controller = new ChatContinuityController({
+    client,
+    store,
+    workspace: {
+      async exists() {
+        return true;
+      },
+      async fingerprint() {
+        return "same";
+      },
+    },
+  });
+
+  const events = await controller.reconcile(summary(85, 200), { now: 20 });
+  assert.equal(events[0].type, "chat_continuity_complete");
+  assert.equal((await store.get("thread-1")).status, "complete");
+  assert.equal(client.calls.some((call) => call.method === "thread/goal/set"), false);
+});
+
 test("file-backed chat records tolerate concurrent atomic writes in one process", async () => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "codex-pulse-chat-store-"));
   const first = new ChatContinuityStore(dataDir);

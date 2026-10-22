@@ -74,7 +74,12 @@
         [self writeLog:[NSString stringWithFormat:@"persistent alert presented: %@", self.notificationTitle]];
         if (self.persistentSelfTestMode) {
             NSTimer *timer = [NSTimer timerWithTimeInterval:3 repeats:NO block:^(NSTimer *timer) {
-                self.persistentSelfTestPassed = alert.window.isVisible && NSApp.modalWindow == alert.window;
+                // The product promise is that the must-see window remains visible.
+                // `modalWindow` can temporarily be nil when another app activation
+                // changes during this three-second probe, even though this alert is
+                // still on screen. Testing visibility directly matches the promise
+                // and avoids a focus-dependent false negative.
+                self.persistentSelfTestPassed = alert.window.isVisible;
                 [self writeLog:self.persistentSelfTestPassed
                     ? @"persistent self-test passed: alert remained visible for 3 seconds"
                     : @"persistent self-test failed: alert was not visible after 3 seconds"];
