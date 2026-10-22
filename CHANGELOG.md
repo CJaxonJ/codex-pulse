@@ -11,6 +11,8 @@
   filenames when two watcher processes update the same continuity record.
 - Made native-Goal pause outcomes persistent and clarified that the 10% warning
   promises automatic continuation only when the chat has a native Goal.
+- Added an explicit current-Desktop-thread acceptance canary so release evidence
+  cannot substitute an App-Server-owned thread for the user's real chat.
 
 ## 0.9.9 — 2026-10-22
 
