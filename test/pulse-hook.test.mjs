@@ -356,6 +356,7 @@ test("ordinary chat blocks further tools and saves one local checkpoint without 
   assert.equal(record.resumeMode, "manual");
   assert.equal(record.goalWasActive, false);
   assert.equal(record.autoResume, false);
+  assert.equal(record.workspaceValidationMode, "pre_tool_hook_v1");
   assert.equal(record.resumeUnavailableReason, "native_goal_required");
   assert.equal(JSON.stringify(record).includes(originalPrompt), false);
 });
@@ -564,6 +565,100 @@ test("ordinary chat checkpoint scopes workspace verification to the repo touched
     record.checkpoint.workspaceSnapshot,
   );
   assert.equal(comparison.same, true);
+});
+
+test("the trusted pre-tool hook validates a recovered workspace before allowing tools", async () => {
+  const dataDir = await createDataDir(80);
+  const cwd = await mkdtemp(path.join(os.tmpdir(), "codex-pulse-hook-recovery-ok-"));
+  await writeFile(path.join(cwd, "work.txt"), "baseline\n");
+  execFileSync("git", ["-C", cwd, "init", "-q"]);
+  execFileSync("git", ["-C", cwd, "config", "user.name", "Codex Pulse Test"]);
+  execFileSync("git", ["-C", cwd, "config", "user.email", "codex-pulse@example.invalid"]);
+  execFileSync("git", ["-C", cwd, "add", "work.txt"]);
+  execFileSync("git", ["-C", cwd, "commit", "-q", "-m", "baseline"]);
+  const snapshot = await new WorkspaceInspector().snapshot(cwd);
+  const store = new ChatContinuityStore(dataDir);
+  await store.put({
+    sessionId: "recovery-ok-thread",
+    status: "native_goal_active",
+    cwd,
+    turnId: "paused-turn",
+    workspaceValidationRequired: true,
+    checkpoint: {
+      summary: "Remaining: continue safely.",
+      workspaceSnapshot: snapshot,
+      workspaceFingerprint: snapshot.digest,
+    },
+  });
+
+  const output = await handleHookImpl(
+    {
+      hook_event_name: "PreToolUse",
+      session_id: "recovery-ok-thread",
+      turn_id: "resumed-turn",
+      cwd,
+      tool_name: "apply_patch",
+    },
+    { dataDir, appRoot: APP_ROOT, now: NOW, goalCoordinator: noGoalCoordinator },
+  );
+  const record = await store.get("recovery-ok-thread");
+  assert.equal(output, null);
+  assert.equal(record.status, "native_goal_active");
+  assert.equal(record.workspaceValidationRequired, false);
+  assert.equal(record.workspaceValidatedAt, NOW);
+  assert.equal(record.turnId, "resumed-turn");
+});
+
+test("the trusted pre-tool hook pauses recovery when the workspace changed", async () => {
+  const dataDir = await createDataDir(80);
+  const cwd = await mkdtemp(path.join(os.tmpdir(), "codex-pulse-hook-recovery-changed-"));
+  await writeFile(path.join(cwd, "work.txt"), "baseline\n");
+  execFileSync("git", ["-C", cwd, "init", "-q"]);
+  execFileSync("git", ["-C", cwd, "config", "user.name", "Codex Pulse Test"]);
+  execFileSync("git", ["-C", cwd, "config", "user.email", "codex-pulse@example.invalid"]);
+  execFileSync("git", ["-C", cwd, "add", "work.txt"]);
+  execFileSync("git", ["-C", cwd, "commit", "-q", "-m", "baseline"]);
+  const snapshot = await new WorkspaceInspector().snapshot(cwd);
+  const store = new ChatContinuityStore(dataDir);
+  await store.put({
+    sessionId: "recovery-changed-thread",
+    status: "native_goal_active",
+    cwd,
+    turnId: "paused-turn",
+    workspaceValidationRequired: true,
+    checkpoint: {
+      summary: "Remaining: continue safely.",
+      workspaceSnapshot: snapshot,
+      workspaceFingerprint: snapshot.digest,
+    },
+  });
+  await writeFile(path.join(cwd, "work.txt"), "changed while paused\n");
+  const pauses = [];
+  const goalCoordinator = {
+    async pauseIfActive(threadId) {
+      pauses.push(threadId);
+      return { paused: true, status: "paused" };
+    },
+  };
+
+  const output = await handleHookImpl(
+    {
+      hook_event_name: "PreToolUse",
+      session_id: "recovery-changed-thread",
+      turn_id: "resumed-turn",
+      cwd,
+      tool_name: "apply_patch",
+    },
+    { dataDir, appRoot: APP_ROOT, now: NOW, goalCoordinator },
+  );
+  const record = await store.get("recovery-changed-thread");
+  assert.equal(output.decision, "block");
+  assert.match(output.reason, /workspace changed/);
+  assert.deepEqual(pauses, ["recovery-changed-thread"]);
+  assert.equal(record.status, "needs_attention");
+  assert.equal(record.blocker, "workspace_changed");
+  assert.equal(record.autoResume, false);
+  assert.equal(record.workspaceValidationRequired, false);
 });
 
 test("deadline mode stays quiet at fifteen percent and drains at five", async () => {

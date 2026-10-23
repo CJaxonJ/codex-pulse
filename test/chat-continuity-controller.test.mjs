@@ -27,6 +27,7 @@ function pausedChat(overrides = {}) {
     autoResume: true,
     resumeMode: "native_goal",
     goalWasActive: true,
+    workspaceValidationMode: "pre_tool_hook_v1",
     resumeFloor: 50,
     pausedWindowKey: 100,
     pausedRemaining: 9,
@@ -47,6 +48,7 @@ class FakeClient {
     this.latestTurnId = "turn-1";
     this.latestTurnStatus = "completed";
     this.goalStatus = "paused";
+    this.goalObjective = null;
   }
 
   async request(method, params) {
@@ -55,11 +57,16 @@ class FakeClient {
       return { data: [{ id: this.latestTurnId, status: this.latestTurnStatus }] };
     }
     if (method === "thread/goal/get") {
-      return { goal: this.goalStatus ? { status: this.goalStatus } : null };
+      return {
+        goal: this.goalStatus
+          ? { status: this.goalStatus, objective: this.goalObjective }
+          : null,
+      };
     }
     if (method === "thread/goal/set") {
       this.goalStatus = params.status;
-      return { goal: { status: this.goalStatus } };
+      this.goalObjective = params.objective ?? this.goalObjective;
+      return { goal: { status: this.goalStatus, objective: this.goalObjective } };
     }
     if (method === "thread/resume") return { thread: { id: params.threadId } };
     if (method === "turn/start") {
@@ -286,15 +293,17 @@ test("file-backed chat records tolerate concurrent atomic writes in one process"
   assert.ok(["first", "second"].includes(saved.updatedBy));
 });
 
-test("ordinary chat without a native Goal stays manual and never starts an external turn", async () => {
+test("ordinary chat without a native Goal bootstraps a recovery Goal exactly once", async () => {
   const store = new MemoryChatContinuityStore([
     pausedChat({
-      autoResume: true,
+      autoResume: false,
       resumeMode: "manual",
       goalWasActive: false,
+      resumeUnavailableReason: "native_goal_required",
     }),
   ]);
   const client = new FakeClient();
+  client.goalStatus = null;
   const controller = new ChatContinuityController({
     client,
     store,
@@ -310,11 +319,159 @@ test("ordinary chat without a native Goal stays manual and never starts an exter
 
   const events = await controller.reconcile(summary(85, 200), { now: 20 });
   const record = await store.get("thread-1");
-  assert.equal(events[0].reason, "native_goal_required");
-  assert.equal(record.status, "needs_attention");
-  assert.equal(record.autoResume, false);
+  assert.equal(events[0].type, "chat_continuity_resumed");
+  assert.equal(record.status, "native_goal_active");
+  assert.equal(record.autoResume, true);
+  assert.equal(record.resumeMode, "native_goal");
+  assert.equal(record.goalWasActive, true);
+  assert.equal(record.resumeCount, 1);
+  const activation = client.calls.find((call) => call.method === "thread/goal/set");
+  assert.equal(activation.params.status, "active");
+  assert.equal(activation.params.origin, "automatic");
+  assert.match(activation.params.objective, /existing thread context as the source of truth/);
+  assert.match(activation.params.objective, /create proof and verify it/);
   assert.equal(client.calls.some((call) => call.method === "thread/resume"), false);
   assert.equal(client.calls.some((call) => call.method === "turn/start"), false);
+
+  await controller.reconcile(summary(85, 200), { now: 21 });
+  assert.equal(client.calls.filter((call) => call.method === "thread/goal/set").length, 1);
+});
+
+test("a checkpoint from the old Hook never resumes without trusted workspace validation", async () => {
+  const store = new MemoryChatContinuityStore([
+    pausedChat({
+      autoResume: false,
+      resumeMode: "manual",
+      goalWasActive: false,
+      resumeUnavailableReason: "native_goal_required",
+      workspaceValidationMode: null,
+    }),
+  ]);
+  const client = new FakeClient();
+  client.goalStatus = null;
+  const controller = new ChatContinuityController({ client, store });
+
+  const events = await controller.reconcile(summary(85, 200), { now: 20 });
+  const record = await store.get("thread-1");
+  assert.equal(events[0].reason, "workspace_validation_upgrade_required");
+  assert.equal(record.status, "needs_attention");
+  assert.equal(record.autoResume, false);
+  assert.equal(client.calls.some((call) => call.method === "thread/goal/set"), false);
+});
+
+test("network loss defers recovery and a later watcher resumes after backoff", async () => {
+  const store = new MemoryChatContinuityStore([
+    pausedChat({
+      autoResume: false,
+      resumeMode: "manual",
+      goalWasActive: false,
+      resumeUnavailableReason: "native_goal_required",
+    }),
+  ]);
+  const offlineClient = new FakeClient();
+  offlineClient.request = async function request(method, params) {
+    this.calls.push({ method, params });
+    throw new Error("thread/turns/list timed out after 15000ms");
+  };
+  const offlineController = new ChatContinuityController({
+    client: offlineClient,
+    store,
+    workspace: {
+      async exists() {
+        return true;
+      },
+      async fingerprint() {
+        return "same";
+      },
+    },
+  });
+
+  const offlineEvents = await offlineController.reconcile(summary(85, 200), { now: 20 });
+  let record = await store.get("thread-1");
+  assert.deepEqual(offlineEvents, []);
+  assert.equal(record.status, "paused_quota");
+  assert.equal(record.retryCount, 1);
+  assert.equal(record.retryNotBefore, 50);
+  assert.notEqual(record.status, "needs_attention");
+
+  const recoveredClient = new FakeClient();
+  recoveredClient.goalStatus = null;
+  const recoveredController = new ChatContinuityController({
+    client: recoveredClient,
+    store,
+    workspace: {
+      async exists() {
+        return true;
+      },
+      async fingerprint() {
+        return "same";
+      },
+    },
+  });
+  assert.deepEqual(
+    await recoveredController.reconcile(summary(85, 200), { now: 49 }),
+    [],
+  );
+  const events = await recoveredController.reconcile(summary(85, 200), { now: 50 });
+  record = await store.get("thread-1");
+  assert.equal(events[0].type, "chat_continuity_resumed");
+  assert.equal(record.status, "native_goal_active");
+  assert.equal(record.retryCount, 0);
+  assert.equal(record.retryNotBefore, null);
+  assert.equal(
+    recoveredClient.calls.filter((call) => call.method === "thread/goal/set").length,
+    1,
+  );
+});
+
+test("an ambiguous Goal activation timeout is retried without a second activation", async () => {
+  const store = new MemoryChatContinuityStore([
+    pausedChat({
+      autoResume: false,
+      resumeMode: "manual",
+      goalWasActive: false,
+      resumeUnavailableReason: "native_goal_required",
+    }),
+  ]);
+  const client = new FakeClient();
+  client.goalStatus = null;
+  let activationAttempts = 0;
+  const baseRequest = client.request.bind(client);
+  client.request = async function request(method, params) {
+    if (method === "thread/goal/set") {
+      activationAttempts += 1;
+      this.goalStatus = params.status;
+      this.goalObjective = params.objective;
+      this.calls.push({ method, params });
+      throw new Error("App Server request timed out after accepting the Goal");
+    }
+    return baseRequest(method, params);
+  };
+  const controller = new ChatContinuityController({
+    client,
+    store,
+    workspace: {
+      async exists() {
+        return true;
+      },
+      async fingerprint() {
+        return "same";
+      },
+    },
+  });
+
+  assert.deepEqual(await controller.reconcile(summary(85, 200), { now: 20 }), []);
+  let record = await store.get("thread-1");
+  assert.equal(record.status, "paused_quota");
+  assert.equal(record.retryNotBefore, 50);
+  assert.equal(activationAttempts, 1);
+
+  const events = await controller.reconcile(summary(85, 200), { now: 50 });
+  record = await store.get("thread-1");
+  assert.equal(events[0].type, "chat_continuity_resumed");
+  assert.equal(record.status, "native_goal_active");
+  assert.equal(record.resumeCount, 1);
+  assert.equal(activationAttempts, 1);
 });
 
 test("a quota-paused chat emits one user-visible pause event", async () => {
@@ -343,113 +500,31 @@ test("a quota-paused chat emits one user-visible pause event", async () => {
   assert.equal((await store.get("paused-thread")).pauseNotifiedAt, 10);
 });
 
-test("ordinary chat refuses resume after workspace divergence", async () => {
+test("ordinary chat delegates workspace validation to the trusted pre-tool hook", async () => {
   const store = new MemoryChatContinuityStore([pausedChat()]);
   const client = new FakeClient();
+  let workspaceRead = false;
   const controller = new ChatContinuityController({
     client,
     store,
     workspace: {
       async exists() {
-        return true;
+        workspaceRead = true;
+        throw new Error("background watcher must not read the protected workspace");
       },
       async fingerprint() {
-        return "changed";
+        workspaceRead = true;
+        throw new Error("background watcher must not read the protected workspace");
       },
     },
   });
 
   const events = await controller.reconcile(summary(85, 200), { now: 20 });
-  assert.equal(events[0].reason, "workspace_changed");
-  assert.equal((await store.get("thread-1")).status, "needs_attention");
-  assert.equal(client.calls.some((call) => call.method === "turn/start"), false);
-});
-
-test("ordinary chat uses a scoped snapshot and reports the changed scope", async () => {
-  const store = new MemoryChatContinuityStore([
-    pausedChat({
-      checkpoint: {
-        summary: "Continue scoped work.",
-        workspaceFingerprint: "legacy",
-        workspaceSnapshot: {
-          version: 1,
-          digest: "before",
-          scopes: [{ root: "product/app", fingerprint: "before" }],
-        },
-      },
-    }),
-  ]);
-  const client = new FakeClient();
-  const controller = new ChatContinuityController({
-    client,
-    store,
-    workspace: {
-      async exists() {
-        return true;
-      },
-      async compareSnapshot() {
-        return { verifiable: true, same: false, changedScopes: ["product/app"] };
-      },
-    },
-  });
-
-  const events = await controller.reconcile(summary(85, 200), { now: 20 });
-  assert.equal(events[0].reason, "workspace_changed");
-  assert.deepEqual(events[0].changedScopes, ["product/app"]);
-  assert.deepEqual((await store.get("thread-1")).blockerDetails, {
-    changedScopes: ["product/app"],
-  });
-  assert.equal(client.calls.some((call) => call.method === "turn/start"), false);
-});
-
-test("ordinary chat fails closed when the workspace fingerprint is unavailable", async () => {
-  const store = new MemoryChatContinuityStore([pausedChat()]);
-  const client = new FakeClient();
-  const controller = new ChatContinuityController({
-    client,
-    store,
-    workspace: {
-      async exists() {
-        return true;
-      },
-      async fingerprint() {
-        return null;
-      },
-    },
-  });
-
-  const events = await controller.reconcile(summary(85, 200), { now: 20 });
-  assert.equal(events[0].reason, "workspace_unverifiable");
-  assert.equal((await store.get("thread-1")).status, "needs_attention");
-  assert.equal(client.calls.some((call) => call.method === "turn/start"), false);
-});
-
-test("a checkpoint missing its pause-time fingerprint is identified explicitly", async () => {
-  const store = new MemoryChatContinuityStore([
-    pausedChat({
-      checkpoint: {
-        summary: "Legacy checkpoint created before workspace fingerprints were reliable.",
-        workspaceFingerprint: null,
-      },
-    }),
-  ]);
-  const client = new FakeClient();
-  const controller = new ChatContinuityController({
-    client,
-    store,
-    workspace: {
-      async exists() {
-        return true;
-      },
-      async fingerprint() {
-        return "current";
-      },
-    },
-  });
-
-  const events = await controller.reconcile(summary(85, 200), { now: 20 });
-  assert.equal(events[0].reason, "checkpoint_missing_fingerprint");
-  assert.equal((await store.get("thread-1")).blocker, "checkpoint_missing_fingerprint");
+  const record = await store.get("thread-1");
+  assert.equal(events[0].type, "chat_continuity_resumed");
+  assert.equal(record.status, "native_goal_active");
+  assert.equal(record.workspaceValidationRequired, true);
+  assert.equal(workspaceRead, false);
   assert.equal(client.calls.some((call) => call.method === "turn/start"), false);
 });
 

@@ -168,3 +168,16 @@ test("a chat without a native Goal promises only a manual continuation", () => {
   assert.match(paused.body, /额度恢复后请回到这里发送“继续”/);
   assert.equal(paused.persistent, true);
 });
+
+test("a checkpoint eligible for Goal bootstrap promises automatic recovery", () => {
+  const paused = notificationForEvent({
+    type: "chat_continuity_paused",
+    resumeMode: "manual",
+    resumePrepared: true,
+    recoveryGoalBootstrap: true,
+  });
+  assert.match(paused.title, /安全暂停/);
+  assert.match(paused.body, /原聊天创建续跑 Goal/);
+  assert.match(paused.body, /第一个未完成步骤/);
+  assert.equal(paused.persistent, true);
+});
