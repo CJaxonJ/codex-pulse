@@ -1,3 +1,5 @@
+import { buildRecoveryGoal } from "./goal-continuation.mjs";
+
 const USER_ACTION_METHODS = new Map([
   ["item/commandExecution/requestApproval", "approval_required"],
   ["item/fileChange/requestApproval", "approval_required"],
@@ -25,11 +27,57 @@ function recoveryReady(record, summary, quota) {
   );
 }
 
+function canBootstrapRecoveryGoal(record) {
+  return Boolean(
+    record.resumeUnavailableReason === "native_goal_required" &&
+      record.checkpoint?.summary &&
+      record.workspaceValidationMode === "pre_tool_hook_v1",
+  );
+}
+
+function shouldAutoResume(record) {
+  return Boolean(
+    record.autoResume !== false ||
+      (record.resumeUnavailableReason === "native_goal_required" &&
+        record.checkpoint?.summary),
+  );
+}
+
+function retryIsDue(record, now) {
+  return record.retryNotBefore == null || now >= record.retryNotBefore;
+}
+
+function retryableResumeError(error) {
+  const message = String(error?.message || error || "").toLowerCase();
+  return [
+    "timeout",
+    "timed out",
+    "aborted",
+    "app server exited",
+    "econn",
+    "enet",
+    "eai_again",
+    "socket",
+    "network",
+    "offline",
+    "temporarily unavailable",
+    "broken pipe",
+  ].some((needle) => message.includes(needle));
+}
+
+function retryDelaySeconds(retryCount) {
+  return Math.min(900, 30 * 2 ** Math.max(0, retryCount - 1));
+}
+
 export class ChatContinuityController {
-  constructor({ client, store, workspace, lockManager = null, onEvent = async () => {} }) {
+  constructor({
+    client,
+    store,
+    lockManager = null,
+    onEvent = async () => {},
+  }) {
     this.client = client;
     this.store = store;
-    this.workspace = workspace;
     this.lockManager = lockManager;
     this.onEvent = onEvent;
     this.serial = Promise.resolve();
@@ -72,6 +120,7 @@ export class ChatContinuityController {
         sessionId: record.sessionId,
         resumePrepared: Boolean(record.checkpoint?.workspaceFingerprint),
         resumeMode: record.resumeMode || "manual",
+        recoveryGoalBootstrap: canBootstrapRecoveryGoal(record),
       };
       events.push(event);
       await this.onEvent(event);
@@ -80,7 +129,8 @@ export class ChatContinuityController {
     records = await this.store.list();
 
     for (const record of records.filter(
-      (candidate) => candidate.status === "native_goal_active",
+      (candidate) =>
+        candidate.status === "native_goal_active" && retryIsDue(candidate, now),
     )) {
       const event = await this.#reconcileNativeGoal(record, now);
       if (event) {
@@ -104,7 +154,7 @@ export class ChatContinuityController {
       (candidate) =>
         ["resuming", "running"].includes(candidate.status) &&
         candidate.worktreeLock &&
-        !this.#lockBelongsToCurrentWatcher(candidate),
+        retryIsDue(candidate, now),
     )) {
       const event = await this.#recoverAfterWatcherRestart(record, now);
       if (event) {
@@ -120,8 +170,9 @@ export class ChatContinuityController {
       .filter(
         (record) =>
           record.status === "paused_quota" &&
-          record.autoResume !== false &&
-          !record.pendingRequest,
+          shouldAutoResume(record) &&
+          !record.pendingRequest &&
+          retryIsDue(record, now),
       )
       .sort((a, b) => (a.pausedAt || 0) - (b.pausedAt || 0));
 
@@ -147,7 +198,9 @@ export class ChatContinuityController {
   }
 
   async #recoverAfterWatcherRestart(original, now) {
-    const claim = await this.#claimLock(original);
+    const claim = this.#lockBelongsToCurrentWatcher(original)
+      ? { acquired: true, record: original }
+      : await this.#claimLock(original);
     if (!claim.acquired) return null;
     const record = claim.record;
     let latestTurn;
@@ -160,6 +213,10 @@ export class ChatContinuityController {
       });
       latestTurn = history.data?.[0] || null;
     } catch (error) {
+      if (retryableResumeError(error)) {
+        await this.#deferRetry(record, error, now, { status: record.status });
+        return null;
+      }
       await this.store.put({
         ...record,
         status: "needs_attention",
@@ -248,79 +305,9 @@ export class ChatContinuityController {
   }
 
   async #resume(original, summary, now) {
-    if (!(await this.workspace.exists(original.cwd))) {
-      const blocked = await this.store.put({
-        ...original,
-        status: "needs_attention",
-        blocker: "cwd_missing",
-      });
-      await this.#releaseLock(blocked);
-      return { type: "chat_continuity_attention", sessionId: original.sessionId, reason: "cwd_missing" };
-    }
-
     const claim = await this.#claimLock(original);
     if (!claim.acquired) return null;
     const record = claim.record;
-    const snapshotComparison = record.checkpoint?.workspaceSnapshot
-      ? await this.workspace.compareSnapshot(
-          record.cwd,
-          record.checkpoint.workspaceSnapshot,
-        )
-      : null;
-    const fingerprint = snapshotComparison
-      ? null
-      : await this.workspace.fingerprint(record.cwd, {
-          strategy: String(record.checkpoint?.workspaceFingerprint || "").startsWith("fs:")
-            ? "filesystem"
-            : undefined,
-        });
-    if (
-      snapshotComparison?.verifiable === false ||
-      (!snapshotComparison &&
-        (record.checkpoint?.workspaceFingerprint == null || fingerprint == null))
-    ) {
-      const reason = !snapshotComparison && record.checkpoint?.workspaceFingerprint == null
-        ? "checkpoint_missing_fingerprint"
-        : "workspace_unverifiable";
-      const blocked = await this.store.put({
-        ...record,
-        status: "needs_attention",
-        blocker: reason,
-        blockerDetails:
-          snapshotComparison?.failure ||
-          this.workspace.failureDiagnostic?.() ||
-          record.checkpoint?.workspaceFingerprintFailure ||
-          null,
-      });
-      await this.#releaseLock(blocked);
-      return {
-        type: "chat_continuity_attention",
-        sessionId: record.sessionId,
-        reason,
-      };
-    }
-    if (
-      snapshotComparison
-        ? !snapshotComparison.same
-        : fingerprint !== record.checkpoint.workspaceFingerprint
-    ) {
-      const blocked = await this.store.put({
-        ...record,
-        status: "needs_attention",
-        blocker: "workspace_changed",
-        blockerDetails: snapshotComparison
-          ? { changedScopes: snapshotComparison.changedScopes }
-          : null,
-      });
-      await this.#releaseLock(blocked);
-      return {
-        type: "chat_continuity_attention",
-        sessionId: record.sessionId,
-        reason: "workspace_changed",
-        changedScopes: snapshotComparison?.changedScopes || [],
-      };
-    }
-
     let latestTurn;
     try {
       const history = await this.client.request("thread/turns/list", {
@@ -331,6 +318,10 @@ export class ChatContinuityController {
       });
       latestTurn = history.data?.[0] || null;
     } catch (error) {
+      if (retryableResumeError(error)) {
+        await this.#deferRetry(record, error, now, { status: "paused_quota" });
+        return null;
+      }
       const blocked = await this.store.put({
         ...record,
         status: "needs_attention",
@@ -359,7 +350,26 @@ export class ChatContinuityController {
       };
     }
 
-    if (record.resumeMode !== "native_goal" || record.goalWasActive !== true) {
+    if (record.workspaceValidationMode !== "pre_tool_hook_v1") {
+      const blocked = await this.store.put({
+        ...record,
+        status: "needs_attention",
+        autoResume: false,
+        blocker: "workspace_validation_upgrade_required",
+      });
+      await this.#releaseLock(blocked);
+      return {
+        type: "chat_continuity_attention",
+        sessionId: record.sessionId,
+        reason: "workspace_validation_upgrade_required",
+      };
+    }
+
+    const recoveryGoalBootstrap = canBootstrapRecoveryGoal(record);
+    if (
+      (record.resumeMode !== "native_goal" || record.goalWasActive !== true) &&
+      !recoveryGoalBootstrap
+    ) {
       const blocked = await this.store.put({
         ...record,
         status: "needs_attention",
@@ -381,85 +391,125 @@ export class ChatContinuityController {
       resumeWindowKey: summary.fiveHour?.resetsAt || null,
       lastResumeError: null,
     });
+    const generatedRecoveryGoal = recoveryGoalBootstrap
+      ? buildRecoveryGoal({ checkpointSummary: record.checkpoint?.summary })
+      : null;
+    const continuationObjective =
+      record.checkpoint?.continuationGoal?.objective ||
+      generatedRecoveryGoal?.objective ||
+      null;
     try {
       const currentGoal = await this.client.request("thread/goal/get", {
         threadId: record.sessionId,
       });
       if (!currentGoal.goal) {
-        throw new Error("native goal no longer exists");
-      }
-      const continuationObjective = record.checkpoint?.continuationGoal?.objective || null;
-      const expectedObjectives = new Set(
-        [
-          record.goalAtPause?.objective,
-          record.initialGoal?.objective,
-          continuationObjective,
-        ].filter((value) => typeof value === "string" && value.length > 0),
-      );
-      if (
-        expectedObjectives.size > 0 &&
-        !expectedObjectives.has(currentGoal.goal.objective)
-      ) {
-        const blocked = await this.store.put({
-          ...resuming,
-          status: "needs_attention",
-          blocker: "native_goal_changed",
-          lastResumeError: "The native Goal changed while Codex Pulse was paused.",
-        });
-        await this.#releaseLock(blocked);
-        return {
-          type: "chat_continuity_attention",
-          sessionId: record.sessionId,
-          reason: "native_goal_changed",
-        };
-      }
-      if (currentGoal.goal.status === "complete") {
-        const completed = await this.store.put({
-          ...resuming,
-          status: "complete",
-          holdWorktreeLock: false,
-          completedAt: now,
-        });
-        await this.#releaseLock(completed);
-        return {
-          type: "chat_continuity_complete",
-          sessionId: record.sessionId,
-          turnId: record.turnId,
-        };
-      }
-      if (!["active", "paused"].includes(currentGoal.goal.status)) {
-        const reason = `native_goal_${currentGoal.goal.status || "state_unavailable"}`;
-        const blocked = await this.store.put({
-          ...resuming,
-          status: "needs_attention",
-          blocker: reason,
-          lastResumeError: "The native Goal is no longer safely resumable.",
-        });
-        await this.#releaseLock(blocked);
-        return {
-          type: "chat_continuity_attention",
-          sessionId: record.sessionId,
-          reason,
-        };
-      }
-      if (
-        currentGoal.goal.status !== "active" ||
-        (continuationObjective && currentGoal.goal.objective !== continuationObjective)
-      ) {
+        if (!recoveryGoalBootstrap || !continuationObjective) {
+          const blocked = await this.store.put({
+            ...resuming,
+            status: "needs_attention",
+            blocker: "native_goal_missing",
+            lastResumeError: "The native Goal no longer exists.",
+          });
+          await this.#releaseLock(blocked);
+          return {
+            type: "chat_continuity_attention",
+            sessionId: record.sessionId,
+            reason: "native_goal_missing",
+          };
+        }
         await this.client.request("thread/goal/set", {
           threadId: record.sessionId,
-          ...(continuationObjective ? { objective: continuationObjective } : {}),
+          objective: continuationObjective,
           status: "active",
           origin: "automatic",
         });
+      } else {
+        const expectedObjectives = new Set(
+          [
+            record.goalAtPause?.objective,
+            record.initialGoal?.objective,
+            continuationObjective,
+          ].filter((value) => typeof value === "string" && value.length > 0),
+        );
+        if (
+          expectedObjectives.size > 0 &&
+          !expectedObjectives.has(currentGoal.goal.objective)
+        ) {
+          const blocked = await this.store.put({
+            ...resuming,
+            status: "needs_attention",
+            blocker: "native_goal_changed",
+            lastResumeError: "The native Goal changed while Codex Pulse was paused.",
+          });
+          await this.#releaseLock(blocked);
+          return {
+            type: "chat_continuity_attention",
+            sessionId: record.sessionId,
+            reason: "native_goal_changed",
+          };
+        }
+        if (currentGoal.goal.status === "complete") {
+          const completed = await this.store.put({
+            ...resuming,
+            status: "complete",
+            holdWorktreeLock: false,
+            completedAt: now,
+          });
+          await this.#releaseLock(completed);
+          return {
+            type: "chat_continuity_complete",
+            sessionId: record.sessionId,
+            turnId: record.turnId,
+          };
+        }
+        if (!["active", "paused"].includes(currentGoal.goal.status)) {
+          const reason = `native_goal_${currentGoal.goal.status || "state_unavailable"}`;
+          const blocked = await this.store.put({
+            ...resuming,
+            status: "needs_attention",
+            blocker: reason,
+            lastResumeError: "The native Goal is no longer safely resumable.",
+          });
+          await this.#releaseLock(blocked);
+          return {
+            type: "chat_continuity_attention",
+            sessionId: record.sessionId,
+            reason,
+          };
+        }
+        if (
+          currentGoal.goal.status !== "active" ||
+          (continuationObjective && currentGoal.goal.objective !== continuationObjective)
+        ) {
+          await this.client.request("thread/goal/set", {
+            threadId: record.sessionId,
+            ...(continuationObjective ? { objective: continuationObjective } : {}),
+            status: "active",
+            origin: "automatic",
+          });
+        }
       }
       await this.store.put({
         ...resuming,
         status: "native_goal_active",
         holdWorktreeLock: false,
+        autoResume: true,
+        resumeMode: "native_goal",
+        goalWasActive: true,
+        resumeUnavailableReason: null,
+        workspaceValidationRequired: true,
+        workspaceValidatedAt: null,
+        checkpoint: {
+          ...record.checkpoint,
+          ...(generatedRecoveryGoal
+            ? { continuationGoal: generatedRecoveryGoal }
+            : {}),
+        },
         pausedTurnId: record.turnId,
         resumedAt: now,
         resumeCount: (record.resumeCount || 0) + 1,
+        retryCount: 0,
+        retryNotBefore: null,
       });
       return {
         type: "chat_continuity_resumed",
@@ -468,6 +518,10 @@ export class ChatContinuityController {
         resumeMode: "native_goal",
       };
     } catch (error) {
+      if (retryableResumeError(error)) {
+        await this.#deferRetry(resuming, error, now, { status: "paused_quota" });
+        return null;
+      }
       const blocked = await this.store.put({
         ...resuming,
         status: "needs_attention",
@@ -483,7 +537,12 @@ export class ChatContinuityController {
     }
   }
 
-  async #reconcileNativeGoal(record, now) {
+  async #reconcileNativeGoal(original, now) {
+    const claim = this.#lockBelongsToCurrentWatcher(original)
+      ? { acquired: true, record: original }
+      : await this.#claimLock(original);
+    if (!claim.acquired) return null;
+    const record = claim.record;
     let goal;
     let latestTurn;
     try {
@@ -499,6 +558,12 @@ export class ChatContinuityController {
       goal = goalResult.goal || null;
       latestTurn = history.data?.[0] || null;
     } catch (error) {
+      if (retryableResumeError(error)) {
+        await this.#deferRetry(record, error, now, {
+          status: "native_goal_active",
+        });
+        return null;
+      }
       const blocked = await this.store.put({
         ...record,
         status: "needs_attention",
@@ -642,6 +707,19 @@ export class ChatContinuityController {
       type: "chat_continuity_attention",
       sessionId: record.sessionId,
       reason,
+    });
+  }
+
+  async #deferRetry(record, error, now, { status }) {
+    const retryCount = (record.retryCount || 0) + 1;
+    return this.store.put({
+      ...record,
+      status,
+      blocker: null,
+      holdWorktreeLock: true,
+      lastResumeError: error.message,
+      retryCount,
+      retryNotBefore: now + retryDelaySeconds(retryCount),
     });
   }
 

@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.9.16 — 2026-10-23
+
+- Fixed the missing ordinary-chat recovery path: a quota checkpoint created
+  without a pre-existing Goal can now bootstrap a recovery-only native Goal
+  after the five-hour allowance returns.
+- Made temporary App Server, network, sleep, and wake failures retryable with
+  persisted exponential backoff instead of permanently requiring manual action.
+- Moved recovery workspace verification into the trusted pre-tool Hook, where it
+  runs with the Codex workspace access the user already granted. This avoids
+  macOS privacy stalls in LaunchAgent while still blocking the first resumed
+  tool if files changed or the checkpoint cannot be verified.
+- Added a release-gate E2E that forces an offline recovery attempt, replaces the
+  watcher, reclaims its stale worktree lock, produces a real proof file, and
+  verifies exactly-once Goal activation and lock cleanup.
+- Kept recovery privacy-bounded: the generated Goal uses existing thread context
+  plus the structured checkpoint and does not persist the original prompt.
+
 ## 0.9.15 — 2026-10-23
 
 - Replaced the provisional identity with the selected pause-loop mark: protected

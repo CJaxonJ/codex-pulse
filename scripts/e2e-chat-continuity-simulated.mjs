@@ -106,7 +106,6 @@ class SimulatedAppServer {
       if (params.status === "active") {
         threadState.latestTurnId = "simulated-native-goal-turn";
         threadState.latestTurnStatus = "inProgress";
-        await writeFile(proofPath, "RESUME_OK\n", "utf8");
       }
       return { goal: { ...goalState } };
     }
@@ -260,6 +259,7 @@ try {
     onEvent: async (event) => eventsB.push(event.type),
   });
   const recovered = quotaSummary(80, recoveredWindow);
+  await writeHookState(recovered, now + 120);
   await Promise.all([
     controllerA.reconcile(recovered, { now: now + 120 }),
     controllerB.reconcile(recovered, { now: now + 120 }),
@@ -289,8 +289,24 @@ try {
   record = await store.get(sessionId);
   assert(record?.status === "native_goal_active", "recovered chat did not enter native Goal state");
   assert(record.resumeCount === 1, "resume count was not exactly one");
+  assert(record.workspaceValidationRequired === true, "recovery skipped pre-tool validation");
+  assert(!(await exists(proofPath)), "resumed work ran before the trusted hook validated it");
+  const validation = await handleHook(
+    {
+      ...baseHook,
+      hook_event_name: "PreToolUse",
+      turn_id: "simulated-native-goal-turn",
+      tool_name: "apply_patch",
+      tool_input: { file_path: proofPath },
+    },
+    { dataDir, appRoot: projectDir, now: now + 120 },
+  );
+  assert(validation == null, "trusted hook rejected an unchanged recovery workspace");
+  record = await store.get(sessionId);
+  assert(record.workspaceValidationRequired === false, "trusted hook did not record validation");
+  await writeFile(proofPath, "RESUME_OK\n", "utf8");
   assert(await exists(proofPath), "simulated resumed task did not execute the next action");
-  timeline.push("80%: concurrent watchers detected recovery and exactly one reactivated the native Goal");
+  timeline.push("80%: exactly one Goal resumed; its first tool ran only after trusted-hook validation");
 
   await Promise.all([
     controllerA.reconcile(recovered, { now: now + 121 }),

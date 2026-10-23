@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildContinuationGoal,
+  buildRecoveryGoal,
   parseQuotaHandoff,
 } from "../src/goal-continuation.mjs";
 
@@ -50,4 +51,21 @@ test("does not invent a continuation Goal without a user-approved original Goal"
     buildContinuationGoal({ originalObjective: "", checkpointSummary: "Remaining: work" }),
     null,
   );
+});
+
+test("recovery Goal uses thread context and checkpoint without storing a prompt", () => {
+  const goal = buildRecoveryGoal({
+    checkpointSummary: [
+      "Completed: implemented phase one",
+      "Verification: unit tests pass",
+      "Remaining: finish recovery",
+      "Next action: run the offline restart test",
+      "Blockers: network unavailable",
+    ].join("\n"),
+  });
+
+  assert.match(goal.objective, /existing thread context as the source of truth/);
+  assert.match(goal.objective, /finish recovery/);
+  assert.match(goal.objective, /run the offline restart test/);
+  assert.equal(Object.hasOwn(goal, "originalObjective"), false);
 });

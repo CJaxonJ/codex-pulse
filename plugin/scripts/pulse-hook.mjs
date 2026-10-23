@@ -215,6 +215,90 @@ async function captureWorkspace(workspace, cwd, hints) {
   };
 }
 
+async function validateRecoveryWorkspace({
+  continuityStore,
+  workspace,
+  goalCoordinator,
+  input,
+  now,
+}) {
+  if (!input.session_id) return null;
+  const chat = await continuityStore.get(input.session_id);
+  if (
+    chat?.status !== "native_goal_active" ||
+    chat.workspaceValidationRequired !== true
+  ) {
+    return null;
+  }
+
+  const cwd = path.resolve(input.cwd || chat.cwd || process.cwd());
+  let reason = null;
+  let changedScopes = [];
+  if (!chat.cwd || !(await workspace.exists(cwd)) || path.resolve(chat.cwd) !== cwd) {
+    reason = "cwd_missing";
+  } else if (chat.checkpoint?.workspaceSnapshot) {
+    const comparison = await workspace.compareSnapshot(
+      cwd,
+      chat.checkpoint.workspaceSnapshot,
+    );
+    if (comparison?.verifiable === false) {
+      reason = "workspace_unverifiable";
+    } else if (!comparison?.same) {
+      reason = "workspace_changed";
+      changedScopes = comparison?.changedScopes || [];
+    }
+  } else if (chat.checkpoint?.workspaceFingerprint) {
+    const fingerprint = await workspace.fingerprint(cwd, {
+      strategy: String(chat.checkpoint.workspaceFingerprint).startsWith("fs:")
+        ? "filesystem"
+        : undefined,
+    });
+    if (fingerprint == null) reason = "workspace_unverifiable";
+    else if (fingerprint !== chat.checkpoint.workspaceFingerprint) {
+      reason = "workspace_changed";
+    }
+  } else {
+    reason = "checkpoint_missing_fingerprint";
+  }
+
+  if (reason) {
+    try {
+      await goalCoordinator.pauseIfActive(input.session_id);
+    } catch {
+      // Blocking the tool is the safety boundary. Goal pausing is best effort.
+    }
+    await continuityStore.put({
+      ...chat,
+      status: "needs_attention",
+      blocker: reason,
+      blockerDetails: changedScopes.length ? { changedScopes } : null,
+      autoResume: false,
+      holdWorktreeLock: false,
+      workspaceValidationRequired: false,
+      validationFailedAt: now,
+    });
+    return {
+      decision: "block",
+      reason:
+        reason === "workspace_changed"
+          ? "Codex Pulse blocked the resumed tool because the target workspace changed while quota was paused. Review the current files and continue manually."
+          : "Codex Pulse could not safely verify the paused workspace, so it blocked the resumed tool. Review the workspace and continue manually.",
+      systemMessage:
+        reason === "workspace_changed"
+          ? "Codex Pulse：暂停期间工作区发生变化，已停止自动续跑，避免覆盖新修改。"
+          : "Codex Pulse：无法验证暂停时的工作区，已停止自动续跑。",
+    };
+  }
+
+  await continuityStore.put({
+    ...chat,
+    turnId: input.turn_id || chat.turnId,
+    workspaceValidationRequired: false,
+    workspaceValidatedAt: now,
+  });
+  return null;
+}
+
 async function prepareNativeGoalPause(goalCoordinator, sessionId, existing, now) {
   if (existing?.goalCheckedTurnId === existing?.turnId) {
     return {
@@ -294,6 +378,7 @@ async function requestQuotaCheckpoint({
   return continuityStore.put({
     ...baseChat,
     status: "checkpoint_requested",
+    workspaceValidationMode: "pre_tool_hook_v1",
     cwd,
     turnId: input.turn_id || baseChat.turnId || null,
     model: input.model || baseChat.model || null,
@@ -497,6 +582,14 @@ export async function handleHook(input, options = {}) {
   }
 
   if (input.hook_event_name === "PreToolUse") {
+    const recoveryValidation = await validateRecoveryWorkspace({
+      continuityStore,
+      workspace,
+      goalCoordinator,
+      input,
+      now,
+    });
+    if (recoveryValidation) return recoveryValidation;
     const remaining = summary.fiveHour?.remainingPercent;
     if (mode !== "strict_reserve" || remaining == null || remaining > 10) {
       return null;
@@ -663,7 +756,7 @@ export async function handleHook(input, options = {}) {
         systemMessage:
           chat.resumeMode === "native_goal"
             ? "Codex Pulse：检查点和原生 Goal 已暂停；额度恢复后将由 Codex 在当前聊天续跑。"
-            : "Codex Pulse：检查点已保存在本机；当前聊天没有原生 Goal，额度恢复后需要手动发送“继续”。",
+            : "Codex Pulse：检查点已保存在本机；额度恢复后会在当前聊天创建续跑 Goal，并在首次工具调用前校验工作区。",
       };
     }
     if (

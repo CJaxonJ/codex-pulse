@@ -24,10 +24,21 @@ export function notificationForEvent(event) {
     };
   }
   if (event.type === "chat_continuity_paused") {
-    if (event.resumeMode !== "native_goal") {
+    if (
+      event.resumeMode !== "native_goal" &&
+      event.recoveryGoalBootstrap !== true
+    ) {
       return {
         title: "Codex 检查点已保存，需要手动继续",
         body: "当前聊天没有原生 Goal。额度恢复后请回到这里发送“继续”；下次长任务可先使用 /goal 开启同聊天自动续跑。",
+        interruptionLevel: "time-sensitive",
+        persistent: true,
+      };
+    }
+    if (event.recoveryGoalBootstrap === true) {
+      return {
+        title: "Codex 已在 10% 保护线安全暂停",
+        body: "本机检查点已保存。个人额度恢复后会在原聊天创建续跑 Goal，并从第一个未完成步骤继续。",
         interruptionLevel: "time-sensitive",
         persistent: true,
       };
@@ -67,6 +78,8 @@ export function notificationForEvent(event) {
       workspace_unverifiable: "无法可靠校验暂停时的工作区状态",
       checkpoint_missing_fingerprint:
         "暂停时没有保存到工作区指纹（可能是旧版记录或当时校验失败）",
+      workspace_validation_upgrade_required:
+        "该检查点由旧版 Hook 创建，缺少可信的恢复前工作区校验",
       resume_state_unknown: "后台重启后无法确认续跑任务是否仍在执行",
       native_goal_required: "当前聊天没有原生 Goal，外部 watcher 无权写入 Desktop 正在持有的聊天",
       native_goal_changed: "暂停期间原生 Goal 被修改，为避免旧计划覆盖你的新目标",

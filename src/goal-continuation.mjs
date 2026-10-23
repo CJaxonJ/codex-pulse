@@ -73,3 +73,33 @@ export function buildContinuationGoal({ originalObjective, checkpointSummary }) 
   ].join("\n");
   return { objective, originalObjective: original, handoff };
 }
+
+export function buildRecoveryGoal({ checkpointSummary }) {
+  const summary = String(checkpointSummary || "").trim();
+  if (!summary) return null;
+  const handoff = parseQuotaHandoff(summary);
+  const objective = [
+    "Codex Pulse quota-recovery continuation goal",
+    "",
+    "Authoritative scope:",
+    "Continue the unfinished user request from the immediately preceding quota-paused turn. Use the existing thread context as the source of truth, preserve completed work, and do not expand scope.",
+    "",
+    "Pause-time progress:",
+    section("Completed", handoff.completed, "Nothing was recorded as completed."),
+    "",
+    section("Verification", handoff.verification, "No verification was recorded."),
+    "",
+    section("Remaining", handoff.remaining, "Inspect the checkpoint and identify unfinished work."),
+    "",
+    section("Next action", handoff.nextAction, "Continue from the first unfinished step."),
+    "",
+    section("Blockers", handoff.blockers, "None recorded."),
+    "",
+    "Continuation contract:",
+    "- The existing thread context remains authoritative.",
+    "- Preserve completed work and use verification only as evidence, not as proof of unverified claims.",
+    "- Continue only unfinished work, beginning with Next action.",
+    "- Do not expand scope or mark the Goal complete until the user's request is verified.",
+  ].join("\n");
+  return { objective, handoff };
+}

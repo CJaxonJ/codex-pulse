@@ -166,26 +166,31 @@ and authentication material are never written to this journal.
 
 In strict-reserve mode, an ordinary Codex Desktop chat is always checkpointed at
 the hard floor, including when the quota crosses 10% after the turn's final tool
-call and is first observed by the Stop hook. Same-chat automatic continuation
-additionally requires a native
-Codex Goal created by the user with `/goal`. Pulse pauses that Goal at the reserve
-and snapshots its exact user-approved objective. The final checkpoint is parsed
+call and is first observed by the Stop hook. If the chat already has a native
+Codex Goal, Pulse pauses it at the reserve and snapshots its exact user-approved
+objective. The final checkpoint is parsed
 into completed work, verification, remaining work, next action, and blockers.
 After the personal five-hour window materially recovers, Pulse reactivates the
 Goal with a continuation objective that keeps the original objective authoritative
 and starts from the first unfinished step; the
 Desktop-owned Goal dispatcher, rather than a second App Server writer, starts the
-next turn. Without a native Goal, Pulse stores the checkpoint and sends a
-persistent manual-resume notification instead of claiming it can write into a
-Desktop-owned chat.
+next turn. If the chat did not have a Goal, Pulse creates a recovery-only Goal
+after quota returns. Its scope comes from the existing thread context and the
+structured checkpoint; Pulse does not persist the original prompt or invent a
+second external writer for the Desktop-owned chat.
 
-Before reactivating a Goal, Pulse verifies that the latest turn still matches the
-saved checkpoint and the workspace snapshot is unchanged. New checkpoints scope
-that snapshot to repositories touched by the turn, so unrelated files elsewhere
-under a broad workspace do not block recovery. Missing snapshots, newer user
+Before reactivating a Goal, the background watcher verifies that the latest turn
+still matches the saved checkpoint. The first resumed tool is then held by the
+trusted PreToolUse Hook while it verifies the workspace snapshot inside Codex's
+already-authorized workspace context. New checkpoints scope that snapshot to
+repositories touched by the turn, so unrelated files elsewhere under a broad
+workspace do not block recovery. Missing snapshots, changed files, newer user
 activity, approvals, questions, or an unavailable Goal state stop the automation
 and require attention. If the user edits the Goal while Pulse is paused, Pulse
 never overwrites it with the old continuation plan and instead asks for attention.
+Temporary App Server and network failures remain retryable with bounded backoff
+instead of becoming permanent failures. Sleep only delays polling: after wake or
+watcher restart, Pulse reloads the checkpoint and retry schedule from disk.
 Every active resume owns a durable lock for its canonical
 worktree, so a watcher restart cannot start a second task in the same checkout.
 
@@ -207,8 +212,8 @@ prompt text, and absolute home paths.
 Prompt text is inspected in memory only to estimate task size and priority; the
 original prompt is never written to Codex Pulse history. For strict-reserve
 continuity, Pulse does store the final assistant checkpoint (up to 8,000
-characters), the exact objective of a user-created native Goal, thread/turn
-identifiers, local working-directory path, and a
+characters), the exact objective of an existing user-created native Goal when
+present, thread/turn identifiers, local working-directory path, and a
 workspace snapshot under the user's local application-support directory. It
 contains relative scope paths and hashes, not source contents. The
 plugin never auto-approves permissions, expands sandbox access, calls App Server
@@ -287,7 +292,8 @@ therefore never start two managed turns in the same checkout.
 The local App Server watcher remains the execution engine for Pulse-owned managed
 tasks. It does not call `thread/resume` or `turn/start` on a Codex Desktop-owned
 ordinary chat: the Desktop retains its writer, so ordinary-chat continuation is
-delegated to a user-created native Goal. Codex scheduled tasks are not used to
+delegated to a native Goal, either preserved from the user or recovery-scoped by
+Pulse from the local checkpoint. Codex scheduled tasks are not used to
 modify a managed workspace because their unattended sandbox may be read-only.
 
 The default macOS packaging command is quota-free. It enforces the full test
@@ -296,8 +302,10 @@ contract/classifier test, and an offline
 full-chain simulation of the 10% pause, structured checkpoint, recovered-quota
 detection, exactly-once resume, and lock cleanup. The simulation uses the
 production Hook handler, stores, workspace fingerprinting, controller, and
-durable worktree lock; only the native-Goal protocol boundary is replaced with a
-deterministic fake:
+durable worktree lock. A second resilience gate forces a network timeout, replaces
+the watcher, reclaims its stale lock, bootstraps a recovery Goal, proves one real
+output, and verifies exactly-once completion. Only the native-Goal protocol
+boundary is replaced with a deterministic fake:
 
 ```bash
 npm run package:macos
@@ -313,9 +321,9 @@ CODEX_PULSE_RUN_LIVE_E2E=1 npm run package:macos
 
 The live gate checks the Tibo source and protocol drift, then runs the managed-task
 smoke test in a disposable workspace. A separate App Server process cannot prove
-that Codex Desktop will dispatch a user-owned Goal; the ordinary-chat release
-acceptance must therefore be performed in an actual Desktop chat with a native
-Goal. An App-Server-owned test thread is not accepted as proof of Desktop
+that Codex Desktop will dispatch a native Goal; the ordinary-chat release
+acceptance must therefore still be performed in an actual Desktop chat. An
+App-Server-owned test thread is not accepted as proof of Desktop
 same-chat recovery.
 
 List managed tasks:

@@ -21,7 +21,7 @@ const installedPlugin = path.join(
   "cache",
   "codex-pulse-local",
   "codex-pulse",
-  "0.9.12",
+  "0.9.16",
   "scripts",
   "pulse-hook.mjs",
 );
