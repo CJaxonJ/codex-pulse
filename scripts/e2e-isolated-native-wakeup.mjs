@@ -18,7 +18,8 @@ import { recoveryWakeId, queueNativeWakeup } from "../src/native-wakeup.mjs";
 const run = promisify(execFile);
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const binary = resolveCodexBinary();
-// The release-facing default exercises the actual installed/trusted handlers.
+// The release-facing default exercises the actual installed/trusted handlers,
+// including an explicitly compatible retained version after a runtime upgrade.
 // Explicitly opt out only for the lower-level missing-Stop diagnostic.
 const registeredHooks = process.env.CODEX_PULSE_TEST_REGISTERED_HOOKS !== "0";
 const initialNativeGoal = process.env.CODEX_PULSE_TEST_INITIAL_GOAL !== "0";
@@ -102,12 +103,6 @@ let validationSampler;
 try {
   await mkdir(workspace); await mkdir(dataDir); await save();
   if (registeredHooks) {
-    const pkg = JSON.parse(await readFile(path.join(project, "package.json"), "utf8"));
-    const installed = path.join(os.homedir(), ".codex/plugins/cache/codex-pulse-local/codex-pulse", pkg.version, "scripts/pulse-hook.mjs");
-    const digest = data => createHash("sha256").update(data).digest("hex");
-    evidence.installedHookVersion = pkg.version;
-    evidence.installedHookMatchesCandidate = digest(await readFile(installed)) === digest(await readFile(path.join(project, "plugin/scripts/pulse-hook.mjs")));
-    if (!evidence.installedHookMatchesCandidate) throw Error("Installed Hook does not match the candidate source");
     const sampledAt = Math.floor(Date.now() / 1000);
     await writeFile(path.join(dataDir, "preferences.json"), JSON.stringify({ quotaPolicy: "strict_reserve" }));
     await writeFile(path.join(dataDir, "state.json"), JSON.stringify({ fiveHour: { lastCheckedAt: sampledAt },
@@ -120,12 +115,35 @@ try {
   peer = new Peer(url); observePeer(peer); await peer.start();
   if (registeredHooks) {
     const listed = await peer.request("hooks/list", { cwds: [workspace] });
-    evidence.registeredHooks = (listed.data || []).flatMap(item => item.hooks || [])
-      .filter(hook => hook.pluginId === "codex-pulse@codex-pulse-local")
+    const active = (listed.data || []).flatMap(item => item.hooks || [])
+      .filter(hook => hook.pluginId === "codex-pulse@codex-pulse-local");
+    evidence.registeredHooks = active
       .map(({ eventName, enabled, trustStatus }) => ({ eventName, enabled, trustStatus }));
     if (evidence.registeredHooks.length !== 6 || evidence.registeredHooks.some(hook =>
       !hook.enabled || !["trusted", "managed"].includes(hook.trustStatus))) {
       throw Error("Installed candidate Hooks are not all enabled and officially trusted");
+    }
+    const sources = [...new Set(active.map(hook => hook.sourcePath))];
+    if (sources.length !== 1 || !sources[0]) throw Error("Expected one actual installed Hook source");
+    const source = sources[0];
+    const cache = path.join(os.homedir(), ".codex/plugins/cache/codex-pulse-local/codex-pulse");
+    const relative = path.relative(cache, source).split(path.sep);
+    const pkg = JSON.parse(await readFile(path.join(project, "package.json"), "utf8"));
+    if (relative.length !== 3 || relative[1] !== ".codex-plugin" || relative[2] !== "plugin.json" ||
+        !pkg.codexPulse.compatiblePluginVersions.includes(relative[0])) {
+      throw Error("Actual installed Hook version is not declared compatible");
+    }
+    const digest = data => createHash("sha256").update(data).digest("hex");
+    const installed = path.resolve(path.dirname(source), "../scripts/pulse-hook.mjs");
+    evidence.installedHookVersion = relative[0];
+    evidence.installedHookMatchesCandidate = digest(await readFile(installed)) ===
+      digest(await readFile(path.join(project, "plugin/scripts/pulse-hook.mjs")));
+    const installedManifest = JSON.parse(await readFile(source, "utf8"));
+    const candidateManifest = JSON.parse(await readFile(path.join(project, "plugin/.codex-plugin/plugin.json"), "utf8"));
+    evidence.installedDefinitionsMatchCandidate = digest(JSON.stringify(installedManifest.hooks)) ===
+      digest(JSON.stringify(candidateManifest.hooks));
+    if (!evidence.installedHookMatchesCandidate || !evidence.installedDefinitionsMatchCandidate) {
+      throw Error("Actual installed Hook script or definitions do not match candidate");
     }
   }
   const started = await peer.request("thread/start", { cwd: workspace,

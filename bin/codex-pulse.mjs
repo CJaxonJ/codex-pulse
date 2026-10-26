@@ -10,6 +10,7 @@ import { ChatContinuityStore } from "../src/chat-continuity-store.mjs";
 import { ManagedTaskController } from "../src/managed-task-controller.mjs";
 import { ManagedTaskStore } from "../src/managed-task-store.mjs";
 import { readResumePreview } from "../src/resume-preview.mjs";
+import { ProtectionConsent } from "../src/protection-consent.mjs";
 import { CreditAutoRedeemer, personalAccountBinding, evaluateCreditAwareQuota } from "../src/credit-auto-redeemer.mjs";
 import {
   evaluateResetCredits,
@@ -729,6 +730,15 @@ async function watch() {
 try {
   if (command === "status") await printStatus();
   else if (command === "activity") await printActivity();
+  else if (command === "protection") await withClient(async (client) => {
+    const consent = new ProtectionConsent({client,dataDir});
+    const action=args[1] || 'status';
+    const result=action==='prepare' ? await consent.prepare() : action==='enable'
+      ? await consent.enable(argValue('--review'),{confirmed:args.includes('--yes')})
+      : action==='status' ? await consent.status() : null;
+    if(!result) throw new Error('未知保护操作');
+    console.log(JSON.stringify(result));
+  });
   else if (command === "preview") console.log(JSON.stringify(await readResumePreview(dataDir, { pollSeconds }), null, 2));
   else if (command === "settings") {
     const store = new PulsePreferencesStore(dataDir);

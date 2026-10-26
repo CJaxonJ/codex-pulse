@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.9.18 — 2026-10-26
+
+- Fixed white-matted icon corners with a transparent, more spacious rounded
+  tile. Preserved the selected mark and recovery-green palette. PNG and every
+  ICNS size are checked for real transparent edges during export.
+
+- Replaced the default CLI trust walkthrough with a native protection consent
+  window. Purpose and limits appear first; exact definitions remain available
+  in optional details. Reading or cancelling never grants trust.
+- Confirmation binds the reviewed definitions and files, uses version-checked
+  official config writes, and reports success only after Codex returns trusted.
+  Definition changes require a new review. Reset-credit consent stays separate.
+- Added real, isolated Codex protocol and light/dark native-button acceptance;
+  restarting the test process preserves trust and changing a definition revokes it.
+- First-run setup and settings share the same window. No automatic CLI launch,
+  synthetic keypress or automatic Desktop restart is part of normal onboarding.
+- Kept existing 0.9.17 trusted Hook definitions compatible; runtime-only upgrades
+  do not silently replace or reconfirm them.
+
 ## 0.9.17 — 2026-10-26
 
 - Replaced the status alert with a compact native light/dark preferences window.

@@ -22,15 +22,15 @@ if (process.platform !== "darwin") {
 }
 
 function renderSvg(svgName, size) {
-  execFileSync("/usr/bin/qlmanage", [
-    "-t",
-    "-s",
-    String(size),
-    "-o",
-    temporaryDir,
-    path.join(brandDir, svgName),
-  ], { stdio: "ignore" });
-  return path.join(temporaryDir, `${svgName}.png`);
+  const output = path.join(temporaryDir, `${svgName}.png`);
+  execFileSync(renderer, ["render", path.join(brandDir, svgName), output,
+    String(size), String(svgName === "github-social-preview.svg" ? size / 2 : size)]);
+  return output;
+}
+
+const renderer = path.join(temporaryDir, "render-brand");
+function verifyIcon(source, size) {
+  execFileSync(renderer, ["verify-icon", source, String(size)], { stdio: "inherit" });
 }
 
 function resize(source, width, height, destination) {
@@ -44,28 +44,21 @@ function resize(source, width, height, destination) {
   ], { stdio: "ignore" });
 }
 
-function cropTop(source, width, height, destination) {
-  execFileSync("/usr/bin/sips", [
-    "-c",
-    String(height),
-    String(width),
-    "--cropOffset",
-    "1",
-    "0",
-    source,
-    "--out",
-    destination,
-  ], { stdio: "ignore" });
-}
-
 try {
   mkdirSync(brandDir, { recursive: true });
   mkdirSync(nativeDir, { recursive: true });
   mkdirSync(buildDir, { recursive: true });
+  execFileSync("/usr/bin/xcrun", ["swiftc", "-module-cache-path",
+    path.join(temporaryDir, "module-cache"),
+    path.join(nativeDir, "BrandAssetRenderer.swift"), "-o", renderer], {
+    env: { ...process.env, CLANG_MODULE_CACHE_PATH: path.join(temporaryDir, "module-cache") },
+  });
 
   const appMaster = renderSvg("codex-pulse-app-icon.svg", 1024);
+  verifyIcon(appMaster, 1024);
   copyFileSync(appMaster, path.join(brandDir, "codex-pulse-app-icon.png"));
   resize(appMaster, 64, 64, path.join(brandDir, "codex-pulse-64.png"));
+  verifyIcon(path.join(brandDir, "codex-pulse-64.png"), 64);
 
   const iconset = path.join(buildDir, "CodexPulse.iconset");
   rmSync(iconset, { recursive: true, force: true });
@@ -83,6 +76,7 @@ try {
     ["icon_512x512@2x.png", 1024],
   ]) {
     resize(appMaster, pixels, pixels, path.join(iconset, filename));
+    verifyIcon(path.join(iconset, filename), pixels);
   }
   execFileSync("/usr/bin/iconutil", [
     "-c",
@@ -91,14 +85,13 @@ try {
     "-o",
     path.join(nativeDir, "AppIcon.icns"),
   ]);
+  for (const size of [16, 32, 64, 128, 256, 512, 1024]) {
+    verifyIcon(path.join(nativeDir, "AppIcon.icns"), size);
+  }
 
   const socialPreview = renderSvg("github-social-preview.svg", 1280);
-  cropTop(
-    socialPreview,
-    1280,
-    640,
-    path.join(brandDir, "github-social-preview.png"),
-  );
+  copyFileSync(socialPreview, path.join(brandDir, "github-social-preview.png"));
+  execFileSync(renderer, ["preview", appMaster, path.join(buildDir, "icon-preview.png")]);
 
   console.log(JSON.stringify({
     ok: true,

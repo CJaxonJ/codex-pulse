@@ -10,6 +10,7 @@
 @property(copy) NSString *directory;
 @property(copy) PulseCommandRunner runner;
 @property(copy) dispatch_block_t preview;
+@property(copy) dispatch_block_t protection;
 @property(strong) NSMutableDictionary<NSString *, NSSwitch *> *switches;
 @property(strong) NSSlider *threshold;
 @property(strong) NSTextField *thresholdLabel;
@@ -79,7 +80,7 @@
     line.boxType = NSBoxSeparator;
     [parent addSubview:line];
 }
-- (instancetype)initWithDataDirectory:(NSString *)directory commandRunner:(PulseCommandRunner)runner previewAction:(dispatch_block_t)preview {
+- (instancetype)initWithDataDirectory:(NSString *)directory commandRunner:(PulseCommandRunner)runner previewAction:(dispatch_block_t)preview protectionAction:(dispatch_block_t)protectionAction {
     CGFloat visibleHeight = NSScreen.mainScreen.visibleFrame.size.height;
     CGFloat height = MIN(842, MAX(550, visibleHeight - 90));
     NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 660, height)
@@ -87,7 +88,7 @@
         backing:NSBackingStoreBuffered defer:NO];
     self = [super initWithWindow:window];
     if (!self) return nil;
-    self.directory = directory; self.runner = runner; self.preview = preview;
+    self.directory = directory; self.runner = runner; self.preview = preview; self.protection=protectionAction;
     self.switches = [NSMutableDictionary dictionary];
     window.title = @"Codex Pulse";
     window.delegate = self;
@@ -163,7 +164,9 @@
     plan.frame = NSMakeRect(28, height - 53, 90, 29); [root addSubview:plan];
     NSButton *system = [NSButton buttonWithTitle:@"系统通知设置" target:self action:@selector(openSystem:)];
     system.frame = NSMakeRect(126, height - 53, 118, 29); [root addSubview:system];
-    self.feedback = [self label:@"正在读取设置…" frame:NSMakeRect(255, height - 48, 250, 22) size:11 weight:NSFontWeightRegular parent:root];
+    NSButton *authorization=[NSButton buttonWithTitle:@"保护授权" target:self action:@selector(openProtection:)];
+    authorization.frame=NSMakeRect(252,height-53,86,29); [root addSubview:authorization];
+    self.feedback = [self label:@"正在读取设置…" frame:NSMakeRect(345, height - 48, 175, 22) size:11 weight:NSFontWeightRegular parent:root];
     self.feedback.textColor = NSColor.secondaryLabelColor;
     self.saveButton = [NSButton buttonWithTitle:@"保存更改" target:self action:@selector(save:)];
     self.saveButton.frame = NSMakeRect(530, height - 54, 102, 32);
@@ -311,6 +314,7 @@
     });
 }
 - (void)openPreview:(id)sender { if (self.preview) self.preview(); }
+- (void)openProtection:(id)sender { if(self.protection) self.protection(); }
 - (void)openSystem:(id)sender {
     [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.Notifications-Settings.extension"]];
 }
@@ -322,7 +326,10 @@
     [alert addButtonWithTitle:@"继续编辑"]; [alert addButtonWithTitle:@"放弃更改"];
     return [alert runModal] == NSAlertSecondButtonReturn;
 }
-- (void)windowWillClose:(NSNotification *)notification { [NSApp terminate:nil]; }
+- (void)windowWillClose:(NSNotification *)notification {
+    for(NSWindow *window in NSApp.windows) if(window!=self.window && window.isVisible) return;
+    [NSApp terminate:nil];
+}
 
 - (void)capture:(NSString *)name {
     NSString *root = NSProcessInfo.processInfo.environment[@"CODEX_PULSE_TEST_CAPTURE_DIR"];

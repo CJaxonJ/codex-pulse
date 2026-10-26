@@ -22,6 +22,23 @@ useful work continues. The cat reference stays secondary to the product idea.
 The SVG files are the editable source of truth. Run `npm run brand:build` on
 macOS to regenerate PNG and ICNS outputs after changing a master.
 
+## Rounded app icon
+
+The existing mark and green palette stay unchanged. The legacy ICNS tile uses
+an 896 px rounded square (208 px corner radius) centred on a 1024 px transparent
+canvas. The mark is optically centred with more breathing room. Transparent
+outer corners are essential for both macOS and our unmasked in-app image views.
+
+The build uses AppKit's SVG renderer instead of Quick Look thumbnails: Quick
+Look flattened the transparent corners onto an opaque white square. Every PNG
+size and the final ICNS are checked for transparent edges and an opaque centre.
+No third-party rasterizer is required.
+
+Reference: [Apple's app icon guidelines](https://developer.apple.com/design/human-interface-guidelines/app-icons/).
+This is a flattened legacy ICNS export, not a layered Icon Composer asset.
+If migrating to Icon Composer, supply unmasked square layers and let the system
+apply its mask; do not reuse this already-rounded tile as a background layer.
+
 ## Colors
 
 - Ink: `#171D1C` to `#29312F`

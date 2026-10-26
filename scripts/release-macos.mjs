@@ -24,6 +24,8 @@ console.log("Release gate 3/7: persistent native alert E2E");
 run([path.join(projectDir, "scripts", "e2e-notifier-persistent-macos.mjs"), "--build"]);
 run([path.join(projectDir, "scripts", "e2e-resume-preview-macos.mjs")]);
 run([path.join(projectDir, "scripts", "e2e-settings-macos.mjs")]);
+run([path.join(projectDir, "scripts", "e2e-protection-consent.mjs")]);
+run([path.join(projectDir, "scripts", "e2e-protection-ui-macos.mjs")]);
 
 console.log("Release gate 4/7: direct X API contract and classifier E2E (local fixture)");
 run([path.join(projectDir, "scripts", "e2e-tibo-feed.mjs")]);

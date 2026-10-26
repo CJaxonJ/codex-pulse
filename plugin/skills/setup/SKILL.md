@@ -15,18 +15,17 @@ description: Help install and verify the local macOS Codex Pulse monitor, inspec
 2. Run the installed `status` command and report only plan type, percentage
    remaining, reset time, weekly percentage, and reset-card count. Never print
    authentication material or opaque reset-card ids.
-3. Explain that Codex intentionally skips new or changed non-managed hooks until
-   the user reviews them. The interactive installer offers to open Codex CLI for
-   the user. In that CLI, have them run `/hooks`, verify that the Codex Pulse
-   commands point inside the installed plugin, press `t` to trust, confirm that
-   `Active` becomes `1`. Before starting review, explain that the interactive
-   installer will close its own CLI and restart Codex automatically after trust,
-   stopping active tasks; the user should finish tasks first or choose Later.
-   No second trust/restart dialog is expected. Already-trusted Hooks skip review.
-   If installation was non-interactive, deferred or timed out, explain how to
-   launch CLI and reopen Codex manually when convenient. `/hooks` is not a
-   desktop composer command. Ordinary use needs no developer verification or
-   API payment setup.
+3. In runtime 0.9.18+, open `~/Applications/Codex Pulse.app` with `--protection`
+   or use “保护授权” in its settings. The native window explains purpose and
+   boundaries; exact definitions are available in optional details. The user
+   personally clicks “开启自动保护”. Do not submit `protection enable --yes` on
+   their behalf, simulate the click, or turn opening the window into consent.
+   Success requires Codex's actual trusted status. Authorization applies to new
+   sessions; reopening Codex is optional until convenient, and restarting stops
+   active tasks. Existing trust needs no repeated consent. Runtime 0.9.17 uses
+   the older CLI review flow: consult its versioned setup document or upgrade;
+   do not claim its installer already has this window. Ordinary use needs no
+   developer verification or API payment setup.
 4. For saved next steps, open `~/Applications/Codex Pulse.app` with `--preview`,
    or run the installed CLI's `preview` command. This is read-only and makes no
    model call. Preserve task separation and the original Goal. Earliest personal
