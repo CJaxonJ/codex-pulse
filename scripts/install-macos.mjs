@@ -13,6 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {openProtectionOnboarding} from "../src/protection-onboarding.mjs";
+import { lockInstallation, replaceInstallation } from "./installation-transaction.mjs";
 
 const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const homeDir = os.homedir();
@@ -47,12 +48,25 @@ function resolveCodexPath() {
   }
 }
 
+const release = await lockInstallation(dataDir);
+const stagedRuntime = path.join(dataDir, `app-install-${process.pid}`);
+const appPath = path.join(homeDir, "Applications", "Codex Pulse.app");
+const stagedApp = path.join(homeDir, "Applications", `Codex Pulse.install-${process.pid}.app`);
+const stagedPlist = path.join(dataDir, `launch-agent-install-${process.pid}.plist`);
+try {
 const codexPath = resolveCodexPath();
 
 console.log("\nCodex Pulse 测试版安装");
-console.log("1/5 检查并构建系统通知组件");
+console.log("1/5 检查登录状态和构建依赖（尚未改动现有安装）");
+execFileSync(nodePath, [path.join(projectDir, "bin", "codex-pulse.mjs"), "status"], {
+  env: { ...process.env, CODEX_BINARY: codexPath }, stdio: "inherit", timeout: 30_000,
+});
+execFileSync("/usr/bin/xcrun", ["--find", "clang"], { stdio: "ignore", timeout: 15_000 });
+execFileSync(process.execPath, [path.join(projectDir, "scripts/install-plugin.mjs"), "--check"], {
+  env: {...process.env, CODEX_BINARY:codexPath}, stdio:"inherit", timeout:30_000,
+});
 
-execFileSync(process.execPath, [path.join(projectDir, "scripts", "build-notifier-macos.mjs")], {
+execFileSync(process.execPath, [path.join(projectDir, "scripts", "build-notifier-macos.mjs"), "--no-install"], {
   stdio: "inherit",
 });
 
@@ -67,18 +81,14 @@ function xml(value) {
 
 mkdirSync(launchAgentsDir, { recursive: true });
 mkdirSync(dataDir, { recursive: true });
-rmSync(runtimeDir, { recursive: true, force: true });
-mkdirSync(runtimeDir, { recursive: true });
+mkdirSync(stagedRuntime, { recursive: true });
+mkdirSync(path.dirname(appPath), { recursive: true });
 for (const entry of ["bin", "src"]) {
-  cpSync(path.join(projectDir, entry), path.join(runtimeDir, entry), { recursive: true });
+  cpSync(path.join(projectDir, entry), path.join(stagedRuntime, entry), { recursive: true });
 }
-cpSync(path.join(projectDir, "package.json"), path.join(runtimeDir, "package.json"));
-
-console.log("2/5 检查 Codex 登录状态和额度读取权限");
-execFileSync(nodePath, [monitorPath, "status"], {
-  env: { ...process.env, CODEX_BINARY: codexPath },
-  stdio: "inherit",
-});
+cpSync(path.join(projectDir, "package.json"), path.join(stagedRuntime, "package.json"));
+cpSync(path.join(projectDir, "build", "Codex Pulse.app"), stagedApp, { recursive: true });
+execFileSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", stagedApp]);
 
 const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -98,6 +108,7 @@ const plist = `<?xml version="1.0" encoding="UTF-8"?>
     <string>${xml(codexPath)}</string>
     <key>CODEX_PULSE_POLL_SECONDS</key>
     <string>60</string>
+    ${process.env.CODEX_HOME ? `<key>CODEX_HOME</key><string>${xml(process.env.CODEX_HOME)}</string>` : ""}
   </dict>
   <key>WorkingDirectory</key>
   <string>${xml(runtimeDir)}</string>
@@ -115,34 +126,51 @@ const plist = `<?xml version="1.0" encoding="UTF-8"?>
 </plist>
 `;
 
-writeFileSync(plistPath, plist, "utf8");
+writeFileSync(stagedPlist, plist, "utf8");
 
-console.log("3/5 安装并启动后台监控");
-try {
-  execFileSync("/bin/launchctl", ["bootout", `gui/${uid}`, plistPath], {
-    stdio: "ignore",
+const previousPlugin = JSON.parse(execFileSync(codexPath, ["plugin", "list", "--json"], {encoding:"utf8",timeout:30_000}))
+  .installed?.some(p => p.pluginId === "codex-pulse@codex-pulse-local");
+const marketplaceRoot = path.join(dataDir, "marketplace");
+const previousMarketplaces = JSON.parse(execFileSync(codexPath, ["plugin", "marketplace", "list", "--json"], {encoding:"utf8",timeout:30_000}));
+const hadMarketplace = previousMarketplaces.marketplaces?.some(m => m.name === "codex-pulse-local");
+replaceInstallation({
+  components: [[runtimeDir, stagedRuntime], [appPath, stagedApp], [plistPath, stagedPlist],
+    ...(!previousPlugin ? [[marketplaceRoot, null]] : [])], service, plistPath,
+  activate() {
+  console.log("2/5 切换已验证的组件（失败时恢复旧安装）");
+  execFileSync("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister", ["-f", appPath]);
+  console.log("3/5 安装本地插件并启动后台监控");
+  execFileSync(process.execPath, [path.join(projectDir, "scripts", "install-plugin.mjs")], {
+    env: { ...process.env, CODEX_BINARY: codexPath }, stdio: "inherit",
   });
-} catch {
-  // The service may not have been installed before.
-}
-execFileSync("/bin/launchctl", ["bootstrap", `gui/${uid}`, plistPath]);
-execFileSync("/bin/launchctl", ["kickstart", "-k", service]);
+  },
+  verify() {
+  execFileSync(nodePath, [monitorPath, "doctor"], {
+    env: { ...process.env, CODEX_BINARY: codexPath }, stdio: "inherit", timeout:30_000,
+  });
+  },
+  rollback() {
+  if (!previousPlugin) {
+      const current=JSON.parse(execFileSync(codexPath,["plugin","list","--json"],{encoding:"utf8",timeout:30_000}));
+      if(current.installed?.some(p=>p.pluginId==="codex-pulse@codex-pulse-local"))
+        execFileSync(codexPath,["plugin","remove","codex-pulse@codex-pulse-local","--json"],{stdio:"ignore",timeout:30_000});
+      if (!hadMarketplace) {
+        const catalogs=JSON.parse(execFileSync(codexPath,["plugin","marketplace","list","--json"],{encoding:"utf8",timeout:30_000}));
+        if(catalogs.marketplaces?.some(m=>m.name==="codex-pulse-local"))
+          execFileSync(codexPath,["plugin","marketplace","remove","codex-pulse-local","--json"],{stdio:"ignore",timeout:30_000});
+      }
+  }
+  },
+});
 console.log("4/5 申请系统通知权限并发送测试通知");
-execFileSync(process.execPath, [path.join(projectDir, "scripts", "setup-notifications-macos.mjs")], {
-  stdio: "inherit",
-});
-console.log("5/5 安装 Codex Pulse 本地插件");
-execFileSync(process.execPath, [path.join(projectDir, "scripts", "install-plugin.mjs")], {
-  env: { ...process.env, CODEX_BINARY: codexPath },
-  stdio: "inherit",
-});
+try {execFileSync(process.execPath,[path.join(projectDir,"scripts/setup-notifications-macos.mjs")],{stdio:"inherit"});}
+catch {console.warn("程序已安装，通知设置未完成。可打开 Codex Pulse 后再设置通知，不需要重装。");}
 
-console.log("\n安装完成，正在做最后自检……");
-execFileSync(nodePath, [monitorPath, "doctor"], {
-  env: { ...process.env, CODEX_BINARY: codexPath },
-  stdio: "inherit",
-});
-
+console.log("5/5 打开本人保护授权窗口（不会自动确认或重启 Codex）");
 const onboarding=openProtectionOnboarding({env:{...process.env,CODEX_BINARY:codexPath}});
 if(!onboarding.opened) console.log("\n提醒已安装。方便时打开 Codex Pulse → 保护授权 → 开启自动保护。\n");
 else console.log("\n可在 Codex Pulse → 保护授权中核对状态；新授权在重新打开 Codex 后使用。\n");
+} finally {
+  for (const staged of [stagedRuntime, stagedApp, stagedPlist]) rmSync(staged, {recursive:true,force:true});
+  await release();
+}

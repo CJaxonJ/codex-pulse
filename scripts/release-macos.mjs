@@ -27,6 +27,8 @@ run([path.join(projectDir, "scripts", "e2e-resume-preview-macos.mjs")]);
 run([path.join(projectDir, "scripts", "e2e-settings-macos.mjs")]);
 run([path.join(projectDir, "scripts", "e2e-protection-consent.mjs")]);
 run([path.join(projectDir, "scripts", "e2e-protection-ui-macos.mjs")]);
+run([path.join(projectDir, "scripts", "e2e-installation-platform-macos.mjs")]);
+run([path.join(projectDir, "scripts", "e2e-installation-launchd-macos.mjs")]);
 
 console.log("Release gate 4/7: direct X API contract and classifier E2E (local fixture)");
 run([path.join(projectDir, "scripts", "e2e-tibo-feed.mjs")]);

@@ -1,17 +1,19 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { lockInstallation, replaceInstallation } from "./installation-transaction.mjs";
 
 const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const homeDir = os.homedir();
 const dataDir = path.join(homeDir, "Library", "Application Support", "Codex Pulse");
 const runtimeDir = path.join(dataDir, "app");
 const stagedDir = path.join(dataDir, `app-update-${process.pid}`);
-const backupDir = path.join(dataDir, `app-backup-${process.pid}`);
+const appPath = path.join(homeDir, "Applications", "Codex Pulse.app");
+const stagedApp = path.join(homeDir, "Applications", `Codex Pulse.update-${process.pid}.app`);
 const plistPath = path.join(
   homeDir,
   "Library",
@@ -27,57 +29,28 @@ if (!existsSync(runtimeDir) || !existsSync(plistPath)) {
   throw new Error("Codex Pulse is not installed. Run node scripts/install-macos.mjs first.");
 }
 
-rmSync(stagedDir, { recursive: true, force: true });
-rmSync(backupDir, { recursive: true, force: true });
+const release = await lockInstallation(dataDir);
+try {
 mkdirSync(stagedDir, { recursive: true });
 for (const entry of ["bin", "src"]) {
   cpSync(path.join(projectDir, entry), path.join(stagedDir, entry), { recursive: true });
 }
 cpSync(path.join(projectDir, "package.json"), path.join(stagedDir, "package.json"));
 
-execFileSync(process.execPath, [path.join(projectDir, "scripts", "build-notifier-macos.mjs")], {
+execFileSync(process.execPath, [path.join(projectDir, "scripts", "build-notifier-macos.mjs"), "--no-install"], {
   stdio: "inherit",
 });
-
-let swapped = false;
-try {
-  try {
-    execFileSync("/bin/launchctl", ["bootout", `gui/${uid}`, plistPath], {
-      stdio: "ignore",
-    });
-  } catch {
-    // The service may already be stopped.
-  }
-  renameSync(runtimeDir, backupDir);
-  renameSync(stagedDir, runtimeDir);
-  swapped = true;
-  execFileSync("/bin/launchctl", ["bootstrap", `gui/${uid}`, plistPath]);
-  execFileSync("/bin/launchctl", [
-    "kickstart",
-    "-k",
-    `gui/${uid}/com.cjaxonj.codex-pulse`,
-  ]);
-  rmSync(backupDir, { recursive: true, force: true });
-} catch (error) {
-  if (swapped) {
-    try {
-      execFileSync("/bin/launchctl", ["bootout", `gui/${uid}`, plistPath], {
-        stdio: "ignore",
-      });
-    } catch {
-      // Best-effort rollback.
-    }
-    rmSync(runtimeDir, { recursive: true, force: true });
-    renameSync(backupDir, runtimeDir);
-    try {
-      execFileSync("/bin/launchctl", ["bootstrap", `gui/${uid}`, plistPath]);
-    } catch {
-      // Preserve the original runtime even if launchd itself is unavailable.
-    }
-  }
-  rmSync(stagedDir, { recursive: true, force: true });
-  throw error;
-}
+cpSync(path.join(projectDir, "build", "Codex Pulse.app"), stagedApp, { recursive: true });
+execFileSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", stagedApp]);
+replaceInstallation({ components: [[runtimeDir, stagedDir], [appPath, stagedApp]],
+  service: `gui/${uid}/com.cjaxonj.codex-pulse`, plistPath,
+  activate() {
+    execFileSync("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister", ["-f", appPath]);
+  },
+  verify() {
+    execFileSync(process.execPath, [path.join(runtimeDir, "bin/codex-pulse.mjs"), "doctor"], { stdio: "inherit", timeout: 30_000 });
+  },
+});
 
 console.log(
   JSON.stringify(
@@ -92,3 +65,8 @@ console.log(
     2,
   ),
 );
+} finally {
+  rmSync(stagedDir, { recursive: true, force: true });
+  rmSync(stagedApp, { recursive: true, force: true });
+  await release();
+}

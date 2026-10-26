@@ -37,10 +37,9 @@ function enabledPlugin(configPath) {
   return /^enabled\s*=\s*true\s*$/m.test(section);
 }
 
-function installedPluginVersions(homeDir) {
+function installedPluginVersions(codexHome) {
   const root = path.join(
-    homeDir,
-    ".codex",
+    codexHome,
     "plugins",
     "cache",
     "codex-pulse-local",
@@ -74,6 +73,7 @@ export function redactDiagnosticText(value, homeDir) {
 
 export function inspectLocalInstallation({
   homeDir,
+  codexHome = path.join(homeDir, ".codex"),
   uid,
   expectedVersion = null,
   compatiblePluginVersions = expectedVersion ? [expectedVersion] : [],
@@ -90,7 +90,7 @@ export function inspectLocalInstallation({
     `${SERVICE_LABEL}.plist`,
   );
   const notifierPath = path.join(homeDir, "Applications", "Codex Pulse.app");
-  const configPath = path.join(homeDir, ".codex", "config.toml");
+  const configPath = path.join(codexHome, "config.toml");
   const statePath = path.join(dataDir, "state.json");
   const logPath = path.join(dataDir, "monitor.log");
   const latestHookDecisionPath = newestFile(
@@ -110,7 +110,7 @@ export function inspectLocalInstallation({
 
   const stateAgeSeconds = fileAgeSeconds(statePath, now);
   const logAgeSeconds = fileAgeSeconds(logPath, now);
-  const pluginVersions = installedPluginVersions(homeDir);
+  const pluginVersions = installedPluginVersions(codexHome);
   const pluginEnabled = enabledPlugin(configPath);
   const newestPluginVersion = pluginVersions.at(-1) || null;
   const pluginVersionCompatible = Boolean(
@@ -120,8 +120,7 @@ export function inspectLocalInstallation({
   );
   const newestPluginPath = newestPluginVersion
     ? path.join(
-        homeDir,
-        ".codex",
+        codexHome,
         "plugins",
         "cache",
         "codex-pulse-local",
@@ -197,7 +196,7 @@ export function inspectLocalInstallation({
       hookObservedForInstalledPlugin ? "pass" : "manual",
       hookObservedForInstalledPlugin
         ? `最近观察到 Codex Pulse Hook 已执行（距今 ${hookDecisionAgeSeconds} 秒）`
-        : "尚未观察到当前版本的 Hook 执行记录。请在重启 Codex 后打开终端运行 codex，再输入 /hooks，人工检查并信任 Codex Pulse hooks",
+        : "尚未观察到当前版本的 Hook 执行记录。打开 Codex Pulse → 保护授权，核对并确认后，在方便时重开 Codex；对新会话生效。",
     ),
   ];
 

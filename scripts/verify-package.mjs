@@ -26,6 +26,7 @@ const entries = execFileSync("/usr/bin/unzip", ["-Z1", zipPath], {
 const failures = [];
 const required = [
   `${bundleName}/README.md`,
+  `${bundleName}/docs/technical-guide.md`,
   `${bundleName}/PRIVACY.md`,
   `${bundleName}/docs/releases/v${pkg.version}.md`,
   `${bundleName}/LICENSE`,
@@ -45,6 +46,7 @@ const required = [
   `${bundleName}/src/tibo-credentials.mjs`,
   `${bundleName}/src/tibo-x-api-client.mjs`,
   `${bundleName}/brand/codex-pulse-mark.svg`,
+  `${bundleName}/brand/screenshots/settings.png`,
   `${bundleName}/brand/codex-pulse-app-icon.png`,
   `${bundleName}/native/AppIcon.icns`,
   `${bundleName}/native/BrandAssetRenderer.swift`,
@@ -57,6 +59,7 @@ const required = [
   `${bundleName}/plugin/assets/composer-icon.svg`,
   `${bundleName}/scripts/build-brand-assets.mjs`,
   `${bundleName}/scripts/install-macos.mjs`,
+  `${bundleName}/scripts/installation-transaction.mjs`,
   `${bundleName}/scripts/update-runtime-macos.mjs`,
   `${bundleName}/scripts/uninstall-macos.mjs`,
 ];
