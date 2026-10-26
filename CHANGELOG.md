@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.9.18 — unreleased
+## 0.9.18 — 2026-10-26
+
+- Fixed white-matted icon corners with a transparent, more spacious rounded
+  tile. Preserved the selected mark and recovery-green palette. PNG and every
+  ICNS size are checked for real transparent edges during export.
 
 - Replaced the default CLI trust walkthrough with a native protection consent
   window. Purpose and limits appear first; exact definitions remain available

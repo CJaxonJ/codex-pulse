@@ -30,15 +30,9 @@ default and requires explicit consent bound to the current personal account.
 
 ## Download
 
-The working tree contains the **0.9.18 candidate** with native one-click protection
-consent. It is not published yet. The public download below is 0.9.17; use its
-[versioned installation guide](https://github.com/CJaxonJ/codex-pulse/blob/v0.9.17/开始使用.md)
-for that release. The candidate changes the setup flow described below, not the
-already-uploaded archive.
-
-**[Download v0.9.17 for macOS](https://github.com/CJaxonJ/codex-pulse/releases/download/v0.9.17/Codex-Pulse-0.9.17-macOS.zip)** ·
+**[Download v0.9.18 for macOS](https://github.com/CJaxonJ/codex-pulse/releases/download/v0.9.18/Codex-Pulse-0.9.18-macOS.zip)** ·
 **[中文三步安装](./开始使用.md)** ·
-[Release notes](./docs/releases/v0.9.17.md)
+[Release notes](./docs/releases/v0.9.18.md)
 
 Download the macOS ZIP, not GitHub's automatically generated source archive.
 Full functionality uses the local installer and your one-time Hook review;
@@ -147,7 +141,7 @@ copies its runtime to `~/Library/Application Support/Codex Pulse/app`, installs 
 login agent, and installs the local Codex Pulse plugin from a stable local
 marketplace. The extracted folder can then be deleted.
 
-In the 0.9.18 candidate, interactive installation opens a native “开启自动保护”
+Starting in 0.9.18, interactive installation opens a native “开启自动保护”
 window. Purpose and limits come first; exact commands and definition hashes
 are available in optional details. Only an explicit user confirmation submits
 the reviewed definitions through Codex's version-checked configuration interface.

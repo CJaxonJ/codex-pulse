@@ -46,6 +46,7 @@ const required = [
   `${bundleName}/brand/codex-pulse-mark.svg`,
   `${bundleName}/brand/codex-pulse-app-icon.png`,
   `${bundleName}/native/AppIcon.icns`,
+  `${bundleName}/native/BrandAssetRenderer.swift`,
   `${bundleName}/native/PulseSettingsWindow.h`,
   `${bundleName}/native/PulseSettingsWindow.m`,
   `${bundleName}/native/PulseProtectionWindow.m`,
