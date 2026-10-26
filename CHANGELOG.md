@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.20 — 2026-10-26
+
+- Align five-hour and weekly quota values with shared typography, equal-width
+  bars and common baselines. Put recovery time on its own row and align the
+  header status and footer actions to the card edge.
+- Add native alignment regression checks, including deliberately mismatched
+  fonts and bar widths; retain settings persistence and consent checks.
+- Refresh the GitHub screenshot from the native app using clearly labelled
+  demonstration data. No quota, recovery, permission or automatic-card policy changes.
+
 ## 0.9.19 — 2026-10-26
 
 - Stage and verify the native App before replacing an existing installation.

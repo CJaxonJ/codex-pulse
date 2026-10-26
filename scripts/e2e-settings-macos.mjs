@@ -39,11 +39,12 @@ for (const scenario of [
   assert.equal(result.layoutFits, true);
   assert.equal(result.quotaBarsMatchData, true);
   assert.equal(result.freshnessAndSeverityMatch, true);
+  assert.equal(result.alignmentVerified, true);
   const preferences = JSON.parse(await readFile(path.join(dataDir, "preferences.json"), "utf8"));
   assert.equal(preferences.lowQuotaPercent, 35);
   assert.equal(preferences.soundEnabled, false);
   assert.deepEqual(preferences.autoRedeem, { enabled: false }); // explicit separate native switch action
   assert.equal(await readFile(path.join(dataDir, "chat-continuity/test.json"), "utf8"), checkpoint);
-  console.log(JSON.stringify({ ok: true, ...scenario, nativeControlsPersisted: true, checkpointUnchanged: true,
+  console.log(JSON.stringify({ ok: true, ...scenario, alignmentVerified: true, nativeControlsPersisted: true, checkpointUnchanged: true,
     realCreditsConsumed: 0, screenshot: path.join(dataDir, "settings.png") }));
 }

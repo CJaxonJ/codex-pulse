@@ -124,35 +124,36 @@
     [root addSubview:icon];
     [self label:@"Codex Pulse" frame:NSMakeRect(96, 24, 320, 32) size:24 weight:NSFontWeightSemibold parent:root];
     [self label:@"掌握剩余额度，安排下一步。" frame:NSMakeRect(96, 60, 320, 24) size:12 weight:NSFontWeightRegular parent:root].textColor = NSColor.secondaryLabelColor;
-    self.health = [self label:@"读取本机状态…" frame:NSMakeRect(488, 40, 200, 24) size:12 weight:NSFontWeightMedium parent:root];
+    self.health = [self label:@"读取本机状态…" frame:NSMakeRect(472, 40, 200, 24) size:12 weight:NSFontWeightMedium parent:root];
     self.health.alignment = NSTextAlignmentRight;
 
     self.scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(32, 104, 656, height - 184)];
     self.scroll.hasVerticalScroller = YES; self.scroll.autohidesScrollers = YES;
     self.scroll.drawsBackground = NO;
-    PulseFlippedView *body = [[PulseFlippedView alloc] initWithFrame:NSMakeRect(0, 0, 640, 1008)];
+    PulseFlippedView *body = [[PulseFlippedView alloc] initWithFrame:NSMakeRect(0, 0, 640, 1040)];
     self.scroll.documentView = body;
     [root addSubview:self.scroll];
-    NSView *quota = [self cardAt:0 height:160 parent:body];
-    [self label:@"5 小时剩余" frame:NSMakeRect(24, 16, 240, 24) size:12 weight:NSFontWeightMedium parent:quota].textColor = NSColor.secondaryLabelColor;
-    self.quotaText = [self label:@"—" frame:NSMakeRect(24, 44, 240, 48) size:36 weight:NSFontWeightSemibold parent:quota];
-    self.quotaText.font = [NSFont monospacedDigitSystemFontOfSize:36 weight:NSFontWeightSemibold];
-    self.quotaBar = [[PulseQuotaBar alloc] initWithFrame:NSMakeRect(24, 104, 240, 4)];
+    NSView *quota = [self cardAt:0 height:192 parent:body];
+    // Equal columns share one metric type size and the same vertical anchors.
+    const CGFloat metricWidth = 280, metricY = 40, barY = 96, metricSize = 30;
+    [self label:@"5 小时剩余" frame:NSMakeRect(24, 16, metricWidth, 24) size:12 weight:NSFontWeightMedium parent:quota].textColor = NSColor.secondaryLabelColor;
+    self.quotaText = [self label:@"—" frame:NSMakeRect(24, metricY, metricWidth, 40) size:metricSize weight:NSFontWeightSemibold parent:quota];
+    self.quotaText.font = [NSFont monospacedDigitSystemFontOfSize:metricSize weight:NSFontWeightSemibold];
+    self.quotaBar = [[PulseQuotaBar alloc] initWithFrame:NSMakeRect(24, barY, metricWidth, 4)];
     [quota addSubview:self.quotaBar];
-    [self label:@"本周剩余" frame:NSMakeRect(320, 16, 120, 24) size:12 weight:NSFontWeightMedium parent:quota].textColor = NSColor.secondaryLabelColor;
-    self.weeklyText = [self label:@"—" frame:NSMakeRect(488, 16, 128, 24) size:16 weight:NSFontWeightSemibold parent:quota];
-    self.weeklyText.font = [NSFont monospacedDigitSystemFontOfSize:16 weight:NSFontWeightSemibold];
-    self.weeklyText.alignment = NSTextAlignmentRight;
-    self.weeklyBar = [[PulseQuotaBar alloc] initWithFrame:NSMakeRect(320, 48, 296, 4)];
+    [self label:@"本周剩余" frame:NSMakeRect(336, 16, metricWidth, 24) size:12 weight:NSFontWeightMedium parent:quota].textColor = NSColor.secondaryLabelColor;
+    self.weeklyText = [self label:@"—" frame:NSMakeRect(336, metricY, metricWidth, 40) size:metricSize weight:NSFontWeightSemibold parent:quota];
+    self.weeklyText.font = self.quotaText.font;
+    self.weeklyBar = [[PulseQuotaBar alloc] initWithFrame:NSMakeRect(336, barY, metricWidth, 4)];
     [quota addSubview:self.weeklyBar];
-    [self label:@"5 小时窗口恢复" frame:NSMakeRect(320, 72, 296, 24) size:12 weight:NSFontWeightRegular parent:quota].textColor = NSColor.secondaryLabelColor;
-    self.resetText = [self label:@"待确认" frame:NSMakeRect(320, 96, 296, 24) size:14 weight:NSFontWeightMedium parent:quota];
-    self.recentText = [self label:@"暂无关键提醒" frame:NSMakeRect(24, 128, 592, 24) size:12 weight:NSFontWeightRegular parent:quota];
+    [self label:@"5 小时窗口恢复" frame:NSMakeRect(24, 120, 168, 24) size:14 weight:NSFontWeightRegular parent:quota].textColor = NSColor.secondaryLabelColor;
+    self.resetText = [self label:@"待确认" frame:NSMakeRect(208, 120, 408, 24) size:14 weight:NSFontWeightMedium parent:quota];
+    self.recentText = [self label:@"暂无关键提醒" frame:NSMakeRect(24, 152, 592, 24) size:12 weight:NSFontWeightRegular parent:quota];
     self.recentText.maximumNumberOfLines = 1;
     self.recentText.lineBreakMode = NSLineBreakByTruncatingTail;
 
-    [self section:@"额度保护" at:184 parent:body];
-    NSView *protection = [self cardAt:216 height:88 parent:body];
+    [self section:@"额度保护" at:216 parent:body];
+    NSView *protection = [self cardAt:248 height:88 parent:body];
     [self label:@"保护策略" frame:NSMakeRect(24, 16, 280, 24) size:14 weight:NSFontWeightMedium parent:protection];
     [self label:@"提醒可关闭，安全校验始终保留。" frame:NSMakeRect(24, 48, 320, 24) size:12 weight:NSFontWeightRegular parent:protection].textColor = NSColor.secondaryLabelColor;
     self.policy = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(368, 24, 248, 32) pullsDown:NO];
@@ -162,8 +163,8 @@
     self.policy.accessibilityLabel = @"保护策略";
     [protection addSubview:self.policy];
 
-    [self section:@"提醒偏好" at:328 parent:body];
-    NSView *notices = [self cardAt:360 height:416 parent:body];
+    [self section:@"提醒偏好" at:360 parent:body];
+    NSView *notices = [self cardAt:392 height:416 parent:body];
     [self row:@"提前提醒我" detail:@"低于设定比例或用量消耗过快时提醒。10% 保护提醒始终保留。" key:@"quotaAlertsEnabled" at:0 parent:notices];
     [self label:@"剩余额度低于" frame:NSMakeRect(24, 80, 112, 24) size:12 weight:NSFontWeightRegular parent:notices].textColor = NSColor.secondaryLabelColor;
     self.threshold = [[NSSlider alloc] initWithFrame:NSMakeRect(144, 80, 392, 24)];
@@ -183,23 +184,25 @@
     [self separatorAt:336 parent:notices];
     [self row:@"通知声音" detail:@"关闭后仍会显示通知，不影响额度保护。" key:@"soundEnabled" at:336 parent:notices];
 
-    [self section:@"自动用卡 · 单独授权" at:800 parent:body];
-    NSView *credits = [self cardAt:832 height:104 parent:body];
+    [self section:@"自动用卡 · 单独授权" at:832 parent:body];
+    NSView *credits = [self cardAt:864 height:104 parent:body];
     self.creditSwitch = [self row:@"到期前自动用一张" detail:@"不足 10 分钟且有额度可重置时，使用最早到期的一张。" key:nil at:0 parent:credits];
     self.creditSwitch.action = @selector(creditChanged:);
     [self label:@"仅限已授权账户。即时生效；睡眠或离线可能错过到期。" frame:NSMakeRect(24, 72, 592, 24) size:12 weight:NSFontWeightRegular parent:credits].textColor = NSColor.secondaryLabelColor;
 
     NSButton *plan = [NSButton buttonWithTitle:@"续跑计划" target:self action:@selector(openPreview:)];
-    plan.frame = NSMakeRect(32, height - 56, 104, 32); [root addSubview:plan];
+    plan.frame = NSMakeRect(32, height - 56, 120, 32);
+    plan.font = [NSFont systemFontOfSize:14 weight:NSFontWeightMedium];
+    [root addSubview:plan];
     NSButton *system = [NSButton buttonWithTitle:@"系统通知设置" target:self action:@selector(openSystem:)];
-    system.frame = NSMakeRect(0, 952, 128, 32); [body addSubview:system];
+    system.frame = NSMakeRect(0, 984, 128, 32); [body addSubview:system];
     NSButton *authorization=[NSButton buttonWithTitle:@"保护授权" target:self action:@selector(openProtection:)];
-    authorization.frame=NSMakeRect(144,952,104,32); [body addSubview:authorization];
-    [self label:@"偏好仅存本机，不更改系统权限。" frame:NSMakeRect(304, 960, 336, 24) size:12 weight:NSFontWeightRegular parent:body].textColor = NSColor.secondaryLabelColor;
-    self.feedback = [self label:@"正在读取设置…" frame:NSMakeRect(152, height - 48, 392, 24) size:12 weight:NSFontWeightRegular parent:root];
+    authorization.frame=NSMakeRect(144,984,104,32); [body addSubview:authorization];
+    [self label:@"偏好仅存本机，不更改系统权限。" frame:NSMakeRect(304, 992, 336, 24) size:12 weight:NSFontWeightRegular parent:body].textColor = NSColor.secondaryLabelColor;
+    self.feedback = [self label:@"正在读取设置…" frame:NSMakeRect(168, height - 48, 360, 24) size:12 weight:NSFontWeightRegular parent:root];
     self.feedback.textColor = NSColor.secondaryLabelColor;
     self.saveButton = [NSButton buttonWithTitle:@"保存更改" target:self action:@selector(save:)];
-    self.saveButton.frame = NSMakeRect(568, height - 56, 120, 32);
+    self.saveButton.frame = NSMakeRect(552, height - 56, 120, 32);
     self.saveButton.font = [NSFont systemFontOfSize:14 weight:NSFontWeightSemibold];
     self.saveButton.bezelStyle = NSBezelStyleRounded;
     self.saveButton.bezelColor = self.green;
@@ -400,6 +403,23 @@
     }
     return YES;
 }
+- (BOOL)validateAlignment {
+    NSRect first = self.quotaText.frame, second = self.weeklyText.frame;
+    NSRect firstBar = self.quotaBar.frame, secondBar = self.weeklyBar.frame;
+    NSView *card = self.quotaText.superview;
+    NSRect cardInWindow = [card convertRect:card.bounds toView:self.window.contentView];
+    return NSEqualSizes(first.size, second.size)
+        && [self.quotaText.font isEqual:self.weeklyText.font]
+        && self.quotaText.alignment == self.weeklyText.alignment
+        && NSMinY(first) == NSMinY(second)
+        && NSEqualSizes(firstBar.size, secondBar.size)
+        && NSMinY(firstBar) == NSMinY(secondBar)
+        && NSMinX(firstBar) == NSMinX(first) && NSMinX(secondBar) == NSMinX(second)
+        && NSMaxX(firstBar) == NSMaxX(first) && NSMaxX(secondBar) == NSMaxX(second)
+        && NSMinY(self.resetText.frame) > NSMaxY(firstBar)
+        && NSMaxX(cardInWindow) == NSMaxX(self.saveButton.frame)
+        && NSMaxX(cardInWindow) == NSMaxX(self.health.frame);
+}
 - (void)runIsolatedSelfTest {
     __weak PulseSettingsWindow *weakSelf = self;
     self.afterLoad = ^{
@@ -407,6 +427,18 @@
             PulseSettingsWindow *view = weakSelf;
             BOOL layoutOK = [view validateLayoutIn:view.window.contentView]
                 && [view validateLayoutIn:view.scroll.documentView];
+            BOOL alignmentOK = [view validateAlignment];
+            // Prove the test rejects the original two regressions, not just
+            // clipping: a smaller metric font and a differently sized bar.
+            NSFont *metricFont = view.weeklyText.font;
+            view.weeklyText.font = [NSFont monospacedDigitSystemFontOfSize:16 weight:NSFontWeightSemibold];
+            BOOL rejectedSmallFont = ![view validateAlignment];
+            view.weeklyText.font = metricFont;
+            NSRect barFrame = view.weeklyBar.frame, changedBar = barFrame;
+            changedBar.size.width -= 16; view.weeklyBar.frame = changedBar;
+            BOOL rejectedUnequalBar = ![view validateAlignment];
+            view.weeklyBar.frame = barFrame;
+            alignmentOK = alignmentOK && rejectedSmallFont && rejectedUnequalBar;
             NSDictionary *state = [view readJSON:@"state.json"];
             NSDictionary *summary = state[@"lastSummary"];
             // Both missing values are valid too, and must leave tracks empty.
@@ -429,7 +461,7 @@
             view.afterSave = ^{
                 PulseSettingsWindow *current = weakSelf;
                 NSDictionary *saved = [current readJSON:@"preferences.json"];
-                BOOL ok = layoutOK && quotaOK && freshnessOK && current.window.isVisible && [saved[@"lowQuotaPercent"] integerValue] == 35
+                BOOL ok = layoutOK && alignmentOK && quotaOK && freshnessOK && current.window.isVisible && [saved[@"lowQuotaPercent"] integerValue] == 35
                     && ![saved[@"soundEnabled"] boolValue] && ![saved[@"persistentAlertsEnabled"] boolValue]
                     && [saved[@"autoRedeem"][@"enabled"] boolValue] && !current.saveButton.enabled;
                 [current capture:@"settings-saved.png"];
@@ -441,9 +473,10 @@
                     BOOL disabled = saved && ![finalPreferences[@"autoRedeem"][@"enabled"] boolValue]
                         && finalView.creditSwitch.state == NSControlStateValueOff;
                     [finalView capture:@"settings-credit-off.png"];
-                    printf("{\"ok\":%s,\"regularSavePreservedConsent\":%s,\"explicitDisableWorked\":%s,\"layoutFits\":%s,\"quotaBarsMatchData\":%s,\"freshnessAndSeverityMatch\":%s}\n",
+                    printf("{\"ok\":%s,\"regularSavePreservedConsent\":%s,\"explicitDisableWorked\":%s,\"layoutFits\":%s,\"quotaBarsMatchData\":%s,\"freshnessAndSeverityMatch\":%s,\"alignmentVerified\":%s}\n",
                         ok && disabled ? "true" : "false", ok ? "true" : "false", disabled ? "true" : "false",
-                        layoutOK ? "true" : "false", quotaOK ? "true" : "false", freshnessOK ? "true" : "false");
+                        layoutOK ? "true" : "false", quotaOK ? "true" : "false", freshnessOK ? "true" : "false",
+                        alignmentOK ? "true" : "false");
                     fflush(stdout); [NSApp terminate:nil];
                 };
                 current.creditSwitch.state = NSControlStateValueOff;
