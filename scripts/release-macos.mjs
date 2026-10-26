@@ -14,7 +14,8 @@ function run(args, env = {}) {
   });
 }
 
-console.log("Release gate 1/7: full automated test suite");
+console.log("Release gate 1/7: public-content guard and full automated test suite");
+run([path.join(projectDir, "scripts", "check-public-content.mjs")]);
 run(["--test"]);
 
 console.log("Release gate 2/7: build the native macOS notifier");

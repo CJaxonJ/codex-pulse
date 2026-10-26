@@ -13,6 +13,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
+import { scanPublicDirectory } from "./public-content-policy.mjs";
 
 const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = JSON.parse(readFileSync(path.join(projectDir, "package.json"), "utf8"));
@@ -53,7 +54,6 @@ for (const entry of [
   "LICENSE",
   "PRIVACY.md",
   "SECURITY.md",
-  "SUBMISSION.md",
   "开始使用.md",
   "安装 Codex Pulse.command",
   "package.json",
@@ -69,6 +69,9 @@ cpSync(
   path.join(projectDir, "docs", "releases", `v${pkg.version}.md`),
   path.join(stagingDir, "docs", "releases", `v${pkg.version}.md`),
 );
+
+const privacy = scanPublicDirectory(stagingDir);
+if (privacy.findings.length) throw new Error(`Staged archive public-content check failed: ${JSON.stringify(privacy.findings)}`);
 
 execFileSync("/usr/bin/ditto", [
   "-c",

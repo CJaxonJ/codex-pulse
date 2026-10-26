@@ -4,6 +4,31 @@ dist/
 node_modules/
 spikes/
 
+# Local credentials and runtime data must never enter source or release archives.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+auth.json
+auth-*.json
+credentials*.json
+cookies*.json
+cookies*.txt
+.codex/
+credit-operations/
+protection-review/
+hook-decisions/
+managed-tasks/
+chat-continuity/
+state.json
+*.log
+private/
+
 # Local product notes are intentionally not part of the public repository.
 codex-pulse-launch-article-zh.md
 product-spec.md

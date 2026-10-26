@@ -21,10 +21,16 @@ cd codex-pulse
 npm test
 ```
 
-Most tests are local and deterministic. `npm run package:macos` additionally
-runs live integration checks against the public reset feed and the signed-in
-Codex App Server. It consumes a small amount of Codex allowance and never uses
-a reset credit.
+Most tests are local and deterministic. `npm run package:macos` also runs isolated
+native UI and Codex configuration acceptance. It does not request model work.
+Set `CODEX_PULSE_RUN_LIVE_E2E=1` only when intentionally running the additional
+live feed and real-model recovery checks; these spend a small amount of normal
+Codex allowance but never consume a reset credit.
+
+Run `npm run privacy:check` before pushing. It scans tracked files and reachable
+Git history for selected secret/privacy patterns without printing matched values.
+Use only synthetic fixtures and reserved example domains. See
+[Public disclosure policy](./docs/public-disclosure.md) for what belongs here.
 
 ## Pull requests
 
