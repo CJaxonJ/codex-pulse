@@ -17,7 +17,8 @@ const service=`gui/${process.getuid()}/${label}`, plist=path.join(root,"service.
 const xml=s=>s.replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");
 function candidate(folder,version) {
   mkdirSync(folder,{recursive:true});
-  writeFileSync(path.join(folder,"worker.cjs"),`const fs=require("node:fs"); setInterval(()=>fs.writeFileSync(${JSON.stringify(marker)},${JSON.stringify(version)}),100);`);
+  cpSync(path.join(import.meta.dirname,"test-support/launchd-fixture-worker.mjs"),path.join(folder,"worker.mjs"));
+  writeFileSync(path.join(folder,"version"),version);
 }
 function waitMarker(value) {
   const deadline=Date.now()+8000;
@@ -28,7 +29,7 @@ function waitMarker(value) {
   throw Error(`Test service did not produce ${value}`);
 }
 candidate(runtime,"old");mkdirSync(app);writeFileSync(path.join(app,"version"),"old");
-writeFileSync(plist,`<?xml version="1.0"?><plist version="1.0"><dict><key>Label</key><string>${label}</string><key>ProgramArguments</key><array><string>${xml(process.execPath)}</string><string>${xml(path.join(runtime,"worker.cjs"))}</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><true/></dict></plist>`);
+writeFileSync(plist,`<?xml version="1.0"?><plist version="1.0"><dict><key>Label</key><string>${label}</string><key>ProgramArguments</key><array><string>${xml(process.execPath)}</string><string>${xml(path.join(runtime,"worker.mjs"))}</string><string>${xml(marker)}</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><true/></dict></plist>`);
 try {
   execFileSync("/bin/launchctl",["bootstrap",`gui/${process.getuid()}`,plist]);waitMarker("old");
   candidate(staged,"new");mkdirSync(stagedApp);writeFileSync(path.join(stagedApp,"version"),"new");
