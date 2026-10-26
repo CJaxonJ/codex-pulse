@@ -1,6 +1,7 @@
 #import <Cocoa/Cocoa.h>
 #import <UserNotifications/UserNotifications.h>
 #import "PulseSettingsWindow.h"
+#import "PulseProtectionWindow.h"
 
 @interface CodexPulseDelegate : NSObject <NSApplicationDelegate, UNUserNotificationCenterDelegate>
 @property(nonatomic, copy) NSString *notificationTitle;
@@ -18,6 +19,9 @@
 @property(nonatomic, strong) PulseSettingsWindow *settingsWindow;
 @property(nonatomic, assign) BOOL settingsSelfTest;
 @property(nonatomic, assign) BOOL silent;
+@property(nonatomic, strong) PulseProtectionWindow *protectionWindow;
+@property(nonatomic, assign) BOOL protectionMode;
+@property(nonatomic, assign) BOOL protectionSelfTest;
 @end
 
 @implementation CodexPulseDelegate
@@ -171,7 +175,7 @@
         NSArray *args = [NSDictionary dictionaryWithContentsOfFile:plist][@"ProgramArguments"];
         NSString *node = args.count > 0 ? args[0] : nil;
         NSString *cli = [[self dataDirectory] stringByAppendingPathComponent:@"app/bin/codex-pulse.mjs"];
-        if (self.previewSelfTest || self.settingsSelfTest) {
+        if (self.previewSelfTest || self.settingsSelfTest || self.protectionSelfTest) {
             node = NSProcessInfo.processInfo.environment[@"CODEX_PULSE_TEST_NODE"];
             cli = NSProcessInfo.processInfo.environment[@"CODEX_PULSE_TEST_CLI"];
         }
@@ -270,7 +274,8 @@
         self.settingsWindow = [[PulseSettingsWindow alloc] initWithDataDirectory:[self dataDirectory]
             commandRunner:^(NSArray<NSString *> *arguments, void (^completion)(NSDictionary *)) {
                 [weakSelf runLocalCommand:arguments completion:completion];
-            } previewAction:^{ [weakSelf showPlanPreview]; }];
+            } previewAction:^{ [weakSelf showPlanPreview]; }
+              protectionAction:^{ [weakSelf showProtection]; }];
         if (self.settingsSelfTest) [self.settingsWindow runIsolatedSelfTest];
         [self.settingsWindow open];
     } else [self.settingsWindow showWindow:nil];
@@ -278,6 +283,7 @@
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
+    if(self.protectionMode) { [self showProtection]; return; }
     if (self.previewMode) { [self showPlanPreview]; return; }
     if (self.persistentSelfTestMode) {
         [self showPersistentAlert];
@@ -358,6 +364,17 @@
     }];
 }
 
+- (void)showProtection {
+    if(!self.protectionWindow) {
+        __weak CodexPulseDelegate *weakSelf=self;
+        self.protectionWindow=[[PulseProtectionWindow alloc] initWithRunner:^(NSArray *arguments,void (^completion)(NSDictionary *)) {
+            [weakSelf runLocalCommand:arguments completion:completion];
+        }];
+        if(self.protectionSelfTest) [self.protectionWindow runIsolatedSelfTest];
+    }
+    [self.protectionWindow open];
+}
+
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)flag {
     if (!NSApp.modalWindow) [self showStatusPanel];
     return YES;
@@ -393,6 +410,17 @@ int main(int argc, const char * argv[]) {
         delegate.settingsSelfTest = [arguments containsObject:@"--settings-self-test"];
         delegate.statusMode = arguments.count == 1 || [arguments containsObject:@"--status"] || [arguments containsObject:@"--settings"] || delegate.settingsSelfTest;
         delegate.silent = [arguments containsObject:@"--silent"];
+        delegate.protectionSelfTest=[arguments containsObject:@"--protection-self-test"];
+        if(delegate.protectionSelfTest) {
+            NSString *home=NSProcessInfo.processInfo.environment[@"CODEX_HOME"];
+            if(!home.length || [home isEqual:[NSHomeDirectory() stringByAppendingPathComponent:@".codex"]] ||
+               ![NSFileManager.defaultManager fileExistsAtPath:[home stringByAppendingPathComponent:@"protection-test-fixture"]]) {
+                fprintf(stderr,"Protection self-test requires an isolated fixture.\n"); return 2;
+            }
+        }
+        delegate.protectionMode=[arguments containsObject:@"--protection"] || delegate.protectionSelfTest;
+        if(delegate.protectionSelfTest) app.appearance=[NSAppearance appearanceNamed:
+            [NSProcessInfo.processInfo.environment[@"CODEX_PULSE_TEST_APPEARANCE"] isEqual:@"dark"] ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua];
         if (delegate.settingsSelfTest) app.appearance = [NSAppearance appearanceNamed:
             [NSProcessInfo.processInfo.environment[@"CODEX_PULSE_TEST_APPEARANCE"] isEqual:@"dark"] ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua];
         delegate.previewSelfTest = [arguments containsObject:@"--preview-self-test"];

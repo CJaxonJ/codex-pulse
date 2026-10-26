@@ -53,6 +53,7 @@ execFileSync("/usr/bin/xcrun", [
   "clang",
   sourcePath,
   path.join(projectDir, "native", "PulseSettingsWindow.m"),
+  path.join(projectDir, "native", "PulseProtectionWindow.m"),
   "-fobjc-arc",
   "-o",
   buildExecutable,

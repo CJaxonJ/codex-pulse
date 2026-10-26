@@ -12,11 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import {
-  hookReviewMessage,
-  openHookReview,
-  restartCodex,
-} from "../src/hook-review-onboarding.mjs";
+import {openProtectionOnboarding} from "../src/protection-onboarding.mjs";
 
 const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const homeDir = os.homedir();
@@ -28,7 +24,6 @@ const monitorPath = path.join(runtimeDir, "bin", "codex-pulse.mjs");
 const nodePath = process.execPath;
 const desktopCodex =
   "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex";
-const chatgptApp = "/Applications/ChatGPT.app";
 const uid = process.getuid();
 const service = `gui/${uid}/com.cjaxonj.codex-pulse`;
 
@@ -148,23 +143,6 @@ execFileSync(nodePath, [monitorPath, "doctor"], {
   stdio: "inherit",
 });
 
-const hookReview = openHookReview({ codexPath });
-if (hookReview.reason === "already_trusted") {
-  console.log("\nCodex Pulse Hooks 已由 Codex 信任，无需重复打开 CLI。\n");
-} else if (!hookReview.launched) {
-  console.log(`\n${hookReviewMessage()}\n`);
-} else if (hookReview.reason !== "completed") {
-  console.log(
-    "\nCodex CLI 已打开，但安装程序没有确认你已退出。为避免误重启，本次不会继续重启 Codex。\n",
-  );
-  console.log(`${hookReviewMessage()}\n`);
-} else {
-  const restart = restartCodex({ chatgptInstalled: existsSync(chatgptApp) });
-  if (restart.restarted) {
-    console.log("\nCodex 已重新打开。Hook 会在新会话中开始工作。\n");
-  } else if (restart.reason === "desktop_unavailable") {
-    console.log("\nCodex CLI 已关闭。下次重新打开 Codex CLI 后，Hook 会开始工作。\n");
-  } else {
-    console.log("\nCodex CLI 已关闭。请在方便时彻底退出并重新打开 Codex。\n");
-  }
-}
+const onboarding=openProtectionOnboarding({env:{...process.env,CODEX_BINARY:codexPath}});
+if(!onboarding.opened) console.log("\n提醒已安装。方便时打开 Codex Pulse → 保护授权 → 开启自动保护。\n");
+else console.log("\n可在 Codex Pulse → 保护授权中核对状态；新授权在重新打开 Codex 后使用。\n");

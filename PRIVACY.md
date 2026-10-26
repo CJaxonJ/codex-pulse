@@ -35,6 +35,14 @@ Plan preview reads local checkpoint text on demand. It makes no model request
 and does not start or modify a task. Its CLI output may contain private project
 information and is not a public support report.
 
+The protection-consent window reads current local Hook metadata. An unconfirmed
+review stores only a random review id, timestamp and definition/file fingerprint
+under `protection-review/`, with private file permissions. Reviews expire after
+15 minutes; cancelling does not write Codex trust. After an explicit click,
+Pulse writes only its own reviewed Hook hashes and enabled state through Codex's
+configuration interface and verifies the official trust result. It does not grant
+trust to other plugins, enable reset-credit redemption or expand sandbox access.
+
 Prompt text may be inspected in memory to estimate task size, but the original
 prompt is not written to Codex Pulse history. Checkpoint summaries can repeat
 context the assistant included in its final response, so users should treat the

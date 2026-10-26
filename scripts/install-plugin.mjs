@@ -122,8 +122,8 @@ console.log(
       reusedExistingInstall,
       hookTrustRequired: true,
       nextSteps: [
-        "Open a fresh Codex CLI, run /hooks, inspect the Codex Pulse commands, and trust them only if the paths stay inside the installed plugin.",
-        "After trust is complete, restart the Codex desktop app so it reloads the installed plugin.",
+        "Open Codex Pulse → 保护授权 and personally confirm 开启自动保护 in the native window.",
+        "After Codex confirms trust, reopen Codex when convenient so new sessions load it. Restarting stops active tasks; Pulse does not do it automatically.",
       ],
     },
     null,

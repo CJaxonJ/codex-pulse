@@ -30,6 +30,12 @@ default and requires explicit consent bound to the current personal account.
 
 ## Download
 
+The working tree contains the **0.9.18 candidate** with native one-click protection
+consent. It is not published yet. The public download below is 0.9.17; use its
+[versioned installation guide](https://github.com/CJaxonJ/codex-pulse/blob/v0.9.17/开始使用.md)
+for that release. The candidate changes the setup flow described below, not the
+already-uploaded archive.
+
 **[Download v0.9.17 for macOS](https://github.com/CJaxonJ/codex-pulse/releases/download/v0.9.17/Codex-Pulse-0.9.17-macOS.zip)** ·
 **[中文三步安装](./开始使用.md)** ·
 [Release notes](./docs/releases/v0.9.17.md)
@@ -141,16 +147,18 @@ copies its runtime to `~/Library/Application Support/Codex Pulse/app`, installs 
 login agent, and installs the local Codex Pulse plugin from a stable local
 marketplace. The extracted folder can then be deleted.
 
-At the end of an interactive installation, a native guide explains that the
-review flow will restart Codex and stop active work; finish tasks first, or
-choose Later. It opens Codex CLI in a foreground Terminal window. Run `/hooks`,
-inspect the Codex Pulse commands, and press `t` only when their paths stay inside
-the installed plugin. Once official trust is observed, the installer closes
-only its own review CLI and restarts ChatGPT without a second confirmation.
-Already-trusted Hooks skip repeated review. If review was deferred or restart
-failed, reopen Codex manually when convenient. `/hooks` is not a command in the
-desktop chat composer. Non-interactive installs print guidance but do not launch
-CLI or restart the app. Codex requires personal review; Pulse never bypasses it.
+In the 0.9.18 candidate, interactive installation opens a native “开启自动保护”
+window. Purpose and limits come first; exact commands and definition hashes
+are available in optional details. Only an explicit user confirmation submits
+the reviewed definitions through Codex's version-checked configuration interface.
+Pulse verifies the actual trust result before showing success; changed definitions
+need a new review. Cancelling leaves trust untouched. There is no CLI launch or
+synthetic trust keypress. Authorization applies to new sessions; the user may
+choose a restart when convenient, with a clear warning that active tasks stop.
+Non-interactive installation grants nothing and points to the app's “保护授权”
+entry. This is a Pulse-owned consent window, not an OpenAI system dialog. The
+underlying configuration contract is checked against the installed Codex; an
+incompatible version fails visibly rather than pretending authorization worked.
 
 Once trusted, normal Codex chats get automatic guidance:
 
