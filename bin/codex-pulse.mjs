@@ -240,6 +240,7 @@ async function runDoctor() {
 
   const local = inspectLocalInstallation({
     homeDir: os.homedir(),
+    codexHome: process.env.CODEX_HOME || path.join(os.homedir(), ".codex"),
     uid: process.getuid?.() ?? 0,
     expectedVersion: packageManifest.version,
     compatiblePluginVersions:
@@ -262,8 +263,8 @@ async function runDoctor() {
         nextStep: !ok
           ? "Re-run node scripts/install-macos.mjs, then run doctor again. If it still fails, share this report with the developer."
           : hookObserved
-            ? "Codex Pulse is installed and its current hook has executed. No setup action is required."
-            : "Restart Codex, open Codex CLI in a terminal, run /hooks, inspect the Codex Pulse commands, and trust them if their paths remain inside the installed plugin. /hooks is not a desktop composer command.",
+            ? "Codex Pulse is installed and a Hook execution was observed. If protection seems inactive, check current trust through Codex Pulse → 保护授权."
+            : "Open Codex Pulse → 保护授权, personally review and confirm the definitions, then reopen Codex when convenient. New sessions load the authorization; no CLI trust keypress is required.",
       },
       null,
       2,

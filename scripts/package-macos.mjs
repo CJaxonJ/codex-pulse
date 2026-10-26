@@ -39,6 +39,7 @@ for (const entry of [
   "build-notifier-macos.mjs",
   "install-macos.mjs",
   "install-plugin.mjs",
+  "installation-transaction.mjs",
   "setup-notifications-macos.mjs",
   "update-runtime-macos.mjs",
   "uninstall-macos.mjs",
@@ -54,6 +55,9 @@ for (const entry of [
   "LICENSE",
   "PRIVACY.md",
   "SECURITY.md",
+  "SUPPORT.md",
+  "CONTRIBUTING.md",
+  "CODE_OF_CONDUCT.md",
   "开始使用.md",
   "安装 Codex Pulse.command",
   "package.json",
@@ -65,6 +69,14 @@ cpSync(
   path.join(stagingDir, "Install Codex Pulse.command"),
 );
 mkdirSync(path.join(stagingDir, "docs", "releases"), { recursive: true });
+cpSync(
+  path.join(projectDir, "docs", "technical-guide.md"),
+  path.join(stagingDir, "docs", "technical-guide.md"),
+);
+cpSync(
+  path.join(projectDir, "docs", "public-disclosure.md"),
+  path.join(stagingDir, "docs", "public-disclosure.md"),
+);
 cpSync(
   path.join(projectDir, "docs", "releases", `v${pkg.version}.md`),
   path.join(stagingDir, "docs", "releases", `v${pkg.version}.md`),

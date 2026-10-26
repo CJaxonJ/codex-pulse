@@ -19,6 +19,6 @@ fi
 CODEX_PULSE_INTERACTIVE_INSTALL=1 node scripts/install-macos.mjs
 
 echo ""
-echo "安装流程已结束。若你刚才选择了‘稍后’，请重新运行安装程序完成 Hook 信任。"
+echo "安装流程已结束。若选择了‘稍后开启’，可打开 Codex Pulse → 保护授权继续，不需要重装。"
 echo ""
 read -r "?按回车键关闭窗口。"

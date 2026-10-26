@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, renameSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -96,6 +96,16 @@ test("doctor reports an observed current hook as active", () => {
     result.checks.find((item) => item.id === "hook-trust").detail,
     /Hook 已执行/,
   );
+});
+
+test("doctor honors an explicit Codex home and directs first-run review to the native window",()=>{
+  const homeDir=createInstalledFixture(), codexHome=path.join(homeDir,"alternate-codex");
+  renameSync(path.join(homeDir,".codex"),codexHome);
+  const result=inspectLocalInstallation({homeDir,codexHome,uid:501,expectedVersion:"0.9.0",run:()=>"loaded"});
+  assert.equal(result.ok,true);
+  const detail=result.checks.find(c=>c.id==="hook-trust").detail;
+  assert.match(detail,/保护授权/);assert.doesNotMatch(detail,/\/hooks/);
+  assert.equal(JSON.stringify(result).includes(codexHome),false);
 });
 
 test("a runtime-only release accepts an explicitly compatible trusted plugin", () => {
