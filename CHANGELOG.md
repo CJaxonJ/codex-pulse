@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.9.19 — 2026-10-26
+
+- Stage and verify the native App before replacing an existing installation.
+  Installation and runtime-only updates roll back both App and runtime on
+  failed startup/diagnostics; an unknown service state blocks file replacement.
+- Share a durable installation lock across install, update and uninstall.
+  Preserve unresolved backups from interrupted upgrades instead of overwriting them.
+- Retain compatible reviewed plugins unchanged. Different, disabled or
+  incompatible existing definitions stop preflight without removing old trust.
+  Uninstall removes the owned plugin, App and service while retaining user history.
+- Simplify native settings and consent views, enlarge quota values, add measured
+  quota bars, and distinguish stale/unknown samples. Diagnostic guidance now
+  points to the native protection window, including custom Codex homes.
+- Replace the long README with a short Chinese download/start page, keeping
+  advanced implementation details in a separate technical guide.
+- Add installer fault-injection tests, isolated real Codex plugin operations,
+  and a uniquely named real launchd swap/rollback gate. Revalidate registered-Hook
+  recovery with and without an initial Goal, disconnected transport, replacement
+  watcher, actual model-written output and duplicate-wake rejection.
+- Quota changes in recovery acceptance are synthetic. Full fresh-Mac onboarding,
+  reloading an already-open Desktop thread, and physical sleep remain separate
+  checks; this release does not claim universal unattended recovery.
+
 ## 0.9.18 — 2026-10-26
 
 - Fixed white-matted icon corners with a transparent, more spacious rounded
