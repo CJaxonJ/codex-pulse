@@ -1,10 +1,10 @@
 {
   "name": "codex-pulse",
-  "version": "0.9.16",
+  "version": "0.9.17",
   "private": true,
   "license": "MIT",
   "codexPulse": {
-    "compatiblePluginVersions": ["0.9.16"]
+    "compatiblePluginVersions": ["0.9.17"]
   },
   "engines": {
     "node": ">=20"
@@ -27,6 +27,7 @@
     "e2e:managed": "node scripts/e2e-managed-task.mjs",
     "e2e:chat": "node scripts/e2e-chat-continuity-simulated.mjs",
     "e2e:chat-resilience": "node scripts/e2e-chat-recovery-resilience.mjs",
+    "e2e:chat:sandbox": "node scripts/e2e-isolated-native-wakeup.mjs",
     "e2e:notifier": "node scripts/e2e-notifier-persistent-macos.mjs",
     "test": "node --test"
   }

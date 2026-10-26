@@ -52,6 +52,7 @@ writeFileSync(
 execFileSync("/usr/bin/xcrun", [
   "clang",
   sourcePath,
+  path.join(projectDir, "native", "PulseSettingsWindow.m"),
   "-fobjc-arc",
   "-o",
   buildExecutable,
@@ -67,6 +68,10 @@ execFileSync("/usr/bin/xcrun", [
 });
 execFileSync("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", buildDir]);
 
+if (process.argv.includes("--no-install")) {
+  console.log(JSON.stringify({ ok: true, buildDir, installed: false }, null, 2));
+  process.exit(0);
+}
 mkdirSync(installDir, { recursive: true });
 rmSync(installedApp, { recursive: true, force: true });
 cpSync(buildDir, installedApp, { recursive: true });

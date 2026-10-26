@@ -25,6 +25,22 @@ async function writeFiles(cwd, count) {
   }
 }
 
+test("snapshot and recovery verification enforce a total subprocess time budget", async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), "pulse-bounded-scan-"));
+  await writeFile(path.join(cwd, "work.txt"), "unchanged");
+  const inspector = new WorkspaceInspector();
+  const snapshot = await inspector.snapshot(cwd, { timeoutMs: 2000 });
+  assert.ok(snapshot?.digest);
+  assert.equal((await inspector.compareSnapshot(cwd, snapshot, { timeoutMs: 2000 })).same, true);
+  const started = Date.now();
+  assert.equal(await inspector.snapshot(cwd, { timeoutMs: 1 }), null);
+  assert.ok(Date.now() - started < 1500, "worker exceeded the total deadline");
+  assert.equal(inspector.failureDiagnostic().failures[0].reason, "fingerprint_timeout");
+  const comparison = await inspector.compareSnapshot(cwd, snapshot, { timeoutMs: 1 });
+  assert.equal(comparison.verifiable, false);
+  assert.equal(comparison.same, false);
+});
+
 test("workspace fingerprint changes when untracked file content changes", async () => {
   const cwd = await mkdtemp(path.join(os.tmpdir(), "codex-pulse-workspace-"));
   await writeFile(path.join(cwd, "tracked.txt"), "baseline\n");

@@ -1,5 +1,6 @@
 #import <Cocoa/Cocoa.h>
 #import <UserNotifications/UserNotifications.h>
+#import "PulseSettingsWindow.h"
 
 @interface CodexPulseDelegate : NSObject <NSApplicationDelegate, UNUserNotificationCenterDelegate>
 @property(nonatomic, copy) NSString *notificationTitle;
@@ -10,9 +11,36 @@
 @property(nonatomic, assign) BOOL persistentMode;
 @property(nonatomic, assign) BOOL persistentSelfTestMode;
 @property(nonatomic, assign) BOOL persistentSelfTestPassed;
+@property(nonatomic, assign) BOOL previewMode;
+@property(nonatomic, assign) BOOL previewAction;
+@property(nonatomic, assign) BOOL previewSelfTest;
+@property(nonatomic, copy) NSString *severity;
+@property(nonatomic, strong) PulseSettingsWindow *settingsWindow;
+@property(nonatomic, assign) BOOL settingsSelfTest;
+@property(nonatomic, assign) BOOL silent;
 @end
 
 @implementation CodexPulseDelegate
+
+- (NSString *)dataDirectory {
+    NSString *override = NSProcessInfo.processInfo.environment[@"CODEX_PULSE_DATA_DIR"];
+    return override.length ? override : [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/Codex Pulse"];
+}
+
+- (NSString *)severityLabel:(NSString *)severity {
+    if ([severity isEqual:@"critical"]) return @"● 重要 · 立即关注";
+    if ([severity isEqual:@"warning"]) return @"▲ 注意 · 提前准备";
+    return @"● 信息";
+}
+
+- (NSTextField *)severityBadge:(NSString *)severity {
+    NSTextField *badge = [NSTextField labelWithString:[self severityLabel:severity]];
+    badge.font = [NSFont boldSystemFontOfSize:13];
+    badge.textColor = [severity isEqual:@"critical"] ? NSColor.systemRedColor
+        : [severity isEqual:@"warning"] ? NSColor.systemOrangeColor : NSColor.secondaryLabelColor;
+    [badge sizeToFit];
+    return badge;
+}
 
 - (void)writeLog:(NSString *)message {
     NSURL *home = [NSURL fileURLWithPath:NSHomeDirectory()];
@@ -39,7 +67,7 @@
 - (void)finishAfterDelay {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
-        [NSApp terminate:nil];
+        if (!self.settingsWindow) [NSApp terminate:nil];
     });
 }
 
@@ -63,8 +91,9 @@
         NSAlert *alert = [[NSAlert alloc] init];
         alert.messageText = self.notificationTitle;
         alert.informativeText = self.notificationBody;
+        alert.accessoryView = [self severityBadge:self.severity];
         [alert addButtonWithTitle:@"知道了"];
-        [alert addButtonWithTitle:@"查看状态"];
+        [alert addButtonWithTitle:self.previewAction ? @"查看续跑计划" : @"查看状态"];
         alert.window.level = NSFloatingWindowLevel;
         alert.window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
                                           NSWindowCollectionBehaviorTransient;
@@ -80,6 +109,12 @@
                 // still on screen. Testing visibility directly matches the promise
                 // and avoids a focus-dependent false negative.
                 self.persistentSelfTestPassed = alert.window.isVisible;
+                NSTextField *badge = (NSTextField *)alert.accessoryView;
+                if ([self.severity isEqual:@"critical"]) {
+                    self.persistentSelfTestPassed = self.persistentSelfTestPassed
+                        && [badge.textColor isEqual:NSColor.systemRedColor]
+                        && [badge.stringValue containsString:@"重要"];
+                }
                 [self writeLog:self.persistentSelfTestPassed
                     ? @"persistent self-test passed: alert remained visible for 3 seconds"
                     : @"persistent self-test failed: alert was not visible after 3 seconds"];
@@ -90,15 +125,15 @@
         }
         NSModalResponse response = [alert runModal];
         if (self.persistentSelfTestMode) {
-            printf("{\"ok\":%s,\"visibleForSeconds\":3}\n",
-                   self.persistentSelfTestPassed ? "true" : "false");
+            printf("{\"ok\":%s,\"visibleForSeconds\":3,\"severity\":\"%s\"}\n",
+                   self.persistentSelfTestPassed ? "true" : "false", self.severity.UTF8String);
             fflush(stdout);
             [NSApp terminate:nil];
             return;
         }
         [self writeLog:[NSString stringWithFormat:@"persistent alert dismissed: %@", self.notificationTitle]];
         if (response == NSAlertSecondButtonReturn) {
-            [self showStatusPanel];
+            if (self.previewAction) [self showPlanPreview]; else [self showStatusPanel];
         } else {
             [NSApp terminate:nil];
         }
@@ -112,10 +147,7 @@
 }
 
 - (NSDictionary *)readJSON:(NSString *)name {
-    NSURL *home = [NSURL fileURLWithPath:NSHomeDirectory()];
-    NSURL *directory = [[[home URLByAppendingPathComponent:@"Library"]
-        URLByAppendingPathComponent:@"Application Support"]
-        URLByAppendingPathComponent:@"Codex Pulse"];
+    NSURL *directory = [NSURL fileURLWithPath:[self dataDirectory]];
     NSURL *file = [directory URLByAppendingPathComponent:name];
     NSData *data = [NSData dataWithContentsOfURL:file];
     if (!data) return @{};
@@ -131,62 +163,122 @@
     return [formatter stringFromDate:[NSDate dateWithTimeIntervalSince1970:timestamp.doubleValue]];
 }
 
-- (void)showStatusPanel {
-    NSDictionary *state = [self readJSON:@"state.json"];
-    NSDictionary *summary = [state[@"lastSummary"] isKindOfClass:[NSDictionary class]]
-        ? state[@"lastSummary"] : @{};
-    NSDictionary *fiveHour = [summary[@"fiveHour"] isKindOfClass:[NSDictionary class]]
-        ? summary[@"fiveHour"] : @{};
-    NSDictionary *preferences = [self readJSON:@"preferences.json"];
-    NSDictionary *journal = [self readJSON:@"user-events.json"];
-    NSArray *events = [journal[@"events"] isKindOfClass:[NSArray class]]
-        ? journal[@"events"] : @[];
-    NSDictionary *latest = [events.lastObject isKindOfClass:[NSDictionary class]]
-        ? events.lastObject : @{};
+- (void)runLocalCommand:(NSArray<NSString *> *)command completion:(void (^)(NSDictionary *))completion {
+    // Pass an argument array to our installed Node runtime, never a shell.
+    // Keep subprocess work off the Cocoa main thread.
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSString *plist = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/LaunchAgents/com.cjaxonj.codex-pulse.plist"];
+        NSArray *args = [NSDictionary dictionaryWithContentsOfFile:plist][@"ProgramArguments"];
+        NSString *node = args.count > 0 ? args[0] : nil;
+        NSString *cli = [[self dataDirectory] stringByAppendingPathComponent:@"app/bin/codex-pulse.mjs"];
+        if (self.previewSelfTest || self.settingsSelfTest) {
+            node = NSProcessInfo.processInfo.environment[@"CODEX_PULSE_TEST_NODE"];
+            cli = NSProcessInfo.processInfo.environment[@"CODEX_PULSE_TEST_CLI"];
+        }
+        NSDictionary *preview = nil;
+        if (node.length && cli.length) {
+            NSTask *task = [[NSTask alloc] init];
+            task.executableURL = [NSURL fileURLWithPath:node];
+            task.arguments = [@[cli] arrayByAddingObjectsFromArray:command];
+            task.environment = NSProcessInfo.processInfo.environment;
+            NSPipe *output = [NSPipe pipe];
+            NSPipe *errors = [NSPipe pipe];
+            task.standardOutput = output;
+            task.standardError = errors;
+            if ([task launchAndReturnError:nil]) {
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 25 * NSEC_PER_SEC), dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+                    if (task.running) [task terminate];
+                });
+                NSData *data = [output.fileHandleForReading readDataToEndOfFile];
+                NSData *errorData = [errors.fileHandleForReading readDataToEndOfFile];
+                [task waitUntilExit];
+                if (task.terminationStatus != 0) data = errorData;
+                id parsed = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+                if ([parsed isKindOfClass:[NSDictionary class]]) preview = parsed;
+            }
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{ completion(preview); });
+    });
+}
 
-    NSNumber *remaining = fiveHour[@"remainingPercent"];
-    NSString *remainingText = [remaining isKindOfClass:[NSNumber class]]
-        ? [NSString stringWithFormat:@"%.0f%%", remaining.doubleValue]
-        : @"暂未读到";
-    NSString *resetText = [self formatUnixTime:fiveHour[@"resetsAt"]];
-    NSString *policy = [preferences[@"quotaPolicy"] isKindOfClass:[NSString class]]
-        ? preferences[@"quotaPolicy"] : @"strict_reserve";
-    NSDictionary *policyNames = @{
-        @"strict_reserve": @"10% 自动暂停并保存检查点",
-        @"finish_current": @"优先完成当前结果",
-        @"deadline": @"截止日期模式"
-    };
-    NSString *policyText = policyNames[policy] ?: policy;
+- (void)showPlanPreview {
+    // Preview never invokes Codex, a model, or a Goal mutation.
+    [self runLocalCommand:@[@"preview"] completion:^(NSDictionary *preview) { [self presentPlanPreview:preview]; }];
+}
 
-    NSString *eventText = @"还没有关键事件";
-    if (latest.count > 0) {
-        NSString *title = [latest[@"title"] isKindOfClass:[NSString class]]
-            ? latest[@"title"] : @"Codex Pulse";
-        NSString *body = [latest[@"body"] isKindOfClass:[NSString class]]
-            ? latest[@"body"] : @"";
-        if (body.length > 240) body = [[body substringToIndex:240] stringByAppendingString:@"…"];
-        NSString *delivery = [latest[@"deliveryStatus"] isEqual:@"failed"]
-            ? @"（系统通知发送失败，但事件已记录）" : @"";
-        eventText = [NSString stringWithFormat:@"%@%@\n%@\n%@",
-            title, delivery, body, [self formatUnixTime:latest[@"occurredAt"]]];
+- (void)presentPlanPreview:(NSDictionary *)preview {
+    if (![preview[@"readOnly"] boolValue] || ![preview[@"tasks"] isKindOfClass:[NSArray class]]) preview = nil;
+    NSArray *tasks = [preview[@"tasks"] isKindOfClass:[NSArray class]] ? preview[@"tasks"] : @[];
+    NSMutableString *text = [NSMutableString string];
+    if (!preview) [text appendString:@"暂时无法读取本机计划。请确认 Codex Pulse 已安装，再点击刷新。\n不会因此启动任何任务。"];
+    else if (!tasks.count) [text appendString:@"当前没有待续跑的任务。\n到达保护线并保存检查点后，计划会显示在这里。"];
+    for (NSDictionary *task in tasks) {
+        if (text.length) [text appendString:@"\n\n────────────────────────\n\n"];
+        NSDictionary *restart = task[@"restart"], *duration = task[@"duration"];
+        NSString *time = restart[@"earliestAt"] ? [NSString stringWithFormat:@"最早额度恢复：%@\n", [self formatUnixTime:restart[@"earliestAt"]]] : @"";
+        NSString *estimate = [duration[@"minMinutes"] isKindOfClass:[NSNumber class]]
+          ? [NSString stringWithFormat:@"%@–%@ 分钟（低置信度）\n%@", duration[@"minMinutes"], duration[@"maxMinutes"], duration[@"source"]] : duration[@"source"];
+        [text appendFormat:@"任务：%@\n状态：%@\n\n已完成\n%@\n\n剩余工作\n%@\n\n下一步\n%@\n\n启动时间\n%@%@\n\n剩余耗时\n%@\n\n需要注意\n%@\n\n检查点更新：%@",
+          task[@"objective"], task[@"statusText"], task[@"completed"], task[@"remaining"], task[@"nextAction"], time, restart[@"text"], estimate, task[@"blockers"], [self formatUnixTime:task[@"updatedAt"]]];
     }
-
     NSAlert *alert = [[NSAlert alloc] init];
-    alert.messageText = @"Codex Pulse 状态";
-    alert.informativeText = [NSString stringWithFormat:
-        @"5 小时额度：%@\n预计恢复：%@\n保护策略：%@\n\n最近事件\n%@",
-        remainingText, resetText, policyText, eventText];
+    alert.messageText = @"续跑计划";
+    alert.informativeText = @"只读本机检查点，不启动任务，不额外消耗额度。";
+    NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 580, 380)];
+    scroll.hasVerticalScroller = YES;
+    NSTextView *view = [[NSTextView alloc] initWithFrame:scroll.bounds];
+    view.editable = NO;
+    view.selectable = YES;
+    view.font = [NSFont systemFontOfSize:13];
+    view.textContainerInset = NSMakeSize(12, 12);
+    view.verticallyResizable = YES;
+    view.autoresizingMask = NSViewWidthSizable;
+    view.textContainer.widthTracksTextView = YES;
+    view.string = text;
+    scroll.documentView = view;
+    alert.accessoryView = scroll;
     [alert addButtonWithTitle:@"关闭"];
-    [alert addButtonWithTitle:@"通知设置"];
+    [alert addButtonWithTitle:@"刷新"];
+    [alert addButtonWithTitle:@"查看状态"];
     [NSApp activateIgnoringOtherApps:YES];
-    if ([alert runModal] == NSAlertSecondButtonReturn) {
-        NSURL *url = [NSURL URLWithString:@"x-apple.systempreferences:com.apple.Notifications-Settings.extension"];
-        [[NSWorkspace sharedWorkspace] openURL:url];
+    if (self.previewSelfTest) {
+        NSTimer *timer = [NSTimer timerWithTimeInterval:2 repeats:NO block:^(NSTimer *timer) {
+            BOOL ok = alert.window.isVisible && tasks.count == 2 && [view.string containsString:@"预览隔离任务"];
+            NSString *capture = NSProcessInfo.processInfo.environment[@"CODEX_PULSE_TEST_CAPTURE"];
+            if (capture.length) {
+                NSView *content = alert.window.contentView;
+                NSBitmapImageRep *bitmap = [content bitmapImageRepForCachingDisplayInRect:content.bounds];
+                [content cacheDisplayInRect:content.bounds toBitmapImageRep:bitmap];
+                [[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:capture atomically:YES];
+            }
+            printf("{\"ok\":%s,\"tasks\":%lu,\"readOnly\":true}\n", ok ? "true" : "false", (unsigned long)tasks.count);
+            fflush(stdout);
+            [NSApp abortModal];
+        }];
+        [[NSRunLoop mainRunLoop] addTimer:timer forMode:NSModalPanelRunLoopMode];
     }
-    [NSApp terminate:nil];
+    NSModalResponse response = [alert runModal];
+    [alert.window orderOut:nil];
+    if (!self.previewSelfTest && response == NSAlertSecondButtonReturn) [self showPlanPreview];
+    else if (!self.previewSelfTest && response == NSAlertThirdButtonReturn) [self showStatusPanel];
+    else if (!self.settingsWindow) [NSApp terminate:nil];
+}
+
+- (void)showStatusPanel {
+    if (!self.settingsWindow) {
+        __weak CodexPulseDelegate *weakSelf = self;
+        self.settingsWindow = [[PulseSettingsWindow alloc] initWithDataDirectory:[self dataDirectory]
+            commandRunner:^(NSArray<NSString *> *arguments, void (^completion)(NSDictionary *)) {
+                [weakSelf runLocalCommand:arguments completion:completion];
+            } previewAction:^{ [weakSelf showPlanPreview]; }];
+        if (self.settingsSelfTest) [self.settingsWindow runIsolatedSelfTest];
+        [self.settingsWindow open];
+    } else [self.settingsWindow showWindow:nil];
+    [NSApp activateIgnoringOtherApps:YES];
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
+    if (self.previewMode) { [self showPlanPreview]; return; }
     if (self.persistentSelfTestMode) {
         [self showPersistentAlert];
         return;
@@ -244,7 +336,8 @@
         UNMutableNotificationContent *content = [[UNMutableNotificationContent alloc] init];
         content.title = self.notificationTitle;
         content.body = self.notificationBody;
-        content.sound = [UNNotificationSound defaultSound];
+        content.subtitle = [self severityLabel:self.severity];
+        if (!self.silent) content.sound = [UNNotificationSound defaultSound];
         if (self.timeSensitive) {
             if (@available(macOS 12.0, *)) {
                 content.interruptionLevel = UNNotificationInterruptionLevelTimeSensitive;
@@ -265,6 +358,11 @@
     }];
 }
 
+- (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)flag {
+    if (!NSApp.modalWindow) [self showStatusPanel];
+    return YES;
+}
+
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center
         didReceiveNotificationResponse:(UNNotificationResponse *)response
                  withCompletionHandler:(void (^)(void))completionHandler {
@@ -275,7 +373,7 @@
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center
        willPresentNotification:(UNNotification *)notification
          withCompletionHandler:(void (^)(UNNotificationPresentationOptions options))completionHandler {
-    completionHandler(UNNotificationPresentationOptionBanner | UNNotificationPresentationOptionSound);
+    completionHandler(UNNotificationPresentationOptionBanner | (self.silent ? 0 : UNNotificationPresentationOptionSound));
 }
 
 @end
@@ -292,7 +390,16 @@ int main(int argc, const char * argv[]) {
         delegate.timeSensitive = [arguments containsObject:@"--time-sensitive"];
         delegate.persistentSelfTestMode = [arguments containsObject:@"--persistent-self-test"];
         delegate.persistentMode = [arguments containsObject:@"--persistent"] || delegate.persistentSelfTestMode;
-        delegate.statusMode = arguments.count == 1 || [arguments containsObject:@"--status"];
+        delegate.settingsSelfTest = [arguments containsObject:@"--settings-self-test"];
+        delegate.statusMode = arguments.count == 1 || [arguments containsObject:@"--status"] || [arguments containsObject:@"--settings"] || delegate.settingsSelfTest;
+        delegate.silent = [arguments containsObject:@"--silent"];
+        if (delegate.settingsSelfTest) app.appearance = [NSAppearance appearanceNamed:
+            [NSProcessInfo.processInfo.environment[@"CODEX_PULSE_TEST_APPEARANCE"] isEqual:@"dark"] ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua];
+        delegate.previewSelfTest = [arguments containsObject:@"--preview-self-test"];
+        delegate.previewMode = [arguments containsObject:@"--preview"] || delegate.previewSelfTest;
+        delegate.previewAction = [arguments containsObject:@"--preview-action"];
+        NSUInteger severityIndex = [arguments indexOfObject:@"--severity"];
+        delegate.severity = severityIndex != NSNotFound && severityIndex + 1 < arguments.count ? arguments[severityIndex + 1] : @"info";
         delegate.notificationTitle = title;
         delegate.notificationBody = body;
         if (delegate.persistentMode) {

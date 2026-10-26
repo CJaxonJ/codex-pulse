@@ -7,7 +7,7 @@ export const DEFAULT_CONFIG = {
   sampleWindowMinutes: 15,
 };
 
-export const DEFAULT_CREDIT_EXPIRY_THRESHOLDS = [24, 6, 1];
+export const DEFAULT_CREDIT_EXPIRY_THRESHOLDS = [24, 6, 1, 1 / 6];
 
 export function summarizeRateLimits(result) {
   const buckets = result.rateLimitsByLimitId || {};
@@ -98,6 +98,8 @@ export function evaluateFiveHourSample(previousState, summary, options = {}) {
   }
 
   const previous = previousState || {};
+  const thresholdSignature = [...config.thresholds].sort((a, b) => b - a).join(",");
+  const thresholdChanged = previous.thresholdSignature != null && previous.thresholdSignature !== thresholdSignature;
   const isNewWindow = previous.windowKey && previous.windowKey !== window.resetsAt;
   const notifiedThresholds = isNewWindow ? [] : [...(previous.notifiedThresholds || [])];
   const samples = isNewWindow ? [] : [...(previous.samples || [])];
@@ -125,7 +127,7 @@ export function evaluateFiveHourSample(previousState, summary, options = {}) {
   const detectedReset = events.find((event) => event.type === "reset") || null;
 
   const crossed =
-    previous.lastRemainingPercent == null
+    previous.lastRemainingPercent == null || thresholdChanged
       ? startupThreshold(window.remainingPercent, config.thresholds)
       : closestCrossedThreshold(
           previous.lastRemainingPercent,
@@ -169,6 +171,7 @@ export function evaluateFiveHourSample(previousState, summary, options = {}) {
       windowKey: window.resetsAt,
       lastCheckedAt: now,
       lastRemainingPercent: window.remainingPercent,
+      thresholdSignature,
       notifiedThresholds,
       forecastAlreadySent: nextForecastAlreadySent,
       samples: trimmedSamples,
@@ -200,7 +203,7 @@ export function evaluateResetCredits(previousState, summary, options = {}) {
     const hoursRemaining = (expiresAt - now) / 3600;
     if (hoursRemaining <= 0) continue;
     const alreadySent = [...(previousNotified[key] || [])];
-    const eligible = thresholds.filter((threshold) => hoursRemaining <= threshold);
+    const eligible = thresholds.filter((threshold) => threshold === 1 / 6 ? hoursRemaining < threshold : hoursRemaining <= threshold);
     const nextThreshold = eligible.length ? Math.min(...eligible) : null;
     if (nextThreshold != null && !alreadySent.includes(nextThreshold)) {
       alreadySent.push(nextThreshold);

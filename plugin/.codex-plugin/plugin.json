@@ -1,6 +1,6 @@
 {
   "name": "codex-pulse",
-  "version": "0.9.16",
+  "version": "0.9.17",
   "description": "Quota-aware guidance for ordinary Codex chats, backed by the user's local Codex Pulse monitor.",
   "author": {
     "name": "CJaxonJ",
@@ -9,6 +9,7 @@
   "homepage": "https://github.com/CJaxonJ/codex-pulse",
   "repository": "https://github.com/CJaxonJ/codex-pulse",
   "license": "MIT",
+  "requires_local_executor": true,
   "keywords": ["codex", "quota", "usage", "productivity"],
   "skills": "./skills/",
   "hooks": {
@@ -83,7 +84,7 @@
             {
               "type": "command",
               "command": "/usr/bin/env node \"$PLUGIN_ROOT/scripts/pulse-hook.mjs\"",
-              "timeout": 15
+              "timeout": 3
             }
           ]
         }
@@ -92,13 +93,13 @@
   },
   "interface": {
     "displayName": "Codex Pulse",
-    "shortDescription": "Use Codex quota on the work that matters.",
-    "longDescription": "Adds local, quota-aware guidance and selectable finish-current, strict-reserve, or deadline policies to ordinary Codex chats. It never uploads prompts, auto-approves permissions, or redeems reset credits.",
+    "shortDescription": "Quota alerts and safe recovery",
+    "longDescription": "Local macOS quota alerts, saved continuation previews and safe recovery for Codex chats. Requires the separate Codex Pulse runtime and personally reviewed Hooks. Optional expiring-credit redemption is off by default and requires explicit personal-account consent. Never uploads prompts or auto-approves permissions. This local Hook plugin is not the public-directory skills package.",
     "developerName": "CJaxonJ",
     "category": "Developer Tools",
-    "capabilities": ["Read"],
-    "brandColor": "#008DBB",
-    "brandColorDark": "#2CC8F5",
+    "capabilities": ["Read", "Write"],
+    "brandColor": "#2E8477",
+    "brandColorDark": "#67B7A8",
     "logo": "./assets/logo.svg",
     "logoDark": "./assets/logo-dark.svg",
     "composerIcon": "./assets/composer-icon.svg",

@@ -52,6 +52,7 @@ export class UserEventJournal {
       body: String(event.body || "").slice(0, 600),
       occurredAt: event.occurredAt ?? Math.floor(Date.now() / 1000),
       deliveryStatus: event.deliveryStatus || "unknown",
+      severity: ["critical", "warning", "info"].includes(event.severity) ? event.severity : "info",
     };
     const events = [...existing, entry].slice(-this.limit);
     await this.#write(events);

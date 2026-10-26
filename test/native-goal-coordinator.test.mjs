@@ -67,6 +67,16 @@ test("pauses an active native Goal through the public App Server protocol", asyn
   ]);
 });
 
+test("initial Goal observation reads the exact objective without pausing it", async () => {
+  const client = new FakeClient("active");
+  const coordinator = new NativeGoalCoordinator({ clientFactory: () => client });
+  const observed = await coordinator.readSnapshot("thread-1");
+  assert.equal(observed.objective, "Ship the original user outcome");
+  assert.equal(observed.status, "active");
+  assert.equal(client.calls.some(c => c.method === "thread/goal/set"), false);
+  assert.equal(client.calls.at(-1).method, "stop");
+});
+
 test("does not mutate a thread that has no active Goal", async () => {
   const client = new FakeClient(null);
   const coordinator = new NativeGoalCoordinator({ clientFactory: () => client });

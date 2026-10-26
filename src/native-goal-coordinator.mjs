@@ -11,8 +11,17 @@ function snapshotGoal(goal) {
 }
 
 export class NativeGoalCoordinator {
-  constructor({ clientFactory = () => new AppServerClient() } = {}) {
+  constructor({ clientFactory = () => new AppServerClient({ requestTimeoutMs: 1000 }) } = {}) {
     this.clientFactory = clientFactory;
+  }
+
+  async readSnapshot(threadId) {
+    const client = this.clientFactory();
+    try {
+      await client.start();
+      const { goal } = await client.request("thread/goal/get", { threadId });
+      return goal ? { ...snapshotGoal(goal), status: goal.status } : null;
+    } finally { client.stop(); }
   }
 
   async pauseIfActive(threadId) {

@@ -1,4 +1,5 @@
-import { spawnSync } from "node:child_process";
+import { spawnSync, execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -101,11 +102,22 @@ export function areCodexPulseHooksTrusted(configPath) {
   }
 }
 
-export function waitForTrust({ configPath, pidPath, timeoutMs = 10 * 60 * 1_000 }) {
+export function areCurrentCodexPulseHooksTrusted({ codexPath, execute = execFileSync } = {}) {
+  try {
+    const output = execute(process.execPath, [
+      fileURLToPath(new URL("./hook-trust-query.mjs", import.meta.url)), codexPath,
+    ], { encoding: "utf8", timeout: 5000 });
+    return JSON.parse(output).trusted === true;
+  } catch { return false; }
+}
+
+export function waitForTrust({ configPath, pidPath, timeoutMs = 10 * 60 * 1_000,
+  trustCheck = () => areCurrentCodexPulseHooksTrusted({ codexPath: process.env.CODEX_BINARY || "codex" }),
+}) {
   const startedAt = Date.now();
   const sleeper = new Int32Array(new SharedArrayBuffer(4));
   while (Date.now() - startedAt < timeoutMs) {
-    if (areCodexPulseHooksTrusted(configPath)) {
+    if (trustCheck(configPath)) {
       if (existsSync(pidPath)) {
         const pid = Number(readFileSync(pidPath, "utf8").trim());
         if (Number.isSafeInteger(pid) && pid > 1) {
@@ -137,7 +149,7 @@ export function openHookReview({
     `codex-pulse-hook-review-${process.pid}-${Date.now()}.pid`,
   ),
   waitForReview = waitForTrust,
-  trustCheck = areCodexPulseHooksTrusted,
+  trustCheck = () => areCurrentCodexPulseHooksTrusted({ codexPath }),
 } = {}) {
   const message = hookReviewMessage();
   if (!interactive || env.CODEX_PULSE_SKIP_HOOK_REVIEW === "1") {
@@ -169,7 +181,7 @@ export function openHookReview({
       error: String(cli.stderr || "").trim() || null,
     };
   }
-  const reviewResult = waitForReview({ configPath, pidPath });
+  const reviewResult = waitForReview({ configPath, pidPath, trustCheck });
   rmSync(pidPath, { force: true });
   return {
     launched: true,

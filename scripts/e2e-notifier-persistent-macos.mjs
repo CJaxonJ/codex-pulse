@@ -9,7 +9,7 @@ if (process.platform !== "darwin") {
   throw new Error("The native persistent-notification E2E requires macOS.");
 }
 
-const executable = path.join(
+const executable = process.argv.includes("--build") ? path.resolve(import.meta.dirname, "../build/Codex Pulse.app/Contents/MacOS/CodexPulseNotifier") : path.join(
   os.homedir(),
   "Applications",
   "Codex Pulse.app",
@@ -28,6 +28,7 @@ const child = spawn(
     "【自动测试】常驻提醒",
     "这个窗口会保持 3 秒，然后由测试自动关闭。",
     "--persistent-self-test",
+    "--severity", "critical",
   ],
   { stdio: ["ignore", "pipe", "pipe"] },
 );
@@ -54,7 +55,7 @@ const line = stdout
   .split("\n")
   .findLast((candidate) => candidate.startsWith("{"));
 const result = line ? JSON.parse(line) : null;
-if (!result?.ok || result.visibleForSeconds < 3) {
+if (!result?.ok || result.visibleForSeconds < 3 || result.severity !== "critical") {
   throw new Error(`persistent alert did not remain visible: ${stdout.trim() || "no result"}`);
 }
 

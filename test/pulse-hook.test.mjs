@@ -17,6 +17,28 @@ const noGoalCoordinator = {
   },
 };
 
+test("the hard-floor hook saves intent and workspace before pausing Goal, without a Stop hook", async () => {
+  const dataDir = await createDataDir(9);
+  const cwd = await mkdtemp(path.join(os.tmpdir(), "pulse-emergency-checkpoint-"));
+  await writeFile(path.join(cwd, "work.txt"), "completed work");
+  const store = new ChatContinuityStore(dataDir);
+  const output = await handleHookImpl({
+    hook_event_name: "PreToolUse", session_id: "abrupt", turn_id: "quota-failed", cwd,
+    tool_name: "Bash",
+  }, { dataDir, appRoot: APP_ROOT, now: NOW, goalCoordinator: {
+    async pauseIfActive() {
+      const record = await store.get("abrupt");
+      assert.equal(record.status, "checkpoint_requested");
+      assert.ok(record.checkpoint.workspaceFingerprint);
+      return { paused: true, goalSnapshot: { objective: "Finish user work" } };
+    },
+  } });
+  assert.equal(output.decision, "block");
+  const record = await store.get("abrupt");
+  assert.equal(record.initialGoal.objective, "Finish user work");
+  assert.ok(record.checkpoint.workspaceFingerprint);
+});
+
 function handleHook(input, options = {}) {
   return handleHookImpl(input, {
     goalCoordinator: noGoalCoordinator,
@@ -143,7 +165,52 @@ test("healthy quota records a turn but does not add model context", async () => 
     { dataDir, appRoot: APP_ROOT, now: NOW },
   );
   assert.equal(output, null);
-  assert.equal(await new ChatContinuityStore(dataDir).get("session-2"), null);
+  const recovery = await new ChatContinuityStore(dataDir).get("session-2");
+  assert.equal(recovery.status, "observing");
+  assert.ok(recovery.reserveBaseline.workspaceFingerprint);
+  assert.equal(JSON.stringify(recovery).includes("解释这个函数"), false);
+});
+
+test("a resumed prompt cannot erase the checkpoint before first-tool validation", async () => {
+  const dataDir = await createDataDir(80);
+  const store = new ChatContinuityStore(dataDir);
+  await store.put({ sessionId: "recovered", turnId: "paused-turn", status: "native_goal_active",
+    workspaceValidationRequired: true, checkpoint: { workspaceFingerprint: "saved-baseline" } });
+  await handleHook({ hook_event_name: "UserPromptSubmit", session_id: "recovered",
+    turn_id: "resumed-turn", prompt: "Continue the saved Goal" }, { dataDir, appRoot: APP_ROOT, now: NOW });
+  const record = await store.get("recovered");
+  assert.equal(record.workspaceValidationRequired, true);
+  assert.equal(record.checkpoint.workspaceFingerprint, "saved-baseline");
+  assert.equal(record.turnId, "paused-turn");
+});
+
+test("replayed official wake messages admit one turn and block duplicates or stale wakes", async () => {
+  const dataDir = await createDataDir(80);
+  const store = new ChatContinuityStore(dataDir);
+  await store.put({ sessionId: "wake", turnId: "old", status: "native_goal_active",
+    workspaceValidationRequired: true });
+  const input = { hook_event_name: "UserPromptSubmit", session_id: "wake", turn_id: "first",
+    prompt: `[Codex Pulse recovery ${"a".repeat(64)}]\nContinue the original task.` };
+  assert.notEqual((await handleHook(input, { dataDir, appRoot: APP_ROOT, now: NOW }))?.decision, "block");
+  assert.equal((await handleHook({ ...input, turn_id: "duplicate" }, { dataDir, appRoot: APP_ROOT, now: NOW }))?.decision, "block");
+  assert.notEqual((await handleHook(input, { dataDir, appRoot: APP_ROOT, now: NOW }))?.decision, "block");
+  await store.put({ ...(await store.get("wake")), status: "needs_attention" });
+  assert.equal((await handleHook({ ...input, turn_id: "late" }, { dataDir, appRoot: APP_ROOT, now: NOW }))?.decision, "block");
+});
+
+test("another Goal turn preserves the original user objective instead of nesting recovery wrappers", async () => {
+  const dataDir = await createDataDir(80);
+  const store = new ChatContinuityStore(dataDir);
+  await store.put({ sessionId: "stable-original", turnId: "finished", status: "complete",
+    initialGoal: { objective: "Exact original scope" },
+    checkpoint: { continuationGoal: { objective: "Current generated continuation" } } });
+  await handleHook({ hook_event_name: "UserPromptSubmit", session_id: "stable-original",
+    turn_id: "next", prompt: "Continue Goal" }, { dataDir, appRoot: APP_ROOT, now: NOW,
+    goalCoordinator: { async readSnapshot() { return { status: "active", objective: "Current generated continuation" }; } },
+  });
+  const record = await store.get("stable-original");
+  assert.equal(record.initialGoal.objective, "Exact original scope");
+  assert.equal(record.observedGoalObjective, "Current generated continuation");
 });
 
 test("weekly pacing is advisory and never hard-stops an explicit prompt", async () => {
@@ -659,6 +726,11 @@ test("the trusted pre-tool hook pauses recovery when the workspace changed", asy
   assert.equal(record.blocker, "workspace_changed");
   assert.equal(record.autoResume, false);
   assert.equal(record.workspaceValidationRequired, false);
+  const retried = await handleHookImpl({ hook_event_name: "PreToolUse",
+    session_id: "recovery-changed-thread", turn_id: "resumed-turn", cwd, tool_name: "Bash" },
+    { dataDir, appRoot: APP_ROOT, now: NOW + 1, goalCoordinator });
+  assert.equal(retried.decision, "block");
+  assert.match(retried.reason, /remains blocked/);
 });
 
 test("deadline mode stays quiet at fifteen percent and drains at five", async () => {
