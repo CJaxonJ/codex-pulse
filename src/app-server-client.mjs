@@ -2,6 +2,8 @@ import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import readline from "node:readline";
+import { readLatestTurn } from "./thread-lifecycle.mjs";
+import { queueNativeWakeup, trustedRecoveryHooks } from "./native-wakeup.mjs";
 
 const DESKTOP_CODEX =
   "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex";
@@ -55,7 +57,7 @@ export class AppServerClient extends EventEmitter {
       clientInfo: {
         name: "codex_pulse",
         title: "Codex Pulse",
-        version: "0.9.16",
+        version: "0.9.17",
       },
     });
     this.notify("initialized", {});
@@ -73,7 +75,12 @@ export class AppServerClient extends EventEmitter {
       const pending = this.pending.get(message.id);
       this.pending.delete(message.id);
       clearTimeout(pending.timeout);
-      if (message.error) pending.reject(new Error(message.error.message || "App Server error"));
+      if (message.error) {
+        const error = new Error(message.error.message || "App Server error");
+        error.code = message.error.code;
+        error.data = message.error.data;
+        pending.reject(error);
+      }
       else pending.resolve(message.result);
       return;
     }
@@ -110,6 +117,21 @@ export class AppServerClient extends EventEmitter {
   readRateLimits() {
     return this.request("account/rateLimits/read", {});
   }
+
+  readLatestTurn(threadId, itemsView) {
+    return readLatestTurn(this, threadId, itemsView);
+  }
+
+  async assertWakeReady(record) {
+    const hooks = await this.request("hooks/list", { cwds: [record.cwd] });
+    if (record.wakeAdmissionVersion !== 1 || !trustedRecoveryHooks(hooks)) {
+      const error = new Error("Codex Pulse recovery hooks must be installed, enabled, and reviewed before automatic wakeup.");
+      error.code = "PULSE_HOOK_REVIEW_REQUIRED";
+      throw error;
+    }
+  }
+
+  wakeThread(record) { return queueNativeWakeup(this.binary, record); }
 
   stop() {
     this.child?.kill();

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { access, lstat, readFile, readdir, readlink, realpath } from "node:fs/promises";
 import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const execFileAsync = promisify(execFile);
@@ -53,6 +54,20 @@ function failureReason(error, fallback) {
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function boundedScan(cwd, options, timeoutMs) {
+  try {
+    const result = await execFileAsync(process.execPath, [
+      fileURLToPath(new URL("./workspace-snapshot-worker.mjs", import.meta.url)),
+      cwd, JSON.stringify(options),
+    ], { timeout: timeoutMs, killSignal: "SIGKILL", maxBuffer: 2 * 1024 * 1024 });
+    return JSON.parse(result.stdout);
+  } catch (error) {
+    return { value: null, failure: { type: "workspace_fingerprint_failed", failures: [{
+      strategy: "bounded_worker", reason: failureReason(error, "snapshot_worker_failed"), attempts: 1,
+    }] } };
+  }
 }
 
 async function retryFingerprint(strategy, fallbackReason, operation) {
@@ -261,6 +276,12 @@ export class WorkspaceInspector {
   }
 
   async fingerprint(cwd, options = {}) {
+    if (options.timeoutMs != null) {
+      const { timeoutMs, ...scanOptions } = options;
+      const result = await boundedScan(cwd, { ...scanOptions, mode: "fingerprint" }, timeoutMs);
+      this.lastFingerprintFailure = result.failure;
+      return result.value;
+    }
     this.lastFingerprintFailure = null;
     if (options.strategy === "filesystem") {
       const result = await retryFingerprint(
@@ -293,6 +314,12 @@ export class WorkspaceInspector {
   }
 
   async snapshot(cwd, options = {}) {
+    if (options.timeoutMs != null) {
+      const { timeoutMs, ...scanOptions } = options;
+      const result = await boundedScan(cwd, scanOptions, timeoutMs);
+      this.lastFingerprintFailure = result.failure;
+      return result.value;
+    }
     let base;
     try {
       base = await realpath(path.resolve(cwd));
@@ -331,7 +358,12 @@ export class WorkspaceInspector {
     return { version: 1, digest, scopes };
   }
 
-  async compareSnapshot(cwd, snapshot) {
+  async compareSnapshot(cwd, snapshot, options = {}) {
+    if (options.timeoutMs != null) {
+      const result = await boundedScan(cwd, { mode: "compare", snapshot }, options.timeoutMs);
+      this.lastFingerprintFailure = result.failure;
+      return result.value || { verifiable: false, same: false, changedScopes: [], failure: result.failure };
+    }
     if (!snapshot || snapshot.version !== 1 || !Array.isArray(snapshot.scopes)) {
       return {
         verifiable: false,

@@ -2,7 +2,8 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -24,6 +25,8 @@ const entries = execFileSync("/usr/bin/unzip", ["-Z1", zipPath], {
 const failures = [];
 const required = [
   `${bundleName}/README.md`,
+  `${bundleName}/PRIVACY.md`,
+  `${bundleName}/docs/releases/v${pkg.version}.md`,
   `${bundleName}/LICENSE`,
   `${bundleName}/package.json`,
   `${bundleName}/Install Codex Pulse.command`,
@@ -31,12 +34,20 @@ const required = [
   `${bundleName}/src/chat-continuity-controller.mjs`,
   `${bundleName}/src/chat-continuity-store.mjs`,
   `${bundleName}/src/native-goal-coordinator.mjs`,
+  `${bundleName}/src/native-wakeup.mjs`,
+  `${bundleName}/src/thread-lifecycle.mjs`,
+  `${bundleName}/src/workspace-snapshot-worker.mjs`,
+  `${bundleName}/src/hook-trust-query.mjs`,
+  `${bundleName}/src/resume-preview.mjs`,
+  `${bundleName}/src/credit-auto-redeemer.mjs`,
   `${bundleName}/src/tibo-classifier.mjs`,
   `${bundleName}/src/tibo-credentials.mjs`,
   `${bundleName}/src/tibo-x-api-client.mjs`,
   `${bundleName}/brand/codex-pulse-mark.svg`,
   `${bundleName}/brand/codex-pulse-app-icon.png`,
   `${bundleName}/native/AppIcon.icns`,
+  `${bundleName}/native/PulseSettingsWindow.h`,
+  `${bundleName}/native/PulseSettingsWindow.m`,
   `${bundleName}/plugin/assets/logo.svg`,
   `${bundleName}/plugin/assets/composer-icon.svg`,
   `${bundleName}/scripts/build-brand-assets.mjs`,
@@ -49,6 +60,7 @@ for (const entry of entries) {
   if (!entry.startsWith(`${bundleName}/`)) {
     failures.push(`entry escaped the top-level product folder: ${entry}`);
   }
+  if (entry.split("/").includes("..")) failures.push(`unsafe archive path: ${entry}`);
   if (entry.startsWith("__MACOSX/") || entry.includes("/.DS_Store")) {
     failures.push(`macOS metadata leaked into the archive: ${entry}`);
   }
@@ -73,6 +85,22 @@ if (expectedHash !== actualHash) failures.push("SHA-256 checksum does not match 
 
 if (failures.length) {
   throw new Error(`Package verification failed:\n- ${failures.join("\n- ")}`);
+}
+
+// macOS's old zipinfo can garble UTF-8 filenames written by ditto. Verify the
+// actual native extraction, including the Chinese first-run entry points,
+// rather than treating display encoding as a missing file (or skipping them).
+const extracted = mkdtempSync(path.join(os.tmpdir(), "pulse-package-verify-"));
+try {
+  execFileSync("/usr/bin/ditto", ["-x", "-k", zipPath, extracted]);
+  for (const name of ["开始使用.md", "安装 Codex Pulse.command"]) {
+    const actual = readFileSync(path.join(extracted, bundleName, name));
+    if (!actual.equals(readFileSync(path.join(projectDir, name)))) {
+      throw new Error(`Extracted file does not match source: ${name}`);
+    }
+  }
+} finally {
+  rmSync(extracted, { recursive: true, force: true });
 }
 
 console.log(

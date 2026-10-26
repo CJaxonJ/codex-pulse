@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.9.17 — 2026-10-26
+
+- Replaced the status alert with a compact native light/dark preferences window.
+  Early-warning percentage, public/credit alerts, sound, persistence and policy
+  are configurable; regular changes cannot grant or undo redemption consent.
+- Serialized preference writes across windows/processes to prevent a routine
+  settings save from overwriting a concurrent auto-redemption revocation.
+- Added native-control save/disable E2Es in both appearances, plus validated
+  settings boundaries, alert filtering and live threshold-change regressions.
+
+- Added read-only, per-task continuation previews in the native status app and
+  pause alerts; real recovery timestamps and explicit remaining-work estimates
+  retain their uncertainty and never trigger model calls.
+- Added critical/warning/info notification labels with red/orange native badges,
+  persistent important events, and a distinct under-ten-minute credit alert.
+- Added opt-in personal-account-bound expiring-credit rescue with durable
+  idempotency, cross-process exclusion, safe timeout/restart reconciliation and
+  post-redemption quota reads. Credit use is never attributed to Tibo.
+- Rewrote the short setup SOP and prepared a separate Hook-free desktop-only
+  directory submission package; identity verification/review are still pending.
+
+- Fixed the first-tool/watcher observation race: execution is compared against
+  the immutable paused-turn id, with a fresh state read after history RPCs.
+  Metadata without persisted lifecycle evidence never proves execution.
+- Added disk-backed overnight-gap, Hook/RPC race and new-user-task regressions.
+  The live sandbox also requires execution observation after the real Hook wins.
+- Passed installed-Hook live recovery with and without an initial Goal, plus a
+  natural Desktop pause → overnight sleep → resumed-tools cycle on October 24.
+- Fixed a verified cross-process dispatch gap: changing persisted Goal state to
+  active did not wake its owning Desktop service. Recovery now submits the
+  continuation through the official `codex queue` entry point.
+- Added stable pause-cycle admission keys, duplicate/stale wake rejection,
+  bounded retries, and current Hook trust checks before automatic wakeup.
+- Persisted recovery baselines at task start and after tools so quota failures
+  during inference/compaction can be reconciled without a later Stop event.
+- Reconciled abandoned `checkpoint_requested` states using actual lifecycle
+  markers, including legacy history formats; unloaded replay is not treated as
+  proof that the Desktop writer stopped.
+- Bounded snapshot and recovery verification in killable subprocesses; adjusted
+  Interrupt to its documented three-second maximum and kept scans out of it.
+- Published fresh quota before recovery and moved auxiliary Tibo fetching after
+  critical task reconciliation, preventing stale low-quota Hooks from stopping
+  a just-restored task.
+- Kept original Goals exact while respecting the 4,000-character protocol limit.
+- Replaced installer trust inference from historical hashes with Codex's current
+  `hooks/list` status; an old review no longer proves a changed Hook is trusted.
+- Added isolated, real-process recovery acceptance. No current user chat is used
+  as the fixture; simulated quota does not burn reset credits. The default test
+  uses installed/trusted Hooks, an independent recovery process and production
+  wake dispatch, and requires a real proof plus duplicate-wake rejection.
+  Existing Desktop thread reload and physical OS sleep remain separate checks.
+
 ## 0.9.16 — 2026-10-23
 
 - Fixed the missing ordinary-chat recovery path: a quota checkpoint created

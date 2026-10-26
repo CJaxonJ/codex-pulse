@@ -9,13 +9,15 @@ import { ChatContinuityController } from "../src/chat-continuity-controller.mjs"
 import { ChatContinuityStore } from "../src/chat-continuity-store.mjs";
 import { ManagedTaskController } from "../src/managed-task-controller.mjs";
 import { ManagedTaskStore } from "../src/managed-task-store.mjs";
+import { readResumePreview } from "../src/resume-preview.mjs";
+import { CreditAutoRedeemer, personalAccountBinding, evaluateCreditAwareQuota } from "../src/credit-auto-redeemer.mjs";
 import {
-  evaluateFiveHourSample,
   evaluateResetCredits,
   summarizeRateLimits,
 } from "../src/quota-monitor-core.mjs";
 import {
   notificationForEvent,
+  applyNotificationPreferences,
   sendMacNotification,
 } from "../src/macos-notifier.mjs";
 import { TiboResetClient } from "../src/tibo-client.mjs";
@@ -43,6 +45,7 @@ import {
   PulsePreferencesStore,
   QUOTA_POLICIES,
   TIBO_SOURCES,
+  userSettings,
 } from "../src/preferences-store.mjs";
 import {
   adviseTaskStart,
@@ -109,6 +112,9 @@ async function deliverUserEvent(
     context = {},
   } = {},
 ) {
+  const preferences = await new PulsePreferencesStore(dataDir).get();
+  const delivery = applyNotificationPreferences(event, notification, preferences);
+  notification = delivery.notification;
   let journalEntry = null;
   try {
     journalEntry = await journal.append({
@@ -117,13 +123,14 @@ async function deliverUserEvent(
       body: notification.body,
       occurredAt: Math.floor(Date.now() / 1000),
       deliveryStatus: "pending",
+      severity: notification.severity,
     });
   } catch (error) {
     log("user event journal write failed", { type: event.type, error: error.message });
   }
-  let deliveryStatus = "notification_request_accepted";
+  let deliveryStatus = delivery.enabled ? "notification_request_accepted" : "muted_by_preferences";
   try {
-    await sendMacNotification(notification);
+    if (delivery.enabled) await sendMacNotification(notification);
   } catch (error) {
     deliveryStatus = "failed";
     log("notification delivery failed", {
@@ -453,6 +460,23 @@ async function listManagedTasks() {
   console.log(JSON.stringify({ ok: true, tasks }, null, 2));
 }
 
+async function manageCreditPolicy() {
+  if (args.includes("--enable") && args.includes("--disable")) throw new Error("不能同时开启和关闭自动用卡");
+  const store = new PulsePreferencesStore(dataDir);
+  if (args.includes("--disable")) await store.set({ autoRedeem: { enabled: false } });
+  if (args.includes("--enable")) {
+    if (!args.includes("--yes")) throw new Error("请先确认：仅当前个人账户、不足十分钟临期、确有可重置额度时，自动使用一张；确认后加 --yes");
+    await withClient(async (client) => {
+      const accountBinding = personalAccountBinding(await client.request("account/read", { refreshToken: false }));
+      if (!accountBinding) throw new Error("无法确认个人 Plus/Pro 账户身份；为避免跨账户代用，未开启");
+      await store.set({ autoRedeem: { enabled: true, accountBinding, consentedAt: Math.floor(Date.now() / 1000) } });
+    });
+  }
+  const policy = (await store.get()).autoRedeem;
+  console.log(JSON.stringify({ ok: true, enabled: policy.enabled === true,
+    accountBound: Boolean(policy.accountBinding), note: "只在临期不足十分钟且确有可重置额度时使用最早到期的一张；不购买，睡眠或离线可能错过。" }, null, 2));
+}
+
 async function watch() {
   const client = new AppServerClient();
   const preferencesStore = new PulsePreferencesStore(dataDir);
@@ -460,6 +484,7 @@ async function watch() {
     sourceProvider: async () => (await preferencesStore.get()).tiboSource,
   });
   const lockManager = new WorktreeLockManager(dataDir);
+  const autoRedeemer = new CreditAutoRedeemer({ client, preferences: preferencesStore, dataDir });
   const managedTaskStore = new ManagedTaskStore(dataDir);
   const eventJournal = new UserEventJournal(dataDir);
   const managedController = new ManagedTaskController({
@@ -508,6 +533,51 @@ async function watch() {
     polling = true;
     try {
       const now = Math.floor(Date.now() / 1000);
+      let summary = await readQuotaSummary(client);
+      const beforeSample = { ...state };
+      const currentPreferences = await preferencesStore.get();
+      const config = { thresholds: [currentPreferences.lowQuotaPercent, 10, 5] };
+      let redemption = { events: [] };
+      let evaluated = evaluateCreditAwareQuota(state, summary, redemption, { now, config });
+      state.creditResetAttributionUntil = evaluated.attributionUntil;
+      let creditEvaluation = evaluateResetCredits(state.resetCredits, summary, { now });
+      // Publish fresh quota before waking a thread. Its Hook must not see the
+      // old 9% sample and immediately stop the recovered task again. Auxiliary
+      // Tibo requests must not delay this critical chain either.
+      state = { ...state, fiveHour: evaluated.state,
+        resetCredits: creditEvaluation.state, lastSummary: summary, quotaCheckedAt: now };
+      await saveState(state);
+      try {
+        await managedController.reconcile(summary, { now });
+      } catch (error) {
+        log("managed task reconciliation failed", { error: error.message });
+      }
+      try {
+        await continuityController.reconcile(summary, { now });
+      } catch (error) {
+        log("ordinary chat continuity reconciliation failed", { error: error.message });
+      }
+      // Existing protection/recovery always runs first. A slow card/account RPC
+      // must not delay publishing 9% or interrupting a quota-draining task.
+      // Test quota fixtures are never allowed to reach real consume RPCs.
+      if (!process.env.CODEX_PULSE_TEST_QUOTA_SUMMARY_PATH) {
+        try { redemption = await autoRedeemer.poll(); }
+        catch { redemption = { events: [{ type: "credit_auto_failed", reason: "local_failure" }] }; }
+        if (redemption.raw) summary = summarizeRateLimits(redemption.raw);
+        evaluated = evaluateCreditAwareQuota(beforeSample, summary, redemption, { now, config });
+        creditEvaluation = evaluateResetCredits(beforeSample.resetCredits, summary, { now });
+        state = { ...state, creditResetAttributionUntil: evaluated.attributionUntil,
+          fiveHour: evaluated.state, resetCredits: creditEvaluation.state, lastSummary: summary };
+        await saveState(state);
+        if (["reset", "alreadyRedeemed", "settled"].includes(redemption.status)) {
+          // Publish the post-consume sample BEFORE waking. Reuse the existing
+          // safety gate rather than letting redemption itself start any task.
+          try { await managedController.reconcile(summary, { now }); }
+          catch (error) { log("post-credit task reconciliation failed", { error: error.message }); }
+          try { await continuityController.reconcile(summary, { now }); }
+          catch (error) { log("post-credit chat reconciliation failed", { error: error.message }); }
+        }
+      }
       const tiboEvents = [];
       if (reason !== "server-event" && now - lastTiboPollAt >= 60) {
         lastTiboPollAt = now;
@@ -548,14 +618,11 @@ async function watch() {
         }
       }
 
-      const summary = await readQuotaSummary(client);
       if (summary.planType && !String(summary.planType).toLowerCase().includes("plus")) {
-        log("five-hour watcher is intended for Plus; continuing read-only observation", {
+        log("account has a non-Plus plan; observing only the quota windows actually returned", {
           planType: summary.planType,
         });
       }
-      const evaluated = evaluateFiveHourSample(state.fiveHour, summary, { now });
-      const creditEvaluation = evaluateResetCredits(state.resetCredits, summary, { now });
       const landing = attachPersonalLanding(evaluated.events, state.tibo, { now });
       const correlatedTibo = correlateRecentPersonalReset(
         tiboEvents,
@@ -571,18 +638,6 @@ async function watch() {
         lastSummary: summary,
       };
       await saveState(state);
-      try {
-        await managedController.reconcile(summary, { now });
-      } catch (error) {
-        log("managed task reconciliation failed", { error: error.message });
-      }
-      try {
-        await continuityController.reconcile(summary, { now });
-      } catch (error) {
-        log("ordinary chat continuity reconciliation failed", {
-          error: error.message,
-        });
-      }
       log("quota checked", {
         reason,
         planType: summary.planType,
@@ -593,6 +648,7 @@ async function watch() {
       const preferences = await preferencesStore.get();
       for (const event of [
         ...correlatedTibo.events,
+        ...redemption.events,
         ...creditEvaluation.events,
         ...landing.events,
       ]) {
@@ -673,6 +729,15 @@ async function watch() {
 try {
   if (command === "status") await printStatus();
   else if (command === "activity") await printActivity();
+  else if (command === "preview") console.log(JSON.stringify(await readResumePreview(dataDir, { pollSeconds }), null, 2));
+  else if (command === "settings") {
+    const store = new PulsePreferencesStore(dataDir);
+    const patch = argValue("--update");
+    if (args.includes("--update") && patch == null) throw new Error("--update 需要设置对象");
+    const preferences = patch == null ? await store.get() : await store.setUserSettings(JSON.parse(patch));
+    console.log(JSON.stringify({ ok: true, settings: userSettings(preferences), autoRedeemEnabled: preferences.autoRedeem?.enabled === true }, null, 2));
+  }
+  else if (command === "credits-policy") await manageCreditPolicy();
   else if (command === "doctor") await runDoctor();
   else if (command === "notify-test") await testNotification();
   else if (command === "managed-run") await queueManagedTask();
@@ -683,7 +748,7 @@ try {
   else if (command === "watch") await watch();
   else {
     console.error(
-      "Usage: codex-pulse [status|activity|doctor|watch [--once]|notify-test|advice [--size small|medium|large] [--priority low|normal|high] [--model MODEL]|policy [--mode finish_current|strict_reserve|deadline]|tibo-source [--configure-x|--forget-x|--mode disabled|auto|x-api|codex-reset]|managed-run --objective TEXT [--cwd PATH] [--model MODEL] [--size SIZE] [--priority PRIORITY] [--quota-policy POLICY] [--start-floor N] [--resume-floor N]|managed-list]",
+      "Usage: codex-pulse [status|activity|preview|settings [--update JSON]|credits-policy [--enable --yes|--disable]|doctor|watch [--once]|notify-test|advice [--size small|medium|large] [--priority low|normal|high] [--model MODEL]|policy [--mode finish_current|strict_reserve|deadline]|tibo-source [--configure-x|--forget-x|--mode disabled|auto|x-api|codex-reset]|managed-run --objective TEXT [--cwd PATH] [--model MODEL] [--size SIZE] [--priority PRIORITY] [--quota-policy POLICY] [--start-floor N] [--resume-floor N]|managed-list]",
     );
     process.exitCode = 2;
   }

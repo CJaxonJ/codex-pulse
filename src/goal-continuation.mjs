@@ -43,6 +43,19 @@ function section(label, value, fallback) {
   return `${label}:\n${String(value || fallback).trim()}`;
 }
 
+function boundedObjective(full, original, handoff) {
+  if (full.length <= 4000) return full;
+  const prefix = original
+    ? `Original user-approved goal (authoritative; preserve exactly):\n${original}\n\n`
+    : "Continue only the unfinished user request in this thread. Inspect its saved checkpoint and existing work.\n\n";
+  const label = "Next action:\n";
+  // A near-limit original Goal must remain exact. Progress is also persisted
+  // outside the Goal and supplied by UserPromptSubmit when supported.
+  if (prefix.length + label.length >= 4000) return original || full.slice(0, 4000);
+  const next = handoff.nextAction || handoff.remaining || "Inspect the interrupted turn and reconstruct remaining steps before editing.";
+  return prefix + label + next.slice(0, 4000 - prefix.length - label.length).replace(/[\uD800-\uDBFF]$/, "");
+}
+
 export function buildContinuationGoal({ originalObjective, checkpointSummary }) {
   const original = String(originalObjective || "");
   if (!original.trim()) return null;
@@ -71,7 +84,7 @@ export function buildContinuationGoal({ originalObjective, checkpointSummary }) 
     "- Continue only the unfinished work, beginning with Next action.",
     "- Do not expand scope or mark the Goal complete until the original goal is verified.",
   ].join("\n");
-  return { objective, originalObjective: original, handoff };
+  return { objective: boundedObjective(objective, original, handoff), originalObjective: original, handoff };
 }
 
 export function buildRecoveryGoal({ checkpointSummary }) {
@@ -101,5 +114,5 @@ export function buildRecoveryGoal({ checkpointSummary }) {
     "- Continue only unfinished work, beginning with Next action.",
     "- Do not expand scope or mark the Goal complete until the user's request is verified.",
   ].join("\n");
-  return { objective, handoff };
+  return { objective: boundedObjective(objective, null, handoff), handoff };
 }

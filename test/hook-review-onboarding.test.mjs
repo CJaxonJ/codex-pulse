@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   areCodexPulseHooksTrusted,
+  areCurrentCodexPulseHooksTrusted,
   hookReviewMessage,
   offerCodexRestart,
   openHookReview,
@@ -179,7 +180,7 @@ test("existing official hook trust skips redundant CLI review", () => {
   assert.equal(called, false);
 });
 
-test("reads all six official Codex Pulse trusted hashes", async () => {
+test("reads historical trusted hashes without treating them as current Hook approval", async () => {
   const { mkdtemp, writeFile } = await import("node:fs/promises");
   const os = await import("node:os");
   const path = await import("node:path");
@@ -202,6 +203,11 @@ test("reads all six official Codex Pulse trusted hashes", async () => {
   await writeFile(configPath, config);
 
   assert.equal(areCodexPulseHooksTrusted(configPath), true);
+});
+
+test("current trust is queried from Codex, not inferred from old trusted_hash records", () => {
+  assert.equal(areCurrentCodexPulseHooksTrusted({ codexPath: "codex", execute: () => '{"trusted":false}' }), false);
+  assert.equal(areCurrentCodexPulseHooksTrusted({ codexPath: "codex", execute: () => '{"trusted":true}' }), true);
 });
 
 test("trusted hook records stop only the installer-owned review CLI", async () => {
@@ -233,7 +239,8 @@ test("trusted hook records stop only the installer-owned review CLI", async () =
   });
   await writeFile(pidPath, String(child.pid));
 
-  assert.equal(waitForTrust({ configPath, pidPath, timeoutMs: 1_000 }), "trusted");
+  assert.equal(waitForTrust({ configPath, pidPath, timeoutMs: 1_000,
+    trustCheck: areCodexPulseHooksTrusted }), "trusted");
   const exit = await new Promise((resolve) => child.once("exit", (code, signal) => resolve({ code, signal })));
   assert.equal(exit.signal, "SIGTERM");
 });

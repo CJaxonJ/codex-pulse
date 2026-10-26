@@ -124,4 +124,21 @@ test("warns for a reset credit at 24h, 6h, and 1h without duplicates", () => {
     now: expiresAt - 30 * 60,
   });
   assert.equal(at1h.events[0].thresholdHours, 1);
+  const at10m = evaluateResetCredits(at1h.state, withCredit, { now: expiresAt - 600 });
+  assert.deepEqual(at10m.events, []);
+  const urgent = evaluateResetCredits(at10m.state, withCredit, { now: expiresAt - 599 });
+  assert.equal(urgent.events[0].thresholdHours, 1 / 6);
+  assert.deepEqual(evaluateResetCredits(urgent.state, withCredit, { now: expiresAt - 400 }).events, []);
+});
+
+test("changing the early-warning percentage takes effect without replaying the hard-floor warning", () => {
+  const initial = evaluateFiveHourSample(null, summary(40), { now: 1000, config: { thresholds: [20, 10, 5] } });
+  const lower = evaluateFiveHourSample(initial.state, summary(25), { now: 1001, config: { thresholds: [20, 10, 5] } });
+  assert.equal(lower.events.length, 0);
+  const changed = evaluateFiveHourSample(lower.state, summary(25), { now: 1002, config: { thresholds: [35, 10, 5] } });
+  assert.equal(changed.events[0].threshold, 35);
+  assert.equal(evaluateFiveHourSample(changed.state, summary(25), { now: 1003, config: { thresholds: [35, 10, 5] } }).events.length, 0);
+  const hard = evaluateFiveHourSample(changed.state, summary(9), { now: 1004, config: { thresholds: [35, 10, 5] } });
+  assert.equal(hard.events[0].threshold, 10);
+  assert.equal(evaluateFiveHourSample(hard.state, summary(9), { now: 1005, config: { thresholds: [50, 10, 5] } }).events.length, 0);
 });

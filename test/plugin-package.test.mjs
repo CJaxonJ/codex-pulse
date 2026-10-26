@@ -30,6 +30,8 @@ test("plugin manifest and marketplace point at packaged hook files", async () =>
   );
   assert.deepEqual(codexManifest.hooks, hooks);
   assert.equal(codexManifest.skills, "./skills/");
+  assert.equal(codexManifest.requires_local_executor, true);
+  assert.ok(codexManifest.interface.shortDescription.length <= 30);
   assert.equal(codexManifest.interface.logo, "./assets/logo.svg");
   assert.equal(codexManifest.interface.logoDark, "./assets/logo-dark.svg");
   assert.equal(codexManifest.interface.composerIcon, "./assets/composer-icon.svg");

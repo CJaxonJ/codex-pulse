@@ -22,16 +22,23 @@ It helps answer four practical questions:
 
 Codex Pulse combines public reset/capacity signals with the signed-in user's real
 Codex quota. Personal data stays on the Mac. It never auto-approves permissions,
-widens sandbox access, or consumes a reset credit.
+or widens sandbox access. Optional expiring-credit auto-redemption is OFF by
+default and requires explicit consent bound to the current personal account.
 
 > Beta software. Codex Pulse is an independent project and is not made, endorsed,
 > or supported by OpenAI or X.
 
 ## Download
 
-Download the current macOS beta from
-[GitHub Releases](https://github.com/CJaxonJ/codex-pulse/releases/latest).
-Chinese setup instructions are in [`开始使用.md`](./开始使用.md).
+**[Download v0.9.17 for macOS](https://github.com/CJaxonJ/codex-pulse/releases/download/v0.9.17/Codex-Pulse-0.9.17-macOS.zip)** ·
+**[中文三步安装](./开始使用.md)** ·
+[Release notes](./docs/releases/v0.9.17.md)
+
+Download the macOS ZIP, not GitHub's automatically generated source archive.
+Full functionality uses the local installer and your one-time Hook review;
+no OpenAI developer verification, API billing setup, or X credential is required
+for normal installation. The separate directory guide is not the full product
+and has not been published to the official directory.
 
 The release includes `SHA256SUMS.txt`. After downloading both files, verify the
 archive before opening it:
@@ -44,6 +51,11 @@ shasum -a 256 -c SHA256SUMS.txt
 
 - Personal account: reads the signed-in user's real five-hour and weekly windows through Codex App Server.
 - Personal warnings: 20%, 10%, and 5%, plus a fast-consumption forecast.
+- Native preferences: a compact, system-themed macOS window configures early
+  warning percentage (15–80%), public signals, expiring-card notices, persistent
+  windows, sound and protection policy. Notification switches never disable
+  the hard-floor safety warning. Ordinary settings save without restarting;
+  auto-redemption remains a separate, explicit account-consent action.
 - Persistent status: double-click `Codex Pulse.app` in `~/Applications` to see
   the latest local quota snapshot, active protection policy, and most recent
   critical event even after a notification banner disappears.
@@ -54,8 +66,16 @@ shasum -a 256 -c SHA256SUMS.txt
   turns the remaining allowance into a practical average daily percentage.
 - Tibo signal: reads the zero-configuration `codex-reset.com` feed by default;
   maintainers can optionally switch to direct X API reads and local classification.
-- Two alert levels: reset/banked signals are urgent previews; capacity, limit, and
-  usage-policy changes are informational and are explicitly labeled as not being a reset.
+- Three visible alert levels: critical (red, persistent), warning (orange), and
+  information (neutral). Public previews, public confirmations, personal landings,
+  normal five-hour recovery, and credit redemption are explicitly distinguished.
+- Read-only continuation preview: view the original Goal, saved progress, next
+  action, earliest personal recovery time and an explicit remaining-work estimate
+  when available. Unknown duration stays unknown; preview never calls a model.
+- Optional expiring-credit rescue: explicitly enable it for a personal Plus/Pro
+  account in the status app. Only a known available Codex credit expiring in less
+  than ten minutes is considered, and only with used eligible quota. Durable
+  idempotency, account checks and a post-consume read prevent blind multi-card use.
 - Source health: brief upstream failures stay quiet. A warning appears only after a
   sustained 15-minute outage or a stale feed, without interrupting personal
   quota monitoring.
@@ -121,15 +141,16 @@ copies its runtime to `~/Library/Application Support/Codex Pulse/app`, installs 
 login agent, and installs the local Codex Pulse plugin from a stable local
 marketplace. The extracted folder can then be deleted.
 
-At the end of an interactive installation, a native guide offers to open Codex
-CLI in the same Terminal window. The user only needs to run `/hooks`, inspect the
-Codex Pulse hook commands, press `t` when their paths stay inside the installed
-plugin, and exit the CLI. A second native dialog then offers to restart ChatGPT
-immediately, while warning that active Codex work will stop; users can defer the
-restart. `/hooks` is not a command in the desktop chat composer. Non-interactive
-installs print the same instructions. Codex intentionally requires this one-time
-review; the installer opens the right surface and handles the restart flow but
-never bypasses hook trust.
+At the end of an interactive installation, a native guide explains that the
+review flow will restart Codex and stop active work; finish tasks first, or
+choose Later. It opens Codex CLI in a foreground Terminal window. Run `/hooks`,
+inspect the Codex Pulse commands, and press `t` only when their paths stay inside
+the installed plugin. Once official trust is observed, the installer closes
+only its own review CLI and restarts ChatGPT without a second confirmation.
+Already-trusted Hooks skip repeated review. If review was deferred or restart
+failed, reopen Codex manually when convenient. `/hooks` is not a command in the
+desktop chat composer. Non-interactive installs print guidance but do not launch
+CLI or restart the app. Codex requires personal review; Pulse never bypasses it.
 
 Once trusted, normal Codex chats get automatic guidance:
 
@@ -164,20 +185,49 @@ in a small local rolling journal. Run `node bin/codex-pulse.mjs activity` for a
 redacted text view, or double-click `~/Applications/Codex Pulse.app`; prompt text
 and authentication material are never written to this journal.
 
-In strict-reserve mode, an ordinary Codex Desktop chat is always checkpointed at
-the hard floor, including when the quota crosses 10% after the turn's final tool
-call and is first observed by the Stop hook. If the chat already has a native
+In strict-reserve mode, task-start and post-tool Hooks keep an early recovery
+baseline without saving prompt text. The watcher can use it when inference or
+compaction fails before another tool or Stop event. The Hook persists a checkpoint request and pause-time
+workspace baseline at the hard floor, before depending on a final model reply.
+If the turn ends without Stop or a final handoff, the watcher checks persisted
+turn history and reconstructs a conservative continuation after confirming that
+the original turn is terminal. A live turn is never treated as stopped because
+observation timed out. Missing baselines produce an explicit attention alert;
+the watcher never invents a pause-time snapshot after recovery.
+This also covers a late quota crossing first observed by the Stop hook.
+If the chat already has a native
 Codex Goal, Pulse pauses it at the reserve and snapshots its exact user-approved
 objective. The final checkpoint is parsed
 into completed work, verification, remaining work, next action, and blockers.
 After the personal five-hour window materially recovers, Pulse reactivates the
 Goal with a continuation objective that keeps the original objective authoritative
 and starts from the first unfinished step; the
-Desktop-owned Goal dispatcher, rather than a second App Server writer, starts the
-next turn. If the chat did not have a Goal, Pulse creates a recovery-only Goal
+official `codex queue` entry point delivers the continuation to the owning
+session. Setting a Goal active alone is not considered sufficient to wake a
+different process. Pulse never claims a second writer for that thread.
+If the chat did not have a Goal, Pulse creates a recovery-only Goal
 after quota returns. Its scope comes from the existing thread context and the
 structured checkpoint; Pulse does not persist the original prompt or invent a
 second external writer for the Desktop-owned chat.
+
+Goal activation is reported as a pending start. Pulse reports actual execution
+only after observing a different turn with persisted lifecycle evidence. The
+comparison uses the saved paused-turn id, not the mutable current-turn id that
+the first-tool Hook updates. If the original turn remains terminal and no
+new turn is observed within three minutes of activation, it reports a dispatch
+failure instead of claiming automatic recovery succeeded.
+
+Each paused turn has a stable recovery admission key. Retries use the same key;
+the trusted prompt Hook blocks duplicate and stale wake requests. Current
+pre-tool and prompt Hooks must be enabled and trusted before a wake is sent.
+Local admission records contain only session/turn identifiers and timestamps.
+
+Developer acceptance runs in a disposable thread and workspace with
+`npm run e2e:chat:sandbox`, not against a user's active task. It requires real
+registered Hooks, independent-process dispatch and model-written proof. Offline
+tests alone do not establish that the dispatcher ran. A natural Desktop recovery
+can be audited from its existing lifecycle/admission records without deliberately
+burning quota, interrupting a user task or replaying a test into that chat.
 
 Before reactivating a Goal, the background watcher verifies that the latest turn
 still matches the saved checkpoint. The first resumed tool is then held by the
@@ -217,7 +267,21 @@ present, thread/turn identifiers, local working-directory path, and a
 workspace snapshot under the user's local application-support directory. It
 contains relative scope paths and hashes, not source contents. The
 plugin never auto-approves permissions, expands sandbox access, calls App Server
-`turn/interrupt` on an ordinary chat, or consumes a reset card.
+`turn/interrupt` on an ordinary chat, or redeems a credit without the user's
+account-bound opt-in. Sleep, offline time, or a stopped monitor can miss expiry;
+auto-redemption is not a delivery guarantee. Business/enterprise accounts are
+excluded from auto-redemption because the public account/read response does not
+expose a stable workspace identity for binding consent safely.
+
+## Public plugin directory
+
+The full local Hook plugin is not eligible for the public directory. The official
+[packaging documentation](https://developers.openai.com/plugins/build/plugins)
+limits lifecycle Hooks to manually installed Codex desktop plugins. A separate
+desktop-only, skills-only submission ZIP provides onboarding and read-only local
+queries; it neither installs Hooks nor replaces the macOS runtime. See
+[`SUBMISSION.md`](./SUBMISSION.md) for the package and outstanding identity,
+publication, and review requirements. A prepared ZIP is not a published listing.
 
 ## Developer commands
 
@@ -236,8 +300,9 @@ node bin/codex-pulse.mjs advice --size medium --priority normal
 Pulse does not pretend subscription usage is a fixed token balance. It recommends
 `start_now`, `scope_down`, `wait_for_reset`, or `consider_reset` from the real
 five-hour and weekly windows. Weekly guidance reports a percentage-per-day pace,
-not a fabricated token count, and blocks ordinary new work when the current burn
-rate is likely to exhaust the week early. For managed tasks it learns the median percentage
+not a fabricated token count. Weekly pacing is advisory: it never hard-blocks
+an explicitly submitted task. Only the configured short-window reserve controls
+the quota hard stop. For managed tasks it learns the median percentage
 consumed by the user's own completed tasks of the same size and model; until it
 has enough history, it labels the estimate low-confidence and uses a conservative
 default.
@@ -293,7 +358,9 @@ The local App Server watcher remains the execution engine for Pulse-owned manage
 tasks. It does not call `thread/resume` or `turn/start` on a Codex Desktop-owned
 ordinary chat: the Desktop retains its writer, so ordinary-chat continuation is
 delegated to a native Goal, either preserved from the user or recovery-scoped by
-Pulse from the local checkpoint. Codex scheduled tasks are not used to
+Pulse from the local checkpoint, and delivered through the official `codex queue`
+entry point. Merely setting a Goal to active is not treated as execution.
+Codex scheduled tasks are not used to
 modify a managed workspace because their unattended sandbox may be read-only.
 
 The default macOS packaging command is quota-free. It enforces the full test
@@ -303,8 +370,9 @@ full-chain simulation of the 10% pause, structured checkpoint, recovered-quota
 detection, exactly-once resume, and lock cleanup. The simulation uses the
 production Hook handler, stores, workspace fingerprinting, controller, and
 durable worktree lock. A second resilience gate forces a network timeout, replaces
-the watcher, reclaims its stale lock, bootstraps a recovery Goal, proves one real
-output, and verifies exactly-once completion. Only the native-Goal protocol
+the watcher, reclaims its stale lock, bootstraps a recovery Goal, simulates output
+creation and verifies exactly-once completion. That offline proof is written by
+the deterministic test, not by a real model. Only the native-Goal protocol
 boundary is replaced with a deterministic fake:
 
 ```bash
@@ -319,12 +387,33 @@ tests do use ordinary signed-in Codex allowance:
 CODEX_PULSE_RUN_LIVE_E2E=1 npm run package:macos
 ```
 
-The live gate checks the Tibo source and protocol drift, then runs the managed-task
-smoke test in a disposable workspace. A separate App Server process cannot prove
-that Codex Desktop will dispatch a native Goal; the ordinary-chat release
-acceptance must therefore still be performed in an actual Desktop chat. An
-App-Server-owned test thread is not accepted as proof of Desktop
-same-chat recovery.
+The live gates check the Tibo source, a managed-task smoke test, and an isolated
+ordinary-chat recovery test using the installed candidate Hooks. The last test
+requires the candidate plugin to already be installed and officially trusted; it
+never changes trust automatically. Run it independently with:
+
+```bash
+npm run e2e:chat:sandbox
+# Also exercise an ordinary chat with no Goal configured before quota falls:
+CODEX_PULSE_TEST_INITIAL_GOAL=0 npm run e2e:chat:sandbox
+```
+
+It uses a temporary workspace and Pulse data, synthetic quota samples, a real
+App Server, a disconnected/reconnected test transport, and a replacement watcher
+process on an independent STDIO App Server. The registered Hooks must pause the
+task and save progress; production dispatch must start the recovery, validate the
+workspace before tools, and produce a model-written proof file. A repeated wake
+must be rejected by the registered Hook without modifying that proof. A fallback
+queue command, a requested Goal, or a manually created proof cannot pass.
+The independent watcher deliberately waits until the real first-tool Hook has
+validated the workspace, then must still recognize actual execution without
+re-arming validation or sending another wake.
+
+`CODEX_PULSE_TEST_REGISTERED_HOOKS=0` is a lower-level missing-Stop diagnostic,
+not installed-Hook acceptance. Isolation proves these runtime boundaries but
+does not prove a currently open Desktop thread has reloaded changed Hooks, or
+that physical macOS sleep/wake works. Those remain distinct acceptance checks;
+the test never sleeps the user's machine or uses their current chat as a fixture.
 
 List managed tasks:
 

@@ -53,6 +53,17 @@ test("does not invent a continuation Goal without a user-approved original Goal"
   );
 });
 
+test("long handoffs fit the official Goal limit without truncating the original objective", () => {
+  const original = "Preserve my original requirement. ".repeat(90);
+  const goal = buildContinuationGoal({ originalObjective: original,
+    checkpointSummary: "Completed: " + "x".repeat(7000) + "\nNext action: verify the remaining task" });
+  assert.ok(goal.objective.length <= 4000);
+  assert.ok(goal.objective.includes(original));
+  assert.ok(goal.objective.includes("verify the remaining task"));
+  const full = "x".repeat(4000);
+  assert.equal(buildContinuationGoal({ originalObjective: full, checkpointSummary: "Remaining: inspect changes" }).objective, full);
+});
+
 test("recovery Goal uses thread context and checkpoint without storing a prompt", () => {
   const goal = buildRecoveryGoal({
     checkpointSummary: [

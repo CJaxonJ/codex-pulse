@@ -53,6 +53,7 @@ for (const entry of [
   "LICENSE",
   "PRIVACY.md",
   "SECURITY.md",
+  "SUBMISSION.md",
   "开始使用.md",
   "安装 Codex Pulse.command",
   "package.json",
@@ -62,6 +63,11 @@ for (const entry of [
 cpSync(
   path.join(projectDir, "安装 Codex Pulse.command"),
   path.join(stagingDir, "Install Codex Pulse.command"),
+);
+mkdirSync(path.join(stagingDir, "docs", "releases"), { recursive: true });
+cpSync(
+  path.join(projectDir, "docs", "releases", `v${pkg.version}.md`),
+  path.join(stagingDir, "docs", "releases", `v${pkg.version}.md`),
 );
 
 execFileSync("/usr/bin/ditto", [

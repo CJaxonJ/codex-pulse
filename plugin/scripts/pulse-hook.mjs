@@ -22,6 +22,31 @@ async function writeJsonAtomic(filePath, value) {
   await rename(temporary, filePath);
 }
 
+async function admitRecoveryWake(dataDir, input, now, continuityStore) {
+  const id = String(input.prompt || "").match(/^\[Codex Pulse recovery ([a-f0-9]{64})\]\n/)?.[1];
+  if (!id) return null;
+  const chat = await continuityStore.get(input.session_id);
+  if (!chat || !["resuming", "native_goal_active"].includes(chat.status)) {
+    return { decision: "block", reason: "Codex Pulse ignored a stale recovery request; the paused task is no longer awaiting this wakeup." };
+  }
+  const root = path.join(dataDir, "wake-admissions");
+  const directory = path.join(root, id);
+  try {
+    await mkdir(root, { recursive: true });
+    await mkdir(directory);
+    await writeJsonAtomic(path.join(directory, "admission.json"), {
+      sessionId: input.session_id, turnId: input.turn_id, admittedAt: now,
+    });
+    return null;
+  } catch (error) {
+    if (error.code === "EEXIST") {
+      const previous = await readJson(path.join(directory, "admission.json"));
+      if (previous?.turnId && previous.turnId === input.turn_id && previous.sessionId === input.session_id) return null;
+    }
+    return { decision: "block", reason: "Codex Pulse blocked a duplicate or unverifiable recovery wakeup. The same paused task must not be started twice." };
+  }
+}
+
 function inferTaskSize(prompt = "") {
   const explicit = prompt.match(/\[pulse:(small|medium|large)\]/i)?.[1]?.toLowerCase();
   if (explicit) return explicit;
@@ -202,10 +227,11 @@ async function rememberWorkspaceHints(continuityStore, input, cwd) {
   });
 }
 
-async function captureWorkspace(workspace, cwd, hints) {
-  const workspaceSnapshot = await workspace.snapshot(cwd, { hints });
-  const workspaceFingerprint =
-    workspaceSnapshot?.digest || (await workspace.fingerprint(cwd));
+async function captureWorkspace(workspace, cwd, hints, timeoutMs = 2000) {
+  const workspaceSnapshot = await workspace.snapshot(cwd, { hints, timeoutMs });
+  // The worker enforces a total deadline, including fallback/retries/scopes.
+  // Never start an unbounded second scan after that deadline expires.
+  const workspaceFingerprint = workspaceSnapshot?.digest || null;
   return {
     workspaceSnapshot,
     workspaceFingerprint,
@@ -213,6 +239,42 @@ async function captureWorkspace(workspace, cwd, hints) {
       ? { workspaceFingerprintFailure: workspace.failureDiagnostic?.() || null }
       : {}),
   };
+}
+
+async function observeRecoveryBaseline({ continuityStore, goalCoordinator, workspace, input,
+  summary, mode, now, newTurn = false }) {
+  if (!input.session_id || !input.turn_id || mode !== "strict_reserve") return;
+  const existing = await continuityStore.get(input.session_id);
+  // Goal dispatch may emit UserPromptSubmit before its first tool. Keep the
+  // armed validation/checkpoint intact until that tool has been checked.
+  if (existing?.workspaceValidationRequired === true &&
+    ["resuming", "native_goal_active"].includes(existing.status)) return;
+  const sameTurn = existing?.turnId === input.turn_id;
+  if (sameTurn && existing.status !== "observing") return;
+  const base = sameTurn ? existing : { sessionId: input.session_id };
+  const cwd = path.resolve(input.cwd || base.cwd || process.cwd());
+  const record = await continuityStore.put({ ...base, status: "observing", cwd,
+    turnId: input.turn_id, quotaPolicy: mode,
+    workspaceValidationMode: "pre_tool_hook_v1",
+    wakeAdmissionVersion: 1,
+    observationWindowKey: summary.fiveHour?.resetsAt || null,
+    observationStartedAt: base.observationStartedAt || now,
+  });
+  const [baseline, goal] = await Promise.all([
+    captureWorkspace(workspace, cwd, record.workspaceHints || [], newTurn ? 800 : 1200),
+    record.initialGoal ? Promise.resolve(record.initialGoal) :
+      goalCoordinator.readSnapshot?.(input.session_id).catch(() => null) || Promise.resolve(null),
+  ]);
+  const current = await continuityStore.get(input.session_id);
+  if (current?.turnId !== input.turn_id || current.status !== "observing") return;
+  const originalGoal = existing?.initialGoal &&
+    existing.checkpoint?.continuationGoal?.objective === goal?.objective
+    ? existing.initialGoal : goal;
+  await continuityStore.put({ ...current,
+    initialGoal: current.initialGoal || (goal?.status === "active" ? originalGoal : null),
+    observedGoalObjective: current.observedGoalObjective || goal?.objective || null,
+    reserveBaseline: { ...baseline, observedAt: now, turnId: input.turn_id },
+  });
 }
 
 async function validateRecoveryWorkspace({
@@ -224,8 +286,11 @@ async function validateRecoveryWorkspace({
 }) {
   if (!input.session_id) return null;
   const chat = await continuityStore.get(input.session_id);
+  if (chat?.status === "needs_attention" && chat.validationFailedTurnId) {
+    return { decision: "block", reason: "Codex Pulse recovery remains blocked after workspace validation failed. Stop and wait for a new explicit user request; do not retry tools against the changed workspace." };
+  }
   if (
-    chat?.status !== "native_goal_active" ||
+    !["native_goal_active", "resuming"].includes(chat?.status) ||
     chat.workspaceValidationRequired !== true
   ) {
     return null;
@@ -240,6 +305,7 @@ async function validateRecoveryWorkspace({
     const comparison = await workspace.compareSnapshot(
       cwd,
       chat.checkpoint.workspaceSnapshot,
+      { timeoutMs: 4000 },
     );
     if (comparison?.verifiable === false) {
       reason = "workspace_unverifiable";
@@ -249,6 +315,7 @@ async function validateRecoveryWorkspace({
     }
   } else if (chat.checkpoint?.workspaceFingerprint) {
     const fingerprint = await workspace.fingerprint(cwd, {
+      timeoutMs: 4000,
       strategy: String(chat.checkpoint.workspaceFingerprint).startsWith("fs:")
         ? "filesystem"
         : undefined,
@@ -276,6 +343,7 @@ async function validateRecoveryWorkspace({
       holdWorktreeLock: false,
       workspaceValidationRequired: false,
       validationFailedAt: now,
+      validationFailedTurnId: input.turn_id || chat.turnId,
     });
     return {
       decision: "block",
@@ -355,6 +423,7 @@ async function requestQuotaCheckpoint({
   summary,
   remaining,
   now,
+  workspace,
 }) {
   if (!input.session_id) return null;
   const existingChat = await continuityStore.get(input.session_id);
@@ -364,11 +433,39 @@ async function requestQuotaCheckpoint({
   const baseChat = sameTurn ? existingChat : { sessionId: input.session_id };
   if (
     sameTurn &&
-    ["paused_quota", "complete", "needs_attention"].includes(existingChat.status)
+    ["checkpoint_requested", "checkpointing", "paused_quota", "complete", "needs_attention"].includes(existingChat.status)
   ) {
     return existingChat;
   }
   const cwd = path.resolve(input.cwd || baseChat.cwd || process.cwd());
+  // Write the intent before scanning files or making an RPC. Either operation
+  // may outlive the hook; the watcher must be able to reconcile that failure.
+  const requested = await continuityStore.put({
+    ...baseChat,
+    status: "checkpoint_requested",
+    workspaceValidationMode: "pre_tool_hook_v1",
+    wakeAdmissionVersion: 1,
+    cwd,
+    turnId: input.turn_id || baseChat.turnId || null,
+    model: input.model || baseChat.model || null,
+    permissionMode: input.permission_mode || baseChat.permissionMode || "default",
+    quotaPolicy: mode,
+    resumeFloor: baseChat.resumeFloor ?? 50,
+    pausedWindowKey: summary.fiveHour?.resetsAt || null,
+    pausedRemaining: remaining,
+    checkpointRequestedAt: now,
+    executionObservedAt: null,
+    pausedTurnId: null,
+    wakeSourceTurnId: null,
+    wakeSubmittedAt: null,
+    wakeAttempts: 0,
+    checkpoint: { quotaAtPause: remaining, requestedAt: now },
+  });
+  const captured = await captureWorkspace(workspace, cwd, baseChat.workspaceHints || []);
+  const prepared = await continuityStore.put({
+    ...requested,
+    checkpoint: { ...requested.checkpoint, ...captured },
+  });
   const goalPause = await prepareNativeGoalPause(
     goalCoordinator,
     input.session_id,
@@ -376,7 +473,7 @@ async function requestQuotaCheckpoint({
     now,
   );
   return continuityStore.put({
-    ...baseChat,
+    ...prepared,
     status: "checkpoint_requested",
     workspaceValidationMode: "pre_tool_hook_v1",
     cwd,
@@ -390,7 +487,7 @@ async function requestQuotaCheckpoint({
     pausedRemaining: remaining,
     checkpointRequestedAt: now,
     checkpoint: {
-      ...(baseChat.checkpoint || {}),
+      ...prepared.checkpoint,
       quotaAtPause: remaining,
       requestedAt: now,
     },
@@ -524,6 +621,10 @@ export async function handleHook(input, options = {}) {
   const id = observationId(input);
 
   if (input.hook_event_name === "UserPromptSubmit") {
+    const recovery = input.session_id ? await continuityStore.get(input.session_id) : null;
+    const recoveryContext = recovery?.workspaceValidationRequired === true &&
+      ["resuming", "native_goal_active"].includes(recovery.status) && recovery.checkpoint?.summary
+      ? `Codex Pulse saved progress (original user objective remains authoritative):\n${recovery.checkpoint.summary.slice(0, 8000)}` : "";
     const currentRemaining = summary.fiveHour?.remainingPercent;
     const managedTasks = await loadManagedTasks(dataDir);
     if (
@@ -537,7 +638,13 @@ export async function handleHook(input, options = {}) {
       };
     }
     const taskSize = inferTaskSize(input.prompt || "");
+    const wakeAdmission = await admitRecoveryWake(dataDir, input, now, continuityStore);
+    if (wakeAdmission) return wakeAdmission;
     const priority = inferPriority(input.prompt || "");
+    if (!matchesManagedSession(managedTasks, input)) {
+      await observeRecoveryBaseline({ continuityStore, goalCoordinator, workspace, input,
+        summary, mode, now, newTurn: true });
+    }
     const existing = await observationStore.get(id);
     await observationStore.put({
       ...(existing || {}),
@@ -563,6 +670,9 @@ export async function handleHook(input, options = {}) {
     });
     const decision = await markDecision(dataDir, input.session_id, advice, mode, now);
     if (advice.verdict === "start_now") {
+      if (recoveryContext) return { hookSpecificOutput: {
+        hookEventName: "UserPromptSubmit", additionalContext: recoveryContext,
+      } };
       if (decision.changed && decision.previous) {
         return {
           systemMessage: `Codex Pulse：${advice.title}。${advice.action}`,
@@ -576,7 +686,7 @@ export async function handleHook(input, options = {}) {
         : {}),
       hookSpecificOutput: {
         hookEventName: "UserPromptSubmit",
-        additionalContext: quotaPolicy(advice.verdict, mode),
+        additionalContext: [quotaPolicy(advice.verdict, mode), recoveryContext].filter(Boolean).join("\n\n"),
       },
     };
   }
@@ -604,6 +714,7 @@ export async function handleHook(input, options = {}) {
         summary,
         remaining,
         now,
+        workspace,
       });
     }
     return {
@@ -620,6 +731,10 @@ export async function handleHook(input, options = {}) {
     if (matchesManagedSession(await loadManagedTasks(dataDir), input)) return null;
     const observedCwd = path.resolve(input.cwd || process.cwd());
     await rememberWorkspaceHints(continuityStore, input, observedCwd);
+    if (remaining > 10) {
+      await observeRecoveryBaseline({ continuityStore, goalCoordinator, workspace, input,
+        summary, mode, now });
+    }
     const policy = thresholdPolicy(remaining, mode);
     if (!policy || !(await markThreshold(dataDir, input.turn_id, policy.band))) {
       return null;
@@ -633,6 +748,7 @@ export async function handleHook(input, options = {}) {
         summary,
         remaining,
         now,
+        workspace,
       });
     }
     return {
@@ -710,6 +826,7 @@ export async function handleHook(input, options = {}) {
         summary,
         remaining,
         now,
+        workspace,
       });
       matchingChatTurn =
         chat && (!input.turn_id || !chat.turnId || input.turn_id === chat.turnId);
@@ -720,7 +837,10 @@ export async function handleHook(input, options = {}) {
       ["checkpoint_requested", "checkpointing"].includes(chat.status)
     ) {
       const cwd = path.resolve(input.cwd || chat.cwd || process.cwd());
-      const workspaceCapture = await captureWorkspace(
+      const workspaceCapture = chat.checkpoint?.workspaceFingerprint ? {
+        workspaceSnapshot: chat.checkpoint.workspaceSnapshot,
+        workspaceFingerprint: chat.checkpoint.workspaceFingerprint,
+      } : await captureWorkspace(
         workspace,
         cwd,
         chat.workspaceHints || [],
@@ -765,11 +885,12 @@ export async function handleHook(input, options = {}) {
       chat.status === "checkpoint_requested"
     ) {
       const cwd = path.resolve(input.cwd || chat.cwd || process.cwd());
-      const workspaceCapture = await captureWorkspace(
-        workspace,
-        cwd,
-        chat.workspaceHints || [],
-      );
+      // Interrupt hooks have a three-second maximum. Use only the snapshot
+      // already persisted at the boundary; never scan the workspace here.
+      const workspaceCapture = {
+        workspaceSnapshot: chat.checkpoint?.workspaceSnapshot || null,
+        workspaceFingerprint: chat.checkpoint?.workspaceFingerprint || null,
+      };
       await continuityStore.put({
         ...chat,
         status: "paused_quota",

@@ -12,8 +12,60 @@ export function formatResetTime(timestamp) {
   }).format(new Date(timestamp * 1000));
 }
 
+export function applyNotificationPreferences(event, notice, preferences = {}) {
+  const earlyQuota = event.type === "forecast" || (event.type === "threshold" && event.threshold > 10);
+  const publicSignal = event.type.startsWith("tibo_") || event.type === "public_reset_landed";
+  const enabled = !(earlyQuota && preferences.quotaAlertsEnabled === false)
+    && !(event.type === "credit_expiring" && preferences.creditAlertsEnabled === false)
+    && !(publicSignal && preferences.tiboSource === "disabled");
+  return { enabled, notification: { ...notice,
+    persistent: preferences.persistentAlertsEnabled === false ? false : notice.persistent,
+    sound: preferences.soundEnabled !== false,
+  } };
+}
+
 export function notificationForEvent(event) {
+  const notice = baseNotificationForEvent(event);
+  const critical = ["tibo_confirmed", "personal_landed", "public_reset_landed", "chat_continuity_attention", "managed_task_attention", "credit_auto_failed", "credit_auto_uncertain"].includes(event.type)
+    || (event.type === "reset" && event.resetKind === "full")
+    || (event.type === "credit_expiring" && event.hoursRemaining < 1 / 6);
+  const warning = ["threshold", "forecast", "tibo_preview", "tibo_source_unhealthy", "chat_continuity_paused", "managed_task_draining", "managed_task_paused"].includes(event.type)
+    || event.type === "credit_expiring";
+  const severity = critical ? "critical" : warning ? "warning" : "info";
+  const result = { ...notice, severity };
+  if (critical) { result.persistent = true; result.interruptionLevel = "time-sensitive"; }
+  if (["chat_continuity_paused", "managed_task_paused"].includes(event.type)) {
+    return { ...result, action: "preview", persistent: true };
+  }
+  return result;
+}
+
+function baseNotificationForEvent(event) {
+  if (event.type === "credit_auto_used") return {
+    title: "临期重置卡已自动使用",
+    body: "已按你的授权使用一张临期卡，并重新读取个人额度。不是 Tibo 公共重置；任务仍需通过原有安全校验后才会续跑。",
+    persistent: true,
+  };
+  if (event.type === "credit_auto_uncertain") return {
+    title: "自动用卡结果待确认",
+    body: "接口超时或额度复查尚未完成，不代表兑换失败。已保存原兑换幂等键；不会换一张卡重复尝试。请保持联网，后台会核实。",
+    persistent: true,
+  };
+  if (event.type === "credit_auto_failed") return {
+    title: "临期自动用卡已停止",
+    body: "无法安全读取本机兑换记录或完成操作，未继续尝试其他卡。请查看 Codex Pulse 状态，必要时手动核实卡片。",
+    persistent: true,
+  };
+  if (event.type === "credit_auto_skipped") return {
+    title: "本轮未使用重置卡",
+    body: event.reason === "nothingToReset" ? "官方接口确认当前没有可重置窗口，卡片未消费。" : "官方接口确认没有可用重置卡，未执行兑换。",
+  };
   if (event.type === "chat_continuity_resumed") {
+    if (event.activationPhase === "requested") return {
+      title: "Codex 额度已恢复，正在等待任务启动",
+      body: "续跑请求已提交，正在核对原聊天是否真正开始执行。尚未确认任务启动。",
+      persistent: true,
+    };
     return {
       title: "Codex 聊天已自动续跑",
       body:
@@ -86,6 +138,8 @@ export function notificationForEvent(event) {
       native_goal_missing: "原生 Goal 已被清除",
       native_goal_paused: "原生 Goal 仍处于暂停状态",
       native_goal_state_unavailable: "暂时无法读取原生 Goal 状态",
+      native_goal_not_started: "续跑请求已提交，但尚未观察到 Codex 启动新任务",
+      hook_review_required: "恢复所需的 Hook 尚未启用或完成本人审查",
       resume_failed: "恢复后的任务执行失败",
       resume_interrupted: "恢复后的任务被中断",
       resume_incomplete: "恢复请求未能完整启动",
@@ -147,8 +201,9 @@ export function notificationForEvent(event) {
   }
   if (event.type === "credit_expiring") {
     return {
-      title: `Codex 重置卡约 ${Math.max(1, Math.ceil(event.hoursRemaining))} 小时后过期`,
-      body: "先确认当前额度是否值得重置，再安排高价值任务；不要为了不浪费卡，反而浪费剩余额度。",
+      title: event.hoursRemaining < 1 ? `Codex 重置卡约 ${Math.max(1, Math.ceil(event.hoursRemaining * 60))} 分钟后过期`
+        : `Codex 重置卡约 ${Math.ceil(event.hoursRemaining)} 小时后过期`,
+      body: "即将到期的是重置卡，不是普通额度窗口。只有明确开启临期自动用卡、且当前额度确实可重置时才会代用；未开启时请自行确认。睡眠或离线可能错过到期时间。",
     };
   }
   if (event.type === "tibo_preview") {
@@ -215,7 +270,7 @@ export function notificationForEvent(event) {
     if (event.threshold <= 10 && event.quotaPolicy === "strict_reserve") {
       return {
         title: "Codex Pulse：已到 10% 保护线",
-        body: `当前剩余 ${Math.round(event.remainingPercent)}%。将拦截后续工具调用并保存检查点；预计 ${formatResetTime(event.resetsAt)} 恢复。当前聊天启用了原生 Goal 才会自动续跑。`,
+        body: `当前剩余 ${Math.round(event.remainingPercent)}%。将拦截后续工具调用并保存检查点；预计 ${formatResetTime(event.resetsAt)} 额度恢复。能否安全续跑以保存后的计划及恢复校验为准。`,
         interruptionLevel: "time-sensitive",
       };
     }
@@ -266,6 +321,9 @@ export function nativeNotificationArgs({
   body,
   interruptionLevel,
   persistent,
+  action,
+  severity,
+  sound,
 }) {
   const args = ["-g", "-n", nativeApp, "--args", title, body];
   // A persistent alert owns its own helper process until the user dismisses
@@ -274,10 +332,13 @@ export function nativeNotificationArgs({
   if (!persistent) args.unshift("-W");
   if (interruptionLevel === "time-sensitive") args.push("--time-sensitive");
   if (persistent) args.push("--persistent");
+  if (action === "preview") args.push("--preview-action");
+  if (["critical", "warning", "info"].includes(severity)) args.push("--severity", severity);
+  if (sound === false) args.push("--silent");
   return args;
 }
 
-export function sendMacNotification({ title, body, interruptionLevel, persistent }) {
+export function sendMacNotification({ title, body, interruptionLevel, persistent, action, severity, sound }) {
   if (process.env.CODEX_PULSE_DISABLE_NOTIFICATIONS === "1") {
     return Promise.resolve();
   }
@@ -292,6 +353,9 @@ export function sendMacNotification({ title, body, interruptionLevel, persistent
         body,
         interruptionLevel,
         persistent,
+        action,
+        severity,
+        sound,
       });
       const child = spawn(
         "/usr/bin/open",
@@ -311,7 +375,7 @@ export function sendMacNotification({ title, body, interruptionLevel, persistent
 
   const script = `const app = Application.currentApplication(); app.includeStandardAdditions = true; app.displayNotification(${JSON.stringify(
     body,
-  )}, { withTitle: ${JSON.stringify(title)}, soundName: "Glass" });`;
+  )}, { withTitle: ${JSON.stringify(title)}${sound === false ? "" : ', soundName: "Glass"'} });`;
   return new Promise((resolve, reject) => {
     const child = spawn("/usr/bin/osascript", ["-l", "JavaScript", "-e", script], {
       stdio: ["ignore", "pipe", "pipe"],

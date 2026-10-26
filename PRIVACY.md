@@ -15,6 +15,25 @@ Codex Pulse reads the signed-in Codex account's rate-limit summary through the C
   native Goal, that Goal's exact objective and the derived continuation plan,
   but not the original user prompt;
 - aggregate percentage consumption used for future estimates.
+- when the user explicitly enables expiring-credit redemption: a hash of the
+  normalized personal-account email returned by official `account/read`, consent
+  time, and local redemption state. The raw email is not saved or logged. The hash
+  is a local binding, not a claim of irreversible anonymization. Business accounts
+  are not auto-redeemed because this response does not identify their workspace.
+
+An in-flight redemption must retain the exact opaque credit id and idempotency
+key so a timeout or process restart can retry the same logical operation rather
+than accidentally select another card. This metadata is saved only in
+`credit-operations/` (directory mode 0700, operation files 0600), flushed before
+the request, and excluded from notifications and diagnostics. After settlement,
+the raw credit id and key are removed; the journal retains redeemed-credit hashes
+for stale-response protection and up to 50 outcome/time entries. An uncertain
+operation is retained until it can be safely resolved; the program does not
+silently discard it on timeout or expiry.
+
+Plan preview reads local checkpoint text on demand. It makes no model request
+and does not start or modify a task. Its CLI output may contain private project
+information and is not a public support report.
 
 Prompt text may be inspected in memory to estimate task size, but the original
 prompt is not written to Codex Pulse history. Checkpoint summaries can repeat
@@ -37,6 +56,9 @@ never written to Codex Pulse state, support reports, or logs. Users can disable
 Tibo monitoring entirely or switch between the two sources.
 
 Communication with Codex uses the local Codex App Server and remains subject to the user's existing OpenAI/Codex account and policies.
+When auto-redemption is explicitly enabled, the local App Server sends the
+credit id and idempotency key to the official account service to redeem that
+specific credit. None of those values are sent to `codex-reset.com` or to us.
 
 ## Retention and deletion
 

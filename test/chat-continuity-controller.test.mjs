@@ -77,6 +77,369 @@ class FakeClient {
   }
 }
 
+function observingChat(overrides = {}) {
+  const baseline = pausedChat();
+  return { ...baseline, status: "observing", quotaPolicy: "strict_reserve",
+    initialGoal: { objective: "Finish the original user task" }, observationWindowKey: 100,
+    reserveBaseline: baseline.checkpoint, ...overrides };
+}
+
+test("an independent recovery submits the official wake only after arming first-tool validation", async () => {
+  const store = new MemoryChatContinuityStore([pausedChat({ wakeAdmissionVersion: 1 })]);
+  const client = new FakeClient();
+  let wakes = 0;
+  client.assertWakeReady = async () => {};
+  client.wakeThread = async record => {
+    wakes++;
+    const saved = await store.get(record.sessionId);
+    assert.equal(saved.status, "native_goal_active");
+    assert.equal(saved.workspaceValidationRequired, true);
+    assert.equal(record.pausedTurnId, "turn-1");
+  };
+  const controller = new ChatContinuityController({ client, store });
+  await controller.reconcile(summary(100), { now: 20 });
+  assert.equal((await store.get("thread-1")).wakeSubmittedAt, 20);
+  await controller.reconcile(summary(100), { now: 21 });
+  assert.equal(wakes, 1);
+});
+
+test("an ambiguous wake failure preserves validation and does not requeue after execution is observed", async () => {
+  const store = new MemoryChatContinuityStore([pausedChat({ wakeAdmissionVersion: 1 })]);
+  const client = new FakeClient(); let wakes = 0;
+  client.wakeThread = async () => { wakes++; throw Error("network timeout after delivery"); };
+  const controller = new ChatContinuityController({ client, store });
+  await controller.reconcile(summary(100), { now: 20 });
+  assert.equal((await store.get("thread-1")).workspaceValidationRequired, true);
+  client.latestTurnId = "actual-woken-turn"; client.latestTurnStatus = "inProgress";
+  await controller.reconcile(summary(100), { now: 60 });
+  assert.equal(wakes, 1);
+  assert.equal((await store.get("thread-1")).executionObservedAt, 60);
+});
+
+test("unreviewed recovery hooks stop before Goal activation or queue submission", async () => {
+  const store = new MemoryChatContinuityStore([pausedChat()]);
+  const client = new FakeClient();
+  client.assertWakeReady = async () => { const error = Error("review required"); error.code = "PULSE_HOOK_REVIEW_REQUIRED"; throw error; };
+  const events = await new ChatContinuityController({ client, store }).reconcile(summary(100), { now: 20 });
+  assert.equal(events[0].reason, "hook_review_required");
+  assert.equal(client.calls.some(c => c.method === "thread/goal/set"), false);
+});
+
+test("after a day-long observation gap a replacement watcher observes execution without a second wake", async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), "pulse-long-gap-"));
+  const store = new ChatContinuityStore(dataDir);
+  await store.put(pausedChat({ wakeAdmissionVersion: 1,
+    initialGoal: { objective: "Preserve the exact user-approved task" } }));
+  const first = new FakeClient();
+  first.goalObjective = "Preserve the exact user-approved task";
+  let wakeCalls = 0;
+  first.wakeThread = async () => {
+    wakeCalls++;
+    throw Error("network timeout after potentially accepted delivery");
+  };
+  await new ChatContinuityController({ client: first, store })
+    .reconcile(summary(100), { now: 20 });
+  const persisted = await store.get("thread-1");
+  assert.equal(persisted.status, "native_goal_active");
+  assert.equal(persisted.workspaceValidationRequired, true);
+
+  // Reopen disk state without any watcher memory. A clock jump exercises an
+  // observation gap; it does not claim that the physical OS was suspended.
+  const replacementStore = new ChatContinuityStore(dataDir);
+  const replacement = new FakeClient();
+  replacement.goalStatus = "active";
+  replacement.goalObjective = first.goalObjective;
+  replacement.latestTurnId = "actually-started-while-watcher-was-away";
+  replacement.latestTurnStatus = "inProgress";
+  replacement.wakeThread = async () => { wakeCalls++; };
+  const controller = new ChatContinuityController({ client: replacement, store: replacementStore });
+  const events = await controller.reconcile(summary(100), { now: 86420 });
+  assert.equal(events.filter(e => e.activationPhase === "started").length, 1);
+  await controller.reconcile(summary(100), { now: 86480 });
+  const after = await replacementStore.get("thread-1");
+  assert.equal(wakeCalls, 1);
+  assert.equal(after.initialGoal.objective, "Preserve the exact user-approved task");
+  assert.equal(after.executionObservedAt, 86420);
+  assert.equal(after.workspaceValidationRequired, true);
+  assert.equal(replacement.calls.some(c => c.method === "thread/goal/set"), false);
+});
+
+test("a long observation gap never turns unknown or still-live execution into a restart", async () => {
+  for (const status of ["unknown", "inProgress"]) {
+    const store = new MemoryChatContinuityStore([pausedChat({
+      status: "native_goal_active", resumedAt: 20, wakeAdmissionVersion: 1,
+      pausedTurnId: "turn-1", wakeAttempts: 1, wakeRetryAt: 50,
+      workspaceValidationRequired: true,
+    })]);
+    const client = new FakeClient();
+    client.goalStatus = "active";
+    client.latestTurnStatus = status;
+    let wakes = 0;
+    client.wakeThread = async () => { wakes++; };
+    const events = await new ChatContinuityController({ client, store })
+      .reconcile(summary(100), { now: 86420 });
+    assert.deepEqual(events, []);
+    assert.equal(wakes, 0);
+    assert.equal((await store.get("thread-1")).status, "native_goal_active");
+    assert.equal(client.calls.some(c => c.method === "thread/goal/set"), false);
+  }
+});
+
+test("first-tool validation cannot hide actual execution from the replacement watcher", async () => {
+  const store = new MemoryChatContinuityStore([pausedChat({
+    status: "native_goal_active", resumedAt: 20, wakeAttempts: 1, wakeRetryAt: 50,
+    pausedTurnId: "turn-1", wakeSourceTurnId: "turn-1",
+    // PreToolUse has already replaced turnId with the resumed turn.
+    turnId: "resumed-and-validated", workspaceValidatedAt: 21,
+    workspaceValidationRequired: false,
+  })]);
+  const client = new FakeClient();
+  client.goalStatus = "active";
+  client.latestTurnId = "resumed-and-validated";
+  client.latestTurnStatus = "completed";
+  let wakes = 0;
+  client.wakeThread = async () => { wakes++; };
+  const controller = new ChatContinuityController({ client, store });
+  const events = await controller.reconcile(summary(100), { now: 86420 });
+  assert.equal(events.filter(e => e.activationPhase === "started").length, 1);
+  await controller.reconcile(summary(100), { now: 86480 });
+  assert.equal((await store.get("thread-1")).executionObservedAt, 86420);
+  assert.equal(wakes, 0);
+  assert.equal(client.calls.some(c => c.method === "thread/goal/set"), false);
+});
+
+test("history RPC racing a successful Hook preserves the fresh workspace validation", async () => {
+  const store = new MemoryChatContinuityStore([pausedChat({
+    status: "native_goal_active", resumedAt: 20, pausedTurnId: "turn-1",
+    workspaceValidationRequired: true,
+  })]);
+  const client = new FakeClient();
+  client.goalStatus = "active";
+  client.latestTurnId = "resumed-turn";
+  client.latestTurnStatus = "inProgress";
+  const request = client.request.bind(client);
+  client.request = async (method, params) => {
+    if (method === "thread/turns/list") {
+      const current = await store.get("thread-1");
+      await store.put({ ...current, turnId: "resumed-turn",
+        workspaceValidationRequired: false, workspaceValidatedAt: 21 });
+    }
+    return request(method, params);
+  };
+  await new ChatContinuityController({ client, store }).reconcile(summary(100), { now: 30 });
+  const after = await store.get("thread-1");
+  assert.equal(after.workspaceValidationRequired, false);
+  assert.equal(after.workspaceValidatedAt, 21);
+  assert.equal(after.executionObservedAt, 30);
+});
+
+test("history RPC racing a new explicit user task cannot overwrite that task", async () => {
+  const store = new MemoryChatContinuityStore([pausedChat({
+    status: "native_goal_active", resumedAt: 20, pausedTurnId: "turn-1",
+  })]);
+  const client = new FakeClient();
+  client.goalStatus = "active";
+  client.latestTurnId = "explicit-user-turn";
+  client.latestTurnStatus = "inProgress";
+  const request = client.request.bind(client);
+  client.request = async (method, params) => {
+    if (method === "thread/turns/list") {
+      await store.put({ sessionId: "thread-1", status: "observing",
+        turnId: "explicit-user-turn", initialGoal: { objective: "New user task" } });
+    }
+    return request(method, params);
+  };
+  const events = await new ChatContinuityController({ client, store })
+    .reconcile(summary(100), { now: 30 });
+  assert.deepEqual(events, []);
+  const after = await store.get("thread-1");
+  assert.equal(after.status, "observing");
+  assert.equal(after.initialGoal.objective, "New user task");
+  assert.equal(after.executionObservedAt, undefined);
+});
+
+test("a different replayed turn id without lifecycle evidence does not prove execution", async () => {
+  const store = new MemoryChatContinuityStore([pausedChat({
+    status: "native_goal_active", resumedAt: 20, pausedTurnId: "turn-1",
+    wakeAttempts: 1, workspaceValidationRequired: true,
+  })]);
+  const client = new FakeClient();
+  client.goalStatus = "active";
+  client.latestTurnId = "metadata-only-turn";
+  client.latestTurnStatus = "unknown";
+  let wakes = 0;
+  client.wakeThread = async () => { wakes++; };
+  const events = await new ChatContinuityController({ client, store })
+    .reconcile(summary(100), { now: 86420 });
+  assert.deepEqual(events, []);
+  assert.equal(wakes, 0);
+  assert.equal((await store.get("thread-1")).executionObservedAt, undefined);
+  assert.equal(client.calls.some(c => c.method === "thread/goal/set"), false);
+});
+
+test("quota failure during inference recovers with no later tool or Stop event", async () => {
+  const store = new MemoryChatContinuityStore([observingChat()]);
+  const client = new FakeClient();
+  client.goalStatus = "active";
+  client.goalObjective = "Finish the original user task";
+  const request = client.request.bind(client);
+  client.request = async (method, params) => method === "thread/turns/list"
+    ? { data: [{ id: "turn-1", status: "failed", error: { codexErrorInfo: "UsageLimitExceeded" } }] }
+    : request(method, params);
+  const controller = new ChatContinuityController({ client, store });
+  await controller.reconcile(summary(100), { now: 200 });
+  const record = await store.get("thread-1");
+  assert.equal(record.status, "native_goal_active");
+  assert.equal(record.checkpoint.source, "watcher_no_tool_fallback");
+  assert.match(record.checkpoint.continuationGoal.objective, /Finish the original user task/);
+  assert.deepEqual(client.calls.filter(c => c.method === "thread/goal/set").map(c => c.params.status), ["paused", "active"]);
+});
+
+test("at the hard floor a live inference gets a pending checkpoint but is not assumed stopped", async () => {
+  const store = new MemoryChatContinuityStore([observingChat()]);
+  const client = new FakeClient();
+  client.goalStatus = "active";
+  client.goalObjective = "Finish the original user task";
+  client.latestTurnStatus = "inProgress";
+  await new ChatContinuityController({ client, store }).reconcile(summary(9), { now: 200 });
+  assert.equal((await store.get("thread-1")).status, "checkpoint_requested");
+  assert.equal(client.goalStatus, "paused");
+  assert.equal(client.calls.some(c => c.method === "turn/start"), false);
+});
+
+test("watcher never pauses or overwrites a user-changed Goal", async () => {
+  const store = new MemoryChatContinuityStore([observingChat()]);
+  const client = new FakeClient();
+  client.goalStatus = "active"; client.goalObjective = "New user objective";
+  const events = await new ChatContinuityController({ client, store }).reconcile(summary(9), { now: 200 });
+  assert.equal(events[0].reason, "native_goal_changed");
+  assert.equal(client.calls.some(c => c.method === "thread/goal/set"), false);
+});
+
+test("a normally completed no-Goal turn is not restarted when quota later falls", async () => {
+  const store = new MemoryChatContinuityStore([observingChat({ initialGoal: null })]);
+  const client = new FakeClient();
+  client.goalStatus = null;
+  await new ChatContinuityController({ client, store }).reconcile(summary(9), { now: 200 });
+  assert.equal((await store.get("thread-1")).status, "complete");
+  assert.equal(client.calls.some(c => c.method === "thread/goal/set"), false);
+});
+
+test("watcher does not resume an explicit user interruption without a Stop event", async () => {
+  const store = new MemoryChatContinuityStore([observingChat()]);
+  const client = new FakeClient(); client.latestTurnStatus = "interrupted";
+  await new ChatContinuityController({ client, store }).reconcile(summary(9), { now: 200 });
+  assert.equal((await store.get("thread-1")).status, "complete");
+  assert.equal(client.calls.some(c => c.method === "thread/goal/set"), false);
+});
+
+test("a quota failure without Stop or final text repairs the pending checkpoint and requests recovery once", async () => {
+  const objective = "Keep this exact user-approved objective";
+  const store = new MemoryChatContinuityStore([pausedChat({
+    status: "checkpoint_requested", initialGoal: { objective }, goalAtPause: { objective },
+    checkpoint: { workspaceFingerprint: "same" },
+  })]);
+  const client = new FakeClient();
+  client.goalObjective = objective;
+  client.latestTurnStatus = "failed";
+  const controller = new ChatContinuityController({ store, client });
+  const events = await controller.reconcile(summary(100), { now: 20 });
+  const record = await store.get("thread-1");
+  assert.equal(record.status, "native_goal_active");
+  assert.equal(record.checkpoint.repairedFromTurnStatus, "failed");
+  assert.match(record.checkpoint.continuationGoal.objective, /Keep this exact user-approved objective/);
+  assert.match(record.checkpoint.summary, /No final progress report/);
+  assert.equal(events.at(-1).activationPhase, "requested");
+  await controller.reconcile(summary(100), { now: 21 });
+  assert.equal(client.calls.filter(c => c.method === "thread/goal/set").length, 1);
+});
+
+test("pending checkpoint waits for a live turn even after a long observation gap", async () => {
+  const store = new MemoryChatContinuityStore([pausedChat({ status: "checkpoint_requested" })]);
+  const client = new FakeClient();
+  client.latestTurnStatus = "inProgress";
+  await new ChatContinuityController({ store, client }).reconcile(summary(100), { now: 100000 });
+  assert.equal((await store.get("thread-1")).status, "checkpoint_requested");
+  assert.equal(client.calls.some(c => c.method === "thread/goal/set"), false);
+});
+
+test("pending checkpoint without a pause-time snapshot alerts instead of silently disappearing or inventing a baseline", async () => {
+  const store = new MemoryChatContinuityStore([pausedChat({
+    status: "checkpoint_requested", checkpoint: {},
+  })]);
+  const client = new FakeClient();
+  client.latestTurnStatus = "failed";
+  const events = await new ChatContinuityController({ store, client }).reconcile(summary(100), { now: 20 });
+  assert.equal((await store.get("thread-1")).status, "needs_attention");
+  assert.equal(events[0].reason, "checkpoint_missing_fingerprint");
+  assert.equal(client.calls.some(c => c.method === "thread/goal/set"), false);
+});
+
+test("pending checkpoint survives offline and replacement watcher before recovery", async () => {
+  const store = new MemoryChatContinuityStore([pausedChat({ status: "checkpoint_requested" })]);
+  await new ChatContinuityController({ store, client: {
+    async request() { throw new Error("network offline"); },
+  } }).reconcile(summary(100), { now: 20 });
+  assert.equal((await store.get("thread-1")).retryNotBefore, 50);
+  const client = new FakeClient();
+  client.goalStatus = null;
+  client.latestTurnStatus = "failed";
+  const controller = new ChatContinuityController({ store, client });
+  await controller.reconcile(summary(100), { now: 49 });
+  assert.equal(client.calls.length, 0);
+  await controller.reconcile(summary(100), { now: 50 });
+  assert.equal((await store.get("thread-1")).status, "native_goal_active");
+});
+
+test("pending checkpoint never resumes over a newer turn or an explicit interruption", async () => {
+  for (const kind of ["newer", "interrupted"]) {
+    const store = new MemoryChatContinuityStore([pausedChat({ status: "checkpoint_requested" })]);
+    const client = new FakeClient();
+    if (kind === "newer") client.latestTurnId = "new-user-turn";
+    else client.latestTurnStatus = "interrupted";
+    const events = await new ChatContinuityController({ store, client }).reconcile(summary(100), { now: 20 });
+    assert.equal(events[0].type, "chat_continuity_attention");
+    assert.equal(client.calls.some(c => c.method === "thread/goal/set"), false);
+  }
+});
+
+test("Goal activation arms workspace validation before the RPC can dispatch tools", async () => {
+  const store = new MemoryChatContinuityStore([pausedChat()]);
+  const client = new FakeClient();
+  const originalRequest = client.request.bind(client);
+  client.request = async (method, params) => {
+    if (method === "thread/goal/set") {
+      const record = await store.get("thread-1");
+      assert.equal(record.status, "resuming");
+      assert.equal(record.workspaceValidationRequired, true);
+    }
+    return originalRequest(method, params);
+  };
+  await new ChatContinuityController({ store, client }).reconcile(summary(100), { now: 20 });
+});
+
+test("Goal activation with no actual new turn produces an alert rather than reporting execution", async () => {
+  const store = new MemoryChatContinuityStore([pausedChat()]);
+  const client = new FakeClient();
+  const controller = new ChatContinuityController({ store, client });
+  const events = await controller.reconcile(summary(100), { now: 20 });
+  assert.equal(events[0].activationPhase, "requested");
+  const stalled = await controller.reconcile(summary(100), { now: 200 });
+  assert.equal(stalled[0].reason, "native_goal_not_started");
+  assert.equal((await store.get("thread-1")).status, "needs_attention");
+});
+
+test("a new native turn is observed once before announcing actual execution", async () => {
+  const store = new MemoryChatContinuityStore([pausedChat()]);
+  const client = new FakeClient();
+  const controller = new ChatContinuityController({ store, client });
+  await controller.reconcile(summary(100), { now: 20 });
+  client.latestTurnId = "actual-new-turn";
+  client.latestTurnStatus = "inProgress";
+  assert.equal((await controller.reconcile(summary(100), { now: 21 }))[0].activationPhase, "started");
+  assert.deepEqual(await controller.reconcile(summary(100), { now: 22 }), []);
+});
+
 test("ordinary chat reactivates its native Goal exactly once and releases its lock", async () => {
   const store = new MemoryChatContinuityStore([pausedChat()]);
   const client = new FakeClient();

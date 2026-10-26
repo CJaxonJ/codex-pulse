@@ -1,10 +1,46 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+test("severity distinguishes public resets and expiring cards from ordinary recovery", () => {
+  for (const type of ["tibo_confirmed", "personal_landed", "public_reset_landed", "credit_auto_failed"]) {
+    assert.equal(notificationForEvent({ type }).severity, "critical");
+    assert.equal(notificationForEvent({ type }).persistent, true);
+  }
+  assert.equal(notificationForEvent({ type: "tibo_preview" }).severity, "warning");
+  assert.equal(notificationForEvent({ type: "reset", resetKind: "five_hour", remainingPercent: 100, weeklyRemainingPercent: 42 }).severity, "info");
+  const credit = notificationForEvent({ type: "credit_expiring", hoursRemaining: 9 / 60 });
+  assert.match(credit.title, /9 分钟/);
+  assert.match(credit.body, /不是普通额度窗口/);
+  assert.equal(credit.severity, "critical");
+  assert.equal(notificationForEvent({ type: "credit_expiring", hoursRemaining: 1 }).severity, "warning");
+  assert.ok(nativeNotificationArgs({ nativeApp: "test", title: "t", body: "b", severity: "critical", action: "preview" }).includes("--preview-action"));
+});
+
 import {
   nativeNotificationArgs,
   notificationForEvent,
+  applyNotificationPreferences,
 } from "../src/macos-notifier.mjs";
+
+test("notification preferences mute early warnings but never silently disable ten-percent protection alerts", () => {
+  const prefs = { quotaAlertsEnabled: false, creditAlertsEnabled: false, persistentAlertsEnabled: false, soundEnabled: false, tiboSource: "disabled" };
+  for (const event of [{ type: "threshold", threshold: 35 }, { type: "forecast" }, { type: "credit_expiring" }, { type: "tibo_confirmed" }]) {
+    assert.equal(applyNotificationPreferences(event, { title: "notice" }, prefs).enabled, false);
+  }
+  for (const event of [{ type: "threshold", threshold: 10 }, { type: "chat_continuity_paused" }, { type: "credit_auto_failed" }, { type: "reset", resetKind: "five_hour" }]) {
+    const result = applyNotificationPreferences(event, { persistent: true }, prefs);
+    assert.equal(result.enabled, true);
+    assert.equal(result.notification.persistent, false);
+    assert.equal(result.notification.sound, false);
+  }
+  assert.ok(nativeNotificationArgs({ nativeApp: "app", title: "t", body: "b", sound: false }).includes("--silent"));
+});
+
+test("a requested Goal is not described as an executing task", () => {
+  const requested = notificationForEvent({ type: "chat_continuity_resumed", activationPhase: "requested" });
+  assert.match(requested.body, /尚未确认任务启动/);
+  assert.doesNotMatch(requested.title, /已自动续跑/);
+});
 
 test("attention notifications tell the user what is actually blocking resume", () => {
   const input = notificationForEvent({
