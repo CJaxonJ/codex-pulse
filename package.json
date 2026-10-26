@@ -12,6 +12,7 @@
   "type": "module",
   "scripts": {
     "brand:build": "node scripts/build-brand-assets.mjs",
+    "privacy:check": "node scripts/check-public-content.mjs",
     "status": "node bin/codex-pulse.mjs status",
     "watch": "node bin/codex-pulse.mjs watch",
     "watch:once": "node bin/codex-pulse.mjs watch --once",

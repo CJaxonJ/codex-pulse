@@ -475,7 +475,9 @@ npm run package:macos
 ```
 
 The release build produces a single-folder ZIP plus `SHA256SUMS.txt`, then checks
-the archive layout and checksum before succeeding.
+the archive layout, checksum and extracted public content before succeeding.
+Maintainer submission notes are not included in future archives. Published
+versioned archives are not silently replaced by documentation-only updates.
 
 ## Project policies
 
@@ -483,6 +485,7 @@ the archive layout and checksum before succeeding.
 - [Support](./SUPPORT.md)
 - [Security](./SECURITY.md)
 - [Privacy](./PRIVACY.md)
+- [Public disclosure](./docs/public-disclosure.md)
 - [Code of Conduct](./CODE_OF_CONDUCT.md)
 
 Codex Pulse is available under the [MIT License](./LICENSE).

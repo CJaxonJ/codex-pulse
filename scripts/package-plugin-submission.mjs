@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import os from "node:os";
 import assert from "node:assert/strict";
+import { scanPublicDirectory } from "./public-content-policy.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const local = JSON.parse(readFileSync(path.join(root, "plugin/.codex-plugin/plugin.json"), "utf8"));
@@ -38,6 +39,7 @@ try {
   writeFileSync(path.join(stage, ".codex-plugin/plugin.json"), JSON.stringify(manifest, null, 2));
   for (const entry of ["skills", "assets"]) cpSync(path.join(root, "plugin", entry), path.join(stage, entry), { recursive: true });
   for (const entry of ["LICENSE", "PRIVACY.md"]) cpSync(path.join(root, entry), path.join(stage, entry));
+  assert.deepEqual(scanPublicDirectory(stage).findings, [], "Directory helper must not contain private content");
   execFileSync("/usr/bin/ditto", ["-c", "-k", "--norsrc", stage, zip]);
   const entries = execFileSync("/usr/bin/unzip", ["-Z1", zip], { encoding: "utf8" }).trim().split("\n");
   for (const required of [".codex-plugin/plugin.json", "skills/setup/SKILL.md", "assets/logo.svg", "PRIVACY.md"]) assert.ok(entries.includes(required));

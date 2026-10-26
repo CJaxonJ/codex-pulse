@@ -6,6 +6,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { scanPublicDirectory } from "./public-content-policy.mjs";
 
 const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = JSON.parse(readFileSync(path.join(projectDir, "package.json"), "utf8"));
@@ -97,6 +98,10 @@ if (failures.length) {
 const extracted = mkdtempSync(path.join(os.tmpdir(), "pulse-package-verify-"));
 try {
   execFileSync("/usr/bin/ditto", ["-x", "-k", zipPath, extracted]);
+  const privacy = scanPublicDirectory(extracted);
+  if (privacy.findings.length) {
+    throw new Error(`Archive public-content check failed: ${JSON.stringify(privacy.findings)}`);
+  }
   for (const name of ["开始使用.md", "安装 Codex Pulse.command"]) {
     const actual = readFileSync(path.join(extracted, bundleName, name));
     if (!actual.equals(readFileSync(path.join(projectDir, name)))) {
