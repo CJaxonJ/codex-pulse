@@ -8,9 +8,9 @@
 <p align="center">Codex 快没额度时，帮你留住进度；恢复后，安全接着做。</p>
 
 <p align="center">
-  <a href="https://github.com/CJaxonJ/codex-pulse/releases/download/v0.9.19/Codex-Pulse-0.9.19-macOS.zip"><strong>下载 macOS 版 · v0.9.19</strong></a> ·
+  <a href="https://github.com/CJaxonJ/codex-pulse/releases/download/v0.9.20/Codex-Pulse-0.9.20-macOS.zip"><strong>下载 macOS 版 · v0.9.20</strong></a> ·
   <a href="./开始使用.md">安装指南</a> ·
-  <a href="./docs/releases/v0.9.19.md">更新记录</a>
+  <a href="./docs/releases/v0.9.20.md">更新记录</a>
 </p>
 
 ## 能帮你做什么
