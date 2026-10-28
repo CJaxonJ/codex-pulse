@@ -1,4 +1,5 @@
 #import "PulseSettingsWindow.h"
+#import "PulsePostLink.h"
 
 @interface PulseFlippedView : NSView
 @end
@@ -24,7 +25,7 @@
 }
 @end
 
-@interface PulseSettingsWindow ()
+@interface PulseSettingsWindow () <NSTableViewDataSource, NSTableViewDelegate>
 @property(copy) NSString *directory;
 @property(copy) PulseCommandRunner runner;
 @property(copy) dispatch_block_t preview;
@@ -52,11 +53,31 @@
 @property(copy) dispatch_block_t afterSave;
 @property(copy) dispatch_block_t afterLoad;
 @property(copy) void (^afterCreditChange)(BOOL);
+@property(strong) NSWindow *tiboWindow;
+@property(strong) NSButton *tiboHistoryButton;
+@property(strong) NSPopover *tiboHistory;
+@property(strong) NSTableView *tiboTable;
+@property(assign) NSInteger selectedTiboIndex;
+@property(strong) NSTextField *tiboStatus;
+@property(strong) NSTextField *tiboStatusNote;
+@property(strong) NSTextField *tiboSelection;
+@property(strong) NSTextField *tiboMetadata;
+@property(strong) NSTextField *tiboTiming;
+@property(strong) NSTextField *tiboFeedback;
+@property(strong) NSTextView *tiboDetail;
+@property(strong) NSButton *tiboSourceButton;
+@property(strong) NSButton *tiboParentButton;
+@property(nonatomic, copy) NSArray<NSDictionary *> *tiboEvents;
+@property(copy) BOOL (^sourceOpener)(NSURL *);
 @end
 
 @implementation PulseSettingsWindow
 
 - (NSColor *)green { return [NSColor colorWithRed:0.18 green:0.52 blue:0.46 alpha:1]; }
+- (void)setTiboEvents:(NSArray<NSDictionary *> *)events {
+    _tiboEvents = [events copy];
+    [self.tiboTable reloadData];
+}
 - (NSDictionary *)readJSON:(NSString *)file {
     NSData *data = [NSData dataWithContentsOfFile:[self.directory stringByAppendingPathComponent:file]];
     id value = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
@@ -148,9 +169,13 @@
     [quota addSubview:self.weeklyBar];
     [self label:@"5 小时窗口恢复" frame:NSMakeRect(24, 120, 168, 24) size:14 weight:NSFontWeightRegular parent:quota].textColor = NSColor.secondaryLabelColor;
     self.resetText = [self label:@"待确认" frame:NSMakeRect(208, 120, 408, 24) size:14 weight:NSFontWeightMedium parent:quota];
-    self.recentText = [self label:@"暂无关键提醒" frame:NSMakeRect(24, 152, 592, 24) size:12 weight:NSFontWeightRegular parent:quota];
+    self.recentText = [self label:@"暂无关键提醒" frame:NSMakeRect(24, 152, 448, 24) size:12 weight:NSFontWeightRegular parent:quota];
     self.recentText.maximumNumberOfLines = 1;
     self.recentText.lineBreakMode = NSLineBreakByTruncatingTail;
+    NSButton *tibo = [NSButton buttonWithTitle:@"Tibo 动态" target:self action:@selector(openTibo:)];
+    tibo.frame = NSMakeRect(488, 148, 128, 32);
+    tibo.font = [NSFont systemFontOfSize:14 weight:NSFontWeightMedium];
+    [quota addSubview:tibo];
 
     [self section:@"额度保护" at:216 parent:body];
     NSView *protection = [self cardAt:248 height:88 parent:body];
@@ -359,11 +384,226 @@
     });
 }
 - (void)openPreview:(id)sender { if (self.preview) self.preview(); }
+- (void)openTibo:(id)sender { [self openTiboEvent:nil]; }
+- (void)openTiboEvent:(NSString *)eventId {
+    NSArray *saved = [self readJSON:@"user-events.json"][@"events"];
+    NSMutableArray *posts = [NSMutableArray array];
+    if ([saved isKindOfClass:NSArray.class]) for (id event in saved.reverseObjectEnumerator) {
+        if ([event isKindOfClass:NSDictionary.class] && PulseIsTiboPost(event)) [posts addObject:event];
+        if (posts.count == 10) break;
+    }
+    self.tiboEvents = posts;
+    if (!self.tiboWindow) {
+        self.tiboWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 640, 480)
+            styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable backing:NSBackingStoreBuffered defer:NO];
+        self.tiboWindow.title = @"Tibo 动态";
+        self.tiboWindow.backgroundColor = NSColor.windowBackgroundColor;
+        self.tiboWindow.releasedWhenClosed = NO;
+        self.tiboWindow.delegate = self;
+        NSView *root = [[PulseFlippedView alloc] initWithFrame:NSMakeRect(0, 0, 640, 480)];
+        root.wantsLayer = YES;
+        [self.window.effectiveAppearance performAsCurrentDrawingAppearance:^{
+            root.layer.backgroundColor = NSColor.windowBackgroundColor.CGColor;
+        }];
+        self.tiboWindow.contentView = root;
+        [self label:@"Tibo 重置动态" frame:NSMakeRect(24, 24, 384, 28) size:18 weight:NSFontWeightSemibold parent:root];
+        self.tiboHistoryButton = [NSButton buttonWithTitle:@"历史记录" target:self action:@selector(showTiboHistory:)];
+        self.tiboHistoryButton.frame = NSMakeRect(496, 24, 120, 28);
+        self.tiboHistoryButton.bordered = NO;
+        self.tiboHistoryButton.font = [NSFont systemFontOfSize:14];
+        self.tiboHistoryButton.contentTintColor = NSColor.secondaryLabelColor;
+        [root addSubview:self.tiboHistoryButton];
+        self.tiboStatus = [self label:@"暂无重置消息" frame:NSMakeRect(24, 80, 592, 32) size:24 weight:NSFontWeightSemibold parent:root];
+        self.tiboStatusNote = [self label:@"" frame:NSMakeRect(24, 120, 592, 40) size:12 weight:NSFontWeightRegular parent:root];
+        self.tiboStatusNote.textColor = NSColor.secondaryLabelColor;
+        [self separatorAt:168 parent:root];
+        self.tiboSelection = [self label:@"" frame:NSMakeRect(24, 184, 592, 24) size:14 weight:NSFontWeightMedium parent:root];
+        self.tiboMetadata = [self label:@"" frame:NSMakeRect(24, 212, 592, 16) size:12 weight:NSFontWeightRegular parent:root];
+        self.tiboMetadata.textColor = NSColor.secondaryLabelColor;
+        self.tiboTiming = [self label:@"" frame:NSMakeRect(24, 240, 592, 40) size:12 weight:NSFontWeightRegular parent:root];
+        self.tiboTiming.textColor = NSColor.secondaryLabelColor;
+        NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(24, 288, 592, 104)];
+        scroll.hasVerticalScroller = YES; scroll.autohidesScrollers = YES;
+        scroll.drawsBackground = NO;
+        self.tiboDetail = [[NSTextView alloc] initWithFrame:scroll.bounds];
+        self.tiboDetail.editable = NO; self.tiboDetail.selectable = YES;
+        self.tiboDetail.verticallyResizable = YES; self.tiboDetail.horizontallyResizable = NO;
+        self.tiboDetail.maxSize = NSMakeSize(CGFLOAT_MAX, CGFLOAT_MAX);
+        self.tiboDetail.font = [NSFont systemFontOfSize:16];
+        self.tiboDetail.textContainerInset = NSMakeSize(0, 4);
+        self.tiboDetail.textColor = NSColor.textColor;
+        self.tiboDetail.drawsBackground = NO;
+        self.tiboDetail.autoresizingMask = NSViewWidthSizable;
+        self.tiboDetail.textContainer.widthTracksTextView = YES;
+        scroll.documentView = self.tiboDetail;
+        [root addSubview:scroll];
+        self.tiboSourceButton = [NSButton buttonWithTitle:@"查看 X 原帖" target:self action:@selector(openTiboSource:)];
+        self.tiboSourceButton.frame = NSMakeRect(24, 408, 160, 40);
+        self.tiboSourceButton.bezelStyle = NSBezelStyleRounded;
+        self.tiboSourceButton.font = [NSFont systemFontOfSize:16 weight:NSFontWeightSemibold];
+        self.tiboSourceButton.bordered = NO;
+        self.tiboSourceButton.wantsLayer = YES;
+        self.tiboSourceButton.layer.cornerRadius = 8;
+        self.tiboSourceButton.layer.backgroundColor = self.green.CGColor;
+        self.tiboSourceButton.contentTintColor = NSColor.whiteColor;
+        [root addSubview:self.tiboSourceButton];
+        self.tiboParentButton = [NSButton buttonWithTitle:@"查看上下文" target:self action:@selector(openTiboParent:)];
+        self.tiboParentButton.frame = NSMakeRect(200, 416, 128, 24);
+        self.tiboParentButton.bordered = NO;
+        self.tiboParentButton.font = [NSFont systemFontOfSize:14];
+        self.tiboParentButton.contentTintColor = NSColor.secondaryLabelColor;
+        [root addSubview:self.tiboParentButton];
+        self.tiboFeedback = [self label:@"" frame:NSMakeRect(24, 456, 592, 16) size:12 weight:NSFontWeightRegular parent:root];
+        self.tiboFeedback.textColor = NSColor.secondaryLabelColor;
+
+        self.tiboHistory = [[NSPopover alloc] init];
+        self.tiboHistory.behavior = NSPopoverBehaviorTransient;
+        NSViewController *controller = [[NSViewController alloc] init];
+        NSView *history = [[PulseFlippedView alloc] initWithFrame:NSMakeRect(0, 0, 320, 320)];
+        history.wantsLayer = YES;
+        [self.window.effectiveAppearance performAsCurrentDrawingAppearance:^{
+            history.layer.backgroundColor = NSColor.windowBackgroundColor.CGColor;
+        }];
+        controller.view = history;
+        [self label:@"最近 10 条 · 按收到时间排序" frame:NSMakeRect(16, 12, 288, 24) size:12 weight:NSFontWeightRegular parent:history].textColor = NSColor.secondaryLabelColor;
+        NSScrollView *historyScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(8, 48, 304, 256)];
+        historyScroll.hasVerticalScroller = YES; historyScroll.autohidesScrollers = YES;
+        historyScroll.drawsBackground = NO;
+        self.tiboTable = [[NSTableView alloc] initWithFrame:historyScroll.bounds];
+        NSTableColumn *column = [[NSTableColumn alloc] initWithIdentifier:@"announcement"];
+        column.width = 288; [self.tiboTable addTableColumn:column];
+        self.tiboTable.headerView = nil; self.tiboTable.rowHeight = 48;
+        self.tiboTable.backgroundColor = NSColor.clearColor;
+        self.tiboTable.dataSource = self; self.tiboTable.delegate = self;
+        self.tiboTable.allowsEmptySelection = NO;
+        self.tiboTable.accessibilityLabel = @"Tibo 动态历史列表";
+        historyScroll.documentView = self.tiboTable; [history addSubview:historyScroll];
+        self.tiboHistory.contentViewController = controller;
+    }
+    NSInteger selected = 0;
+    for (NSUInteger index = 0; index < posts.count; index++) {
+        NSDictionary *entry = posts[index];
+        if (eventId.length && [entry[@"id"] isEqual:eventId]) selected = index;
+    }
+    self.tiboHistoryButton.enabled = posts.count > 0;
+    self.selectedTiboIndex = selected;
+    [self.tiboTable reloadData];
+    if (posts.count) [self.tiboTable selectRowIndexes:[NSIndexSet indexSetWithIndex:selected] byExtendingSelection:NO];
+    [self selectTibo:nil];
+    if (eventId.length && ![posts filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *entry, NSDictionary *bindings) {
+        return [entry[@"id"] isEqual:eventId];
+    }]].count) self.tiboFeedback.stringValue = @"这条提醒已不在本机保留记录中，已显示最新动态。";
+    [self.tiboWindow center]; [self.tiboWindow makeKeyAndOrderFront:nil];
+    [NSApp activateIgnoringOtherApps:YES];
+}
+- (NSDictionary *)selectedTibo {
+    NSInteger index = self.selectedTiboIndex;
+    return index >= 0 && index < self.tiboEvents.count ? self.tiboEvents[index] : @{};
+}
+- (NSString *)tiboKind:(NSDictionary *)event {
+    NSString *type = event[@"type"];
+    if ([type isEqual:@"tibo_confirmed"] || [type isEqual:@"public_reset_landed"]) return @"重置确认";
+    if ([type isEqual:@"tibo_preview_expired"]) return @"预告时间已过";
+    if ([type isEqual:@"tibo_limits_update"]) return @"额度动态";
+    return @"重置预告";
+}
+- (NSString *)tiboTimestamp:(NSDictionary *)event includeYear:(BOOL)year {
+    NSNumber *stamp = [event[@"sourceAt"] isKindOfClass:NSNumber.class] ? event[@"sourceAt"] : nil;
+    if (!stamp) return @"原帖时间未保存";
+    NSDateFormatter *format = [[NSDateFormatter alloc] init];
+    format.dateFormat = year ? @"yyyy年M月d日 HH:mm" : @"M月d日 HH:mm";
+    format.timeZone = [NSTimeZone timeZoneWithName:@"Asia/Shanghai"];
+    return [format stringFromDate:[NSDate dateWithTimeIntervalSince1970:stamp.doubleValue]];
+}
+- (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView { return self.tiboEvents.count; }
+- (NSView *)tableView:(NSTableView *)tableView viewForTableColumn:(NSTableColumn *)column row:(NSInteger)row {
+    // AppKit may finish an old layout while a refreshed history has fewer rows.
+    if (row < 0 || row >= self.tiboEvents.count) return nil;
+    NSDictionary *event = self.tiboEvents[row];
+    NSTableCellView *cell = [[NSTableCellView alloc] initWithFrame:NSMakeRect(0, 0, 288, 48)];
+    NSTextField *title = [self label:[self tiboKind:event] frame:NSMakeRect(8, 24, 272, 20) size:14 weight:NSFontWeightMedium parent:cell];
+    cell.textField = title;
+    [self label:[NSString stringWithFormat:@"%@ · 北京时间", [self tiboTimestamp:event includeYear:NO]] frame:NSMakeRect(8, 4, 272, 16) size:12 weight:NSFontWeightRegular parent:cell].textColor = NSColor.secondaryLabelColor;
+    return cell;
+}
+- (void)tableViewSelectionDidChange:(NSNotification *)notification {
+    if (self.tiboTable.selectedRow < 0) return;
+    self.selectedTiboIndex = self.tiboTable.selectedRow;
+    [self selectTibo:nil]; [self.tiboHistory close];
+}
+- (void)showTiboHistory:(id)sender {
+    CGFloat height = MIN(320, 64 + self.tiboEvents.count * (self.tiboTable.rowHeight + self.tiboTable.intercellSpacing.height));
+    NSView *view = self.tiboHistory.contentViewController.view;
+    [view setFrameSize:NSMakeSize(320, height)];
+    for (NSView *child in view.subviews) if ([child isKindOfClass:NSScrollView.class])
+        child.frame = NSMakeRect(8, 48, 304, height - 64);
+    self.tiboHistory.contentSize = view.frame.size;
+    [self.tiboHistory showRelativeToRect:self.tiboHistoryButton.bounds ofView:self.tiboHistoryButton preferredEdge:NSRectEdgeMaxY];
+    [self.tiboTable scrollRowToVisible:self.selectedTiboIndex];
+}
+- (void)selectTibo:(id)sender {
+    NSDictionary *event = [self selectedTibo];
+    NSURL *source = PulseXPostURL(event[@"sourceUrl"]), *parent = PulseXPostURL(event[@"parentUrl"]);
+    self.tiboSourceButton.enabled = source != nil;
+    self.tiboSourceButton.alphaValue = source ? 1 : 0.45;
+    self.tiboSourceButton.toolTip = source ? source.absoluteString : @"这条旧记录未保存有效原帖链接";
+    self.tiboParentButton.hidden = parent == nil;
+    NSString *original = [event[@"sourceText"] isKindOfClass:NSString.class] ? event[@"sourceText"] : @"";
+    NSDictionary *latest = nil;
+    for (NSDictionary *item in self.tiboEvents) if (![item[@"type"] isEqual:@"tibo_limits_update"]) { latest = item; break; }
+    NSString *type = latest[@"type"];
+    if ([type isEqual:@"tibo_confirmed"] || [type isEqual:@"public_reset_landed"]) {
+        self.tiboStatus.stringValue = @"公共重置已确认";
+        self.tiboStatusNote.stringValue = @"这是最近收到的公共消息，个人到账以本机额度为准。";
+    } else if ([type isEqual:@"tibo_preview_expired"]) {
+        self.tiboStatus.stringValue = @"预告时间已过，尚未确认";
+        self.tiboStatusNote.stringValue = @"未收到确认不代表重置未发生，个人额度仍独立监控。";
+    } else if (latest) {
+        self.tiboStatus.stringValue = @"重置预告，尚未确认";
+        NSString *latestTitle = [latest[@"title"] isKindOfClass:NSString.class] ? latest[@"title"] : @"";
+        NSRange split = [latestTitle rangeOfString:@"｜"];
+        NSString *latestTiming = split.location == NSNotFound ? @"具体时间未定" : [latestTitle substringFromIndex:NSMaxRange(split)];
+        self.tiboStatusNote.stringValue = [NSString stringWithFormat:@"%@\n预告可能调整，不代表你的账户已到账。", latestTiming];
+    } else {
+        self.tiboStatus.stringValue = @"暂无重置消息";
+        self.tiboStatusNote.stringValue = @"收到公开预告或确认后，会在这里保留原文和入口。";
+    }
+    NSString *position = self.selectedTiboIndex == 0 ? @"最新" : @"此前的";
+    self.tiboSelection.stringValue = event.count ? [NSString stringWithFormat:@"你正在查看：%@%@", position, [self tiboKind:event]] : @"暂无历史记录";
+    self.tiboMetadata.stringValue = event.count ? [NSString stringWithFormat:@"%@（北京时间）· Tibo 的%@", [self tiboTimestamp:event includeYear:YES], parent ? @"评论" : @"公开帖子"] : @"";
+    NSString *title = [event[@"title"] isKindOfClass:NSString.class] ? event[@"title"] : @"";
+    NSRange divider = [title rangeOfString:@"｜"];
+    NSString *timing = divider.location != NSNotFound ? [title substringFromIndex:NSMaxRange(divider)] : @"";
+    self.tiboTiming.stringValue = timing.length ? [NSString stringWithFormat:@"%@%@", self.selectedTiboIndex ? @"当时预告：" : @"预告时间：", timing]
+        : [event[@"sourceTextKind"] isEqual:@"summary"] ? @"来源摘录 · 未获取全文" : @"原文";
+    if (latest == event && [type isEqual:@"tibo_preview"]) self.tiboTiming.stringValue = @"原文";
+    if ([timing containsString:@"或"] && !(latest == event && [type isEqual:@"tibo_preview"]))
+        self.tiboTiming.stringValue = [self.tiboTiming.stringValue stringByAppendingString:@"（时区表述有歧义）"];
+    if (!event.count) self.tiboTiming.stringValue = @"";
+    self.tiboDetail.string = original.length ? original : event.count ? @"这条记录未保存原文，可通过下方入口查看。" : @"收到的动态仅保存在本机。";
+    if ([event[@"sourceTextKind"] isEqual:@"summary"] && timing.length) self.tiboDetail.string = [@"来源摘录（未获取全文）\n" stringByAppendingString:self.tiboDetail.string];
+    self.tiboFeedback.stringValue = source ? @"" : event.count ? @"旧记录未保存有效原帖链接。" : @"";
+    [self.tiboDetail scrollRangeToVisible:NSMakeRange(0, 0)];
+}
+- (void)openTiboURL:(id)value {
+    NSURL *url = PulseXPostURL(value);
+    if (!url) return;
+    BOOL opened = self.sourceOpener ? self.sourceOpener(url) : [NSWorkspace.sharedWorkspace openURL:url];
+    if (!opened) {
+        self.tiboFeedback.stringValue = @"未能打开浏览器，下方链接可复制。";
+        if (![self.tiboDetail.string containsString:url.absoluteString])
+            self.tiboDetail.string = [self.tiboDetail.string stringByAppendingFormat:@"\n\n%@", url.absoluteString];
+        [self.tiboDetail scrollRangeToVisible:NSMakeRange(self.tiboDetail.string.length - 1, 1)];
+    }
+}
+- (void)openTiboSource:(id)sender { [self openTiboURL:[self selectedTibo][@"sourceUrl"]]; }
+- (void)openTiboParent:(id)sender { [self openTiboURL:[self selectedTibo][@"parentUrl"]]; }
 - (void)openProtection:(id)sender { if(self.protection) self.protection(); }
 - (void)openSystem:(id)sender {
     [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.Notifications-Settings.extension"]];
 }
 - (BOOL)windowShouldClose:(NSWindow *)sender {
+    if (sender == self.tiboWindow) return YES;
     if (self.saving || self.creditBusy) { self.feedback.stringValue = @"正在保存，请稍候"; return NO; }
     if (!self.saved || [[self draft] isEqual:self.saved]) return YES;
     NSAlert *alert = [[NSAlert alloc] init]; alert.messageText = @"还有未保存的更改";
@@ -372,7 +612,7 @@
     return [alert runModal] == NSAlertSecondButtonReturn;
 }
 - (void)windowWillClose:(NSNotification *)notification {
-    for(NSWindow *window in NSApp.windows) if(window!=self.window && window.isVisible) return;
+    for(NSWindow *window in NSApp.windows) if(window!=notification.object && window.isVisible) return;
     [NSApp terminate:nil];
 }
 
@@ -383,6 +623,83 @@
     NSBitmapImageRep *bitmap = [view bitmapImageRepForCachingDisplayInRect:view.bounds];
     [view cacheDisplayInRect:view.bounds toBitmapImageRep:bitmap];
     [[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:[root stringByAppendingPathComponent:name] atomically:YES];
+}
+- (BOOL)testTiboHistory {
+    [self openTiboEvent:@"public-first"];
+    NSMutableArray *opened = [NSMutableArray array];
+    self.sourceOpener = ^BOOL(NSURL *url) { [opened addObject:url.absoluteString]; return YES; };
+    BOOL empty = [NSProcessInfo.processInfo.environment[@"CODEX_PULSE_TEST_TIBO_EMPTY"] boolValue];
+    BOOL ok = self.tiboWindow.isVisible && [self validateLayoutIn:self.tiboWindow.contentView];
+    if (empty) ok = ok && !self.tiboHistoryButton.enabled && !self.tiboSourceButton.enabled
+        && [self.tiboStatus.stringValue isEqual:@"暂无重置消息"];
+    else {
+        ok = ok && self.tiboEvents.count == 3 && [[self selectedTibo][@"id"] isEqual:@"public-first"]
+            && [self.tiboDetail.string containsString:@"Lands by midnight PST."]
+            && [self.tiboStatus.stringValue isEqual:@"公共重置已确认"]
+            && [self.tiboSelection.stringValue containsString:@"此前的重置预告"]
+            && [self.tiboMetadata.stringValue containsString:@"北京时间"] && self.tiboSourceButton.enabled && !self.tiboParentButton.hidden
+            && [self.tiboTiming.stringValue containsString:@"当时预告"]
+            && ![self.tiboDetail.string containsString:@"https://"];
+        [self.tiboSourceButton performClick:nil]; [self.tiboParentButton performClick:nil];
+        ok = ok && [opened isEqual:@[@"https://x.com/thsottiaux/status/2115273253711409208", @"https://x.com/i/status/2115273064481218829"]];
+        NSString *root = NSProcessInfo.processInfo.environment[@"CODEX_PULSE_TEST_CAPTURE_DIR"];
+        NSView *view = self.tiboWindow.contentView;
+        [self.tiboWindow displayIfNeeded];
+        [self.tiboWindow.effectiveAppearance performAsCurrentDrawingAppearance:^{
+            NSBitmapImageRep *bitmap = [view bitmapImageRepForCachingDisplayInRect:view.bounds];
+            [view cacheDisplayInRect:view.bounds toBitmapImageRep:bitmap];
+            if (root.length) [[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:[root stringByAppendingPathComponent:@"tibo-history.png"] atomically:YES];
+        }];
+        // A legacy row must not reuse the previous row's actionable URL.
+        [self showTiboHistory:nil];
+        ok = ok && self.tiboHistory.isShown && self.tiboTable.numberOfRows == 3
+            && [[self selectedTibo][@"id"] isEqual:@"public-first"] && self.tiboTable.selectedRow == 1;
+        NSView *historyView = self.tiboHistory.contentViewController.view;
+        [historyView.window displayIfNeeded];
+        [historyView.effectiveAppearance performAsCurrentDrawingAppearance:^{
+            NSBitmapImageRep *bitmap = [historyView bitmapImageRepForCachingDisplayInRect:historyView.bounds];
+            [historyView cacheDisplayInRect:historyView.bounds toBitmapImageRep:bitmap];
+            if (root.length) [[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:[root stringByAppendingPathComponent:@"tibo-timeline.png"] atomically:YES];
+        }];
+        [self.tiboTable selectRowIndexes:[NSIndexSet indexSetWithIndex:2] byExtendingSelection:NO];
+        ok = ok && !self.tiboSourceButton.enabled && self.tiboParentButton.hidden
+            && [self.tiboFeedback.stringValue containsString:@"未保存有效原帖链接"];
+        [self.tiboHistory close];
+        [self openTiboSource:nil]; ok = ok && opened.count == 2;
+        [self openTiboEvent:@"not-retained"];
+        ok = ok && [self.tiboFeedback.stringValue containsString:@"已不在本机保留记录"];
+        NSMutableDictionary *longPost = [self.tiboEvents[1] mutableCopy];
+        longPost[@"sourceText"] = [[@"Public source paragraph.\n" stringByPaddingToLength:12000 withString:@"Public source paragraph.\n" startingAtIndex:0] stringByAppendingString:@"END-OF-ORIGINAL"];
+        self.tiboEvents = @[longPost]; self.selectedTiboIndex = 0; [self selectTibo:nil];
+        ok = ok && ![self tableView:self.tiboTable viewForTableColumn:nil row:2];
+        [self.tiboDetail.layoutManager ensureLayoutForTextContainer:self.tiboDetail.textContainer];
+        [self.tiboDetail scrollRangeToVisible:NSMakeRange(self.tiboDetail.string.length - 1, 1)];
+        ok = ok && [self.tiboDetail.string containsString:@"END-OF-ORIGINAL"]
+            && self.tiboDetail.enclosingScrollView.contentView.bounds.origin.y > 0;
+        self.sourceOpener = ^BOOL(NSURL *url) { return NO; };
+        [self openTiboSource:nil];
+        ok = ok && [self.tiboFeedback.stringValue hasPrefix:@"未能打开浏览器"]
+            && [self.tiboDetail.string containsString:@"https://x.com/"];
+        // Current state is independent of which historical row was clicked.
+        NSDictionary *preview = @{ @"id": @"preview", @"type": @"tibo_preview", @"sourceText": @"Soon" };
+        NSDictionary *expired = @{ @"id": @"expired", @"type": @"tibo_preview_expired" };
+        self.tiboEvents = @[preview, longPost]; self.selectedTiboIndex = 1; [self selectTibo:nil];
+        ok = ok && [self.tiboStatus.stringValue isEqual:@"重置预告，尚未确认"];
+        self.tiboEvents = @[expired, preview]; [self selectTibo:nil];
+        ok = ok && [self.tiboStatus.stringValue isEqual:@"预告时间已过，尚未确认"];
+        self.tiboEvents = @[@{ @"type": @"tibo_limits_update" }, @{ @"type": @"tibo_confirmed" }];
+        self.selectedTiboIndex = 0; [self selectTibo:nil];
+        ok = ok && [self.tiboStatus.stringValue isEqual:@"公共重置已确认"];
+    }
+    // Exercise the exact production notification-routing function with old notification metadata.
+    NSDictionary *info = @{@"pulseEventId": @"old-event", @"sourceUrl": @"https://x.com/thsottiaux/status/123"};
+    ok = ok && [PulseNotificationDestination(@"pulse-view-source", @"pulse-tibo-source", info)[@"url"] isEqual:info[@"sourceUrl"]]
+        && [PulseNotificationDestination(UNNotificationDefaultActionIdentifier, @"pulse-tibo-source", info)[@"eventId"] isEqual:@"old-event"]
+        && [PulseNotificationDestination(UNNotificationDismissActionIdentifier, @"pulse-tibo-source", info)[@"action"] isEqual:@"none"]
+        && [PulseNotificationDestination(@"pulse-view-source", @"pulse-tibo-source", @{@"sourceUrl": @"file:///tmp/unsafe"})[@"action"] isEqual:@"tibo"];
+    for (NSString *url in @[@"javascript:alert(1)", @"https://x.com.evil.org/a/status/123", @"https://evil@x.com/a/status/123", @"https://x.com/a/status/not-an-id", @"https://x.com/thsottiaux"]) ok = ok && !PulseXPostURL(url);
+    [self.tiboWindow orderOut:nil]; self.sourceOpener = nil;
+    return ok;
 }
 - (BOOL)validateLayoutIn:(NSView *)parent {
     for (NSView *child in parent.subviews) {
@@ -454,6 +771,7 @@
             BOOL freshnessOK = [view.quotaBar.accent isEqual:expected]
                 && [view.health.stringValue isEqual:fresh ? @"● 额度刚刚更新" : @"○ 等待额度更新"];
             [view capture:@"settings.png"];
+            BOOL tiboOK = [view testTiboHistory];
             view.threshold.doubleValue = 35;
             view.switches[@"soundEnabled"].state = NSControlStateValueOff;
             view.switches[@"persistentAlertsEnabled"].state = NSControlStateValueOff;
@@ -461,7 +779,7 @@
             view.afterSave = ^{
                 PulseSettingsWindow *current = weakSelf;
                 NSDictionary *saved = [current readJSON:@"preferences.json"];
-                BOOL ok = layoutOK && alignmentOK && quotaOK && freshnessOK && current.window.isVisible && [saved[@"lowQuotaPercent"] integerValue] == 35
+                BOOL ok = layoutOK && alignmentOK && quotaOK && freshnessOK && tiboOK && current.window.isVisible && [saved[@"lowQuotaPercent"] integerValue] == 35
                     && ![saved[@"soundEnabled"] boolValue] && ![saved[@"persistentAlertsEnabled"] boolValue]
                     && [saved[@"autoRedeem"][@"enabled"] boolValue] && !current.saveButton.enabled;
                 [current capture:@"settings-saved.png"];
@@ -473,10 +791,10 @@
                     BOOL disabled = saved && ![finalPreferences[@"autoRedeem"][@"enabled"] boolValue]
                         && finalView.creditSwitch.state == NSControlStateValueOff;
                     [finalView capture:@"settings-credit-off.png"];
-                    printf("{\"ok\":%s,\"regularSavePreservedConsent\":%s,\"explicitDisableWorked\":%s,\"layoutFits\":%s,\"quotaBarsMatchData\":%s,\"freshnessAndSeverityMatch\":%s,\"alignmentVerified\":%s}\n",
+                    printf("{\"ok\":%s,\"regularSavePreservedConsent\":%s,\"explicitDisableWorked\":%s,\"layoutFits\":%s,\"quotaBarsMatchData\":%s,\"freshnessAndSeverityMatch\":%s,\"alignmentVerified\":%s,\"tiboHistoryVerified\":%s}\n",
                         ok && disabled ? "true" : "false", ok ? "true" : "false", disabled ? "true" : "false",
                         layoutOK ? "true" : "false", quotaOK ? "true" : "false", freshnessOK ? "true" : "false",
-                        alignmentOK ? "true" : "false");
+                        alignmentOK ? "true" : "false", tiboOK ? "true" : "false");
                     fflush(stdout); [NSApp terminate:nil];
                 };
                 current.creditSwitch.state = NSControlStateValueOff;

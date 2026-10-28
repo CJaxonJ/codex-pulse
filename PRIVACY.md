@@ -35,6 +35,14 @@ Plan preview reads local checkpoint text on demand. It makes no model request
 and does not start or modify a task. Its CLI output may contain private project
 information and is not a public support report.
 
+Public Tibo announcement history also keeps the post text or clearly labeled
+source excerpt (up to 20,000 characters), source timestamp and exact X post/reply
+and parent-post links locally. The rolling notification journal retains the last
+50 general events plus the last 10 public announcement entries (at most 60 total),
+so quota warnings do not evict every announcement. It does not store private chat
+prompts in these fields. Opening a source link is a user action in the default
+browser and is subject to X's normal login and privacy behavior.
+
 The protection-consent window reads current local Hook metadata. An unconfirmed
 review stores only a random review id, timestamp and definition/file fingerprint
 under `protection-review/`, with private file permissions. Reviews expire after

@@ -8,5 +8,6 @@ typedef void (^PulseCommandRunner)(NSArray<NSString *> *, void (^)(NSDictionary 
                        previewAction:(dispatch_block_t)preview
                     protectionAction:(dispatch_block_t)protection;
 - (void)open;
+- (void)openTiboEvent:(NSString *)eventId;
 - (void)runIsolatedSelfTest;
 @end

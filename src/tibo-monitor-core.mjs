@@ -1,3 +1,6 @@
+import { resolveTiboWindow, tiboWindowKey } from "./tibo-reset-window.mjs";
+import { postUrlFromId, xPostUrl } from "./tibo-post-source.mjs";
+
 const HOUR = 60 * 60;
 const PREVIEW_MAX_AGE_SECONDS = 24 * HOUR;
 const PERSONAL_LANDING_MAX_AGE_SECONDS = 12 * HOUR;
@@ -34,8 +37,12 @@ function normalizeOfficialSignal(signal) {
   return {
     id: String(id || `official:${occurredAt || text}`),
     text,
+    originalText: signal.text || null,
+    sourceTextKind: signal.text ? "original" : "summary",
     occurredAt,
-    url: signal.url || signal.source_url || null,
+    url: xPostUrl(signal.url || signal.source_url) || postUrlFromId(id),
+    parentUrl: xPostUrl(signal.parent_url) || postUrlFromId(signal.in_reply_to_tweet_id),
+    window: signal.window ?? null,
   };
 }
 
@@ -46,13 +53,17 @@ function normalizeFeedTweet(tweet) {
   return {
     id: String(tweet.id || tweet.tweet_id || `${occurredAt}:${tweet.text}`),
     text: firstText(tweet.text, tweet.summary),
+    originalText: firstText(tweet.text),
+    sourceTextKind: tweet.text ? "original" : "summary",
     occurredAt,
-    url: tweet.url || (tweet.id ? `https://x.com/thsottiaux/status/${tweet.id}` : null),
+    url: xPostUrl(tweet.url) || postUrlFromId(tweet.id || tweet.tweet_id),
+    parentUrl: xPostUrl(tweet.parent_url) || postUrlFromId(tweet.in_reply_to_tweet_id),
     kind: tweet.kind || null,
     lane: tweet.tibo_lane || null,
     explicitResetClaim: tweet.explicit_reset_claim === true,
     isReply: tweet.is_reply === true,
     verificationStatus: tweet.reset_verification_status || null,
+    window: tweet.window ?? null,
   };
 }
 
@@ -71,7 +82,10 @@ export function normalizeTiboSnapshot(raw, options = {}) {
         key: String(latestAlert?.id || `reset:${lastResetAt}`),
         occurredAt: lastResetAt,
         text: firstText(latestAlert?.summary, latestAlert?.text),
-        url: latestAlert?.url || null,
+        originalText: firstText(latestAlert?.text),
+        sourceTextKind: latestAlert?.text ? "original" : "summary",
+        url: xPostUrl(latestAlert?.url) || postUrlFromId(latestAlert?.tweet_id),
+        parentUrl: xPostUrl(latestAlert?.parent_url) || postUrlFromId(latestAlert?.in_reply_to_tweet_id),
       }
     : null;
   const confirmedPost = posts.find(
@@ -84,10 +98,13 @@ export function normalizeTiboSnapshot(raw, options = {}) {
         key: confirmedPost.id,
         occurredAt: confirmedPost.occurredAt,
         text: confirmedPost.text,
+        originalText: confirmedPost.originalText,
+        sourceTextKind: confirmedPost.sourceTextKind,
         url: confirmedPost.url,
+        parentUrl: confirmedPost.parentUrl,
       }
     : null;
-  const confirmed = [forecastConfirmed, feedConfirmed]
+  const confirmed = [feedConfirmed, forecastConfirmed]
     .filter(Boolean)
     .sort((a, b) => b.occurredAt - a.occurredAt)[0] || null;
 
@@ -99,8 +116,12 @@ export function normalizeTiboSnapshot(raw, options = {}) {
     candidates.push({
       id: String(latestAlert.id || `alert:${latestAlert.source_at}`),
       text: firstText(latestAlert.summary, latestAlert.text),
+      originalText: firstText(latestAlert.text),
+      sourceTextKind: latestAlert.text ? "original" : "summary",
       occurredAt: unixSeconds(latestAlert.source_at || latestAlert.created_at),
-      url: latestAlert.url || null,
+      url: xPostUrl(latestAlert.url) || postUrlFromId(latestAlert.tweet_id),
+      parentUrl: xPostUrl(latestAlert.parent_url) || postUrlFromId(latestAlert.in_reply_to_tweet_id),
+      window: latestAlert.window ?? null,
     });
   }
 
@@ -119,6 +140,13 @@ export function normalizeTiboSnapshot(raw, options = {}) {
         !confirmed?.occurredAt || candidate.occurredAt > confirmed.occurredAt,
     )
     .sort((a, b) => b.occurredAt - a.occurredAt)[0] || null;
+  if (preview) {
+    const post = posts.find((item) => item.id === preview.id);
+    if (post) Object.assign(preview, { originalText: post.originalText || preview.originalText,
+      sourceTextKind: post.originalText ? "original" : preview.sourceTextKind,
+      url: preview.url || post.url, parentUrl: post.parentUrl || preview.parentUrl });
+    preview.resetWindow = resolveTiboWindow(preview);
+  }
   const sourceFetchedAt = unixSeconds(feed.fetched_at);
   const sourceAgeSeconds = sourceFetchedAt == null ? null : Math.max(0, now - sourceFetchedAt);
   const sourceStatus =
@@ -163,6 +191,10 @@ export function evaluateTiboSnapshot(previousState, snapshot, options = {}) {
         initializedAt: now,
         lastCheckedAt: now,
         lastPreviewId: snapshot.preview?.id || null,
+        activePreview: snapshot.preview || null,
+        lastPreviewTimingKey: tiboWindowKey(snapshot.preview?.resetWindow),
+        lastPreviewExpiredKey: snapshot.preview?.resetWindow?.expiresAt <= now
+          ? `${snapshot.preview.id}:${tiboWindowKey(snapshot.preview.resetWindow)}` : null,
         lastConfirmedKey: snapshot.confirmed?.key || null,
         lastConfirmedAt: snapshot.confirmed?.occurredAt || null,
         pendingPublicReset: null,
@@ -221,13 +253,37 @@ export function evaluateTiboSnapshot(previousState, snapshot, options = {}) {
     pendingPublicReset = null;
   }
 
-  if (snapshot.preview && snapshot.preview.id !== previous.lastPreviewId) {
+  let activePreview = previous.activePreview || null;
+  let lastPreviewTimingKey = previous.lastPreviewTimingKey || null;
+  let lastPreviewExpiredKey = previous.lastPreviewExpiredKey || null;
+  const confirmedAt = Math.max(previous.lastConfirmedAt || 0, snapshot.confirmed?.occurredAt || 0);
+  const incoming = snapshot.preview;
+  // Empty/partial feeds must not erase a known deadline. Old backfills must not revive it.
+  if (incoming && incoming.occurredAt > confirmedAt
+    && (!activePreview || incoming.occurredAt >= activePreview.occurredAt)) {
+    const knownWindow = activePreview?.id === incoming.id && activePreview.text === incoming.text
+      && incoming.window == null ? activePreview.resetWindow : null;
+    activePreview = { ...incoming, resetWindow: incoming.resetWindow || knownWindow || null };
+  }
+  if (activePreview && activePreview.occurredAt <= confirmedAt) activePreview = null;
+  const timingKey = tiboWindowKey(activePreview?.resetWindow);
+  const expiredKey = activePreview?.resetWindow
+    ? `${activePreview.id}:${timingKey}` : null;
+  const expired = activePreview?.resetWindow?.expiresAt <= now;
+  const changed = activePreview && (activePreview.id !== previous.lastPreviewId
+    || (timingKey !== lastPreviewTimingKey
+      && (timingKey != null || Object.hasOwn(previous, "lastPreviewTimingKey"))));
+  if (changed && !expired) {
     events.push({
       type: "tibo_preview",
       source: snapshot.source,
-      ...snapshot.preview,
-      teasedWindow: snapshot.teasedWindow,
+      ...activePreview,
     });
+  }
+  if (activePreview) lastPreviewTimingKey = timingKey;
+  if (expired && expiredKey !== lastPreviewExpiredKey) {
+    events.push({ type: "tibo_preview_expired", source: snapshot.source, ...activePreview });
+    lastPreviewExpiredKey = expiredKey;
   }
 
   const isNewConfirmation =
@@ -252,9 +308,12 @@ export function evaluateTiboSnapshot(previousState, snapshot, options = {}) {
     state: {
       initializedAt: previous.initializedAt,
       lastCheckedAt: now,
-      lastPreviewId: snapshot.preview?.id || previous.lastPreviewId || null,
-      lastConfirmedKey: snapshot.confirmed?.key || previous.lastConfirmedKey || null,
-      lastConfirmedAt: snapshot.confirmed?.occurredAt || previous.lastConfirmedAt || null,
+      lastPreviewId: activePreview?.id || previous.lastPreviewId || null,
+      activePreview,
+      lastPreviewTimingKey,
+      lastPreviewExpiredKey,
+      lastConfirmedKey: isNewConfirmation ? snapshot.confirmed.key : previous.lastConfirmedKey || null,
+      lastConfirmedAt: isNewConfirmation ? snapshot.confirmed.occurredAt : previous.lastConfirmedAt || null,
       pendingPublicReset,
       seenTweetIds: [
         ...new Set([
@@ -279,6 +338,11 @@ export function evaluateTiboFetchFailure(previousState, options = {}) {
   const failures = (previous.consecutiveSourceFailures || 0) + 1;
   const becameUnhealthy =
     failures >= SOURCE_FAILURE_THRESHOLD && previous.sourceHealthStatus !== "unhealthy";
+  const preview = previous.activePreview;
+  const expiredKey = preview?.resetWindow
+    ? `${preview.id}:${tiboWindowKey(preview.resetWindow)}` : null;
+  const expired = preview?.resetWindow?.expiresAt <= now
+    && expiredKey !== previous.lastPreviewExpiredKey;
   return {
     state: {
       ...previous,
@@ -286,17 +350,17 @@ export function evaluateTiboFetchFailure(previousState, options = {}) {
       lastSourceFailureAt: now,
       consecutiveSourceFailures: failures,
       sourceHealthStatus: becameUnhealthy ? "unhealthy" : previous.sourceHealthStatus,
+      lastPreviewExpiredKey: expired ? expiredKey : previous.lastPreviewExpiredKey,
     },
-    events: becameUnhealthy
-      ? [
-          {
+    events: [
+      ...(becameUnhealthy ? [{
             type: "tibo_source_unhealthy",
             reason: "consecutive_failures",
             failures,
             source: previous.source || null,
-          },
-        ]
-      : [],
+          }] : []),
+      ...(expired ? [{ type: "tibo_preview_expired", source: previous.source, ...preview }] : []),
+    ],
   };
 }
 
