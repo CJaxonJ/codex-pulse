@@ -2,6 +2,8 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { describeTiboWindow } from "./tibo-reset-window.mjs";
+import { tiboPostSource, xPostUrl } from "./tibo-post-source.mjs";
 
 export function formatResetTime(timestamp) {
   if (!timestamp) return "未知时间";
@@ -29,10 +31,10 @@ export function notificationForEvent(event) {
   const critical = ["tibo_confirmed", "personal_landed", "public_reset_landed", "chat_continuity_attention", "managed_task_attention", "credit_auto_failed", "credit_auto_uncertain"].includes(event.type)
     || (event.type === "reset" && event.resetKind === "full")
     || (event.type === "credit_expiring" && event.hoursRemaining < 1 / 6);
-  const warning = ["threshold", "forecast", "tibo_preview", "tibo_source_unhealthy", "chat_continuity_paused", "managed_task_draining", "managed_task_paused"].includes(event.type)
+  const warning = ["threshold", "forecast", "tibo_preview", "tibo_preview_expired", "tibo_source_unhealthy", "chat_continuity_paused", "managed_task_draining", "managed_task_paused"].includes(event.type)
     || event.type === "credit_expiring";
   const severity = critical ? "critical" : warning ? "warning" : "info";
-  const result = { ...notice, severity };
+  const result = { ...notice, severity, ...tiboPostSource(event) };
   if (critical) { result.persistent = true; result.interruptionLevel = "time-sensitive"; }
   if (["chat_continuity_paused", "managed_task_paused"].includes(event.type)) {
     return { ...result, action: "preview", persistent: true };
@@ -207,14 +209,18 @@ function baseNotificationForEvent(event) {
     };
   }
   if (event.type === "tibo_preview") {
-    const quote = event.text ? `“${event.text.slice(0, 70)}”` : "出现了新的重置信号";
     const source = event.source === "x-api" ? "X 官方 API" : "公共数据源";
+    const timing = describeTiboWindow(event.resetWindow);
     return {
-      title: "Tibo 发出 Codex 重置信号",
-      body: `${quote}。这是预告，不代表你的账户已到账；我会继续监控。数据：${source}`,
+      title: `Tibo 重置信号｜${timing.title}`,
+      body: `${timing.title}。${timing.detail} 这是预告，不代表你的账户已到账；我会继续监控。数据：${source}`,
       interruptionLevel: "time-sensitive",
     };
   }
+  if (event.type === "tibo_preview_expired") return {
+    title: "Tibo 预告时间已过，尚未确认重置",
+    body: `原预告：${describeTiboWindow(event.resetWindow).title}。未收到确认不代表重置未发生；我会继续检查公共消息和个人额度。`,
+  };
   if (event.type === "tibo_limits_update") {
     const quote = event.text ? `“${event.text.slice(0, 95)}”` : "Codex 使用体验有新变化";
     const source = event.source === "x-api" ? "X 官方 API" : "公共数据源";
@@ -324,6 +330,9 @@ export function nativeNotificationArgs({
   action,
   severity,
   sound,
+  sourceUrl,
+  isTiboPost,
+  eventId,
 }) {
   const args = ["-g", "-n", nativeApp, "--args", title, body];
   // A persistent alert owns its own helper process until the user dismisses
@@ -333,12 +342,16 @@ export function nativeNotificationArgs({
   if (interruptionLevel === "time-sensitive") args.push("--time-sensitive");
   if (persistent) args.push("--persistent");
   if (action === "preview") args.push("--preview-action");
+  if (isTiboPost) args.push("--tibo-post");
+  const safeSource = xPostUrl(sourceUrl);
+  if (safeSource) args.push("--source-url", safeSource);
+  if (typeof eventId === "string" && /^[\w:-]{1,180}$/.test(eventId)) args.push("--event-id", eventId);
   if (["critical", "warning", "info"].includes(severity)) args.push("--severity", severity);
   if (sound === false) args.push("--silent");
   return args;
 }
 
-export function sendMacNotification({ title, body, interruptionLevel, persistent, action, severity, sound }) {
+export function sendMacNotification({ title, body, interruptionLevel, persistent, action, severity, sound, sourceUrl, isTiboPost, eventId }) {
   if (process.env.CODEX_PULSE_DISABLE_NOTIFICATIONS === "1") {
     return Promise.resolve();
   }
@@ -356,6 +369,9 @@ export function sendMacNotification({ title, body, interruptionLevel, persistent
         action,
         severity,
         sound,
+        sourceUrl,
+        isTiboPost,
+        eventId,
       });
       const child = spawn(
         "/usr/bin/open",

@@ -2,6 +2,7 @@
 #import <UserNotifications/UserNotifications.h>
 #import "PulseSettingsWindow.h"
 #import "PulseProtectionWindow.h"
+#import "PulsePostLink.h"
 
 @interface CodexPulseDelegate : NSObject <NSApplicationDelegate, UNUserNotificationCenterDelegate>
 @property(nonatomic, copy) NSString *notificationTitle;
@@ -20,6 +21,9 @@
 @property(nonatomic, assign) BOOL settingsSelfTest;
 @property(nonatomic, assign) BOOL silent;
 @property(nonatomic, strong) PulseProtectionWindow *protectionWindow;
+@property(nonatomic, copy) NSString *sourceURL;
+@property(nonatomic, copy) NSString *eventId;
+@property(nonatomic, assign) BOOL tiboPost;
 @property(nonatomic, assign) BOOL protectionMode;
 @property(nonatomic, assign) BOOL protectionSelfTest;
 @end
@@ -97,7 +101,8 @@
         alert.informativeText = self.notificationBody;
         alert.accessoryView = [self severityBadge:self.severity];
         [alert addButtonWithTitle:@"知道了"];
-        [alert addButtonWithTitle:self.previewAction ? @"查看续跑计划" : @"查看状态"];
+        [alert addButtonWithTitle:self.tiboPost ? @"查看动态" : self.previewAction ? @"查看续跑计划" : @"查看状态"];
+        if (self.tiboPost && PulseXPostURL(self.sourceURL)) [alert addButtonWithTitle:@"查看 X 原帖"];
         alert.window.level = NSFloatingWindowLevel;
         alert.window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
                                           NSWindowCollectionBehaviorTransient;
@@ -136,7 +141,12 @@
             return;
         }
         [self writeLog:[NSString stringWithFormat:@"persistent alert dismissed: %@", self.notificationTitle]];
-        if (response == NSAlertSecondButtonReturn) {
+        if (response == NSAlertThirdButtonReturn && self.tiboPost) {
+            NSURL *url = PulseXPostURL(self.sourceURL);
+            if (url && [NSWorkspace.sharedWorkspace openURL:url]) [NSApp terminate:nil];
+            else [self showTiboEvent:self.eventId];
+        } else if (response == NSAlertSecondButtonReturn) {
+            if (self.tiboPost) { [self showTiboEvent:self.eventId]; return; }
             if (self.previewAction) [self showPlanPreview]; else [self showStatusPanel];
         } else {
             [NSApp terminate:nil];
@@ -282,6 +292,11 @@
     [NSApp activateIgnoringOtherApps:YES];
 }
 
+- (void)showTiboEvent:(NSString *)eventId {
+    [self showStatusPanel];
+    [self.settingsWindow openTiboEvent:eventId];
+}
+
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
     if(self.protectionMode) { [self showProtection]; return; }
     if (self.previewMode) { [self showPlanPreview]; return; }
@@ -343,6 +358,18 @@
         content.title = self.notificationTitle;
         content.body = self.notificationBody;
         content.subtitle = [self severityLabel:self.severity];
+        if (self.tiboPost) {
+            UNNotificationAction *source = [UNNotificationAction actionWithIdentifier:@"pulse-view-source"
+                title:@"查看 X 原帖" options:UNNotificationActionOptionForeground];
+            UNNotificationCategory *category = [UNNotificationCategory categoryWithIdentifier:@"pulse-tibo"
+                actions:@[] intentIdentifiers:@[] options:UNNotificationCategoryOptionNone];
+            UNNotificationCategory *linked = [UNNotificationCategory categoryWithIdentifier:@"pulse-tibo-source"
+                actions:@[source] intentIdentifiers:@[] options:UNNotificationCategoryOptionNone];
+            [center setNotificationCategories:[NSSet setWithObjects:category, linked, nil]];
+            content.categoryIdentifier = PulseXPostURL(self.sourceURL) ? @"pulse-tibo-source" : @"pulse-tibo";
+            // Read click targets from this notification, never from a newer process's arguments.
+            content.userInfo = @{@"pulseEventId": self.eventId ?: @"", @"sourceUrl": PulseXPostURL(self.sourceURL).absoluteString ?: @""};
+        }
         if (!self.silent) content.sound = [UNNotificationSound defaultSound];
         if (self.timeSensitive) {
             if (@available(macOS 12.0, *)) {
@@ -383,7 +410,14 @@
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center
         didReceiveNotificationResponse:(UNNotificationResponse *)response
                  withCompletionHandler:(void (^)(void))completionHandler {
-    [self showStatusPanel];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSDictionary *info = response.notification.request.content.userInfo;
+        NSDictionary *target = PulseNotificationDestination(response.actionIdentifier, response.notification.request.content.categoryIdentifier, info);
+        if ([target[@"action"] isEqual:@"none"]) return;
+        if ([target[@"action"] isEqual:@"source"] && [NSWorkspace.sharedWorkspace openURL:PulseXPostURL(target[@"url"])]) return;
+        if ([target[@"action"] isEqual:@"status"]) [self showStatusPanel];
+        else [self showTiboEvent:target[@"eventId"] ?: info[@"pulseEventId"]];
+    });
     completionHandler();
 }
 
@@ -426,6 +460,12 @@ int main(int argc, const char * argv[]) {
         delegate.previewSelfTest = [arguments containsObject:@"--preview-self-test"];
         delegate.previewMode = [arguments containsObject:@"--preview"] || delegate.previewSelfTest;
         delegate.previewAction = [arguments containsObject:@"--preview-action"];
+        delegate.tiboPost = [arguments containsObject:@"--tibo-post"];
+        NSUInteger sourceIndex = [arguments indexOfObject:@"--source-url"];
+        if (sourceIndex != NSNotFound && sourceIndex + 1 < arguments.count)
+            delegate.sourceURL = PulseXPostURL(arguments[sourceIndex + 1]).absoluteString;
+        NSUInteger eventIndex = [arguments indexOfObject:@"--event-id"];
+        if (eventIndex != NSNotFound && eventIndex + 1 < arguments.count) delegate.eventId = arguments[eventIndex + 1];
         NSUInteger severityIndex = [arguments indexOfObject:@"--severity"];
         delegate.severity = severityIndex != NSNotFound && severityIndex + 1 < arguments.count ? arguments[severityIndex + 1] : @"info";
         delegate.notificationTitle = title;

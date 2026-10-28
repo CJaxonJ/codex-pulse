@@ -55,6 +55,47 @@ ordinary users do not need an X developer account or API credential. Personal
 quota warnings, reset-credit expiry, task pausing, and safe resume remain local
 and continue if that feed is unavailable.
 
+### Reset timing notices (v0.9.21)
+
+Preview notices convert an announcement's structured `official_signal.window`
+into a dated **Beijing-time** deadline or interval. Explicit “within N hours”
+phrases are anchored to the post's timestamp, not the latest poll. Vague wording
+stays “具体时间未定”; statistical forecast hours are never presented as a promise.
+If a PST/PDT abbreviation conflicts with the source's Los Angeles timezone,
+the notice explains both possible deadlines rather than inventing precision.
+
+A timing addition, correction or withdrawal on the same post updates the notice
+once. Known timing survives partial feeds and watcher restarts. After the latest
+possible deadline, one notice says “预告时间已过，尚未确认重置”, including when
+the source is unavailable. This does not prove a reset failed to happen. A newer
+public confirmation cancels that pending deadline; personal landing remains a
+separate quota observation. No announcement triggers card use or task recovery.
+
+### Reopening announcement sources (v0.9.21)
+
+The status window's **Tibo 动态** button opens the last ten public announcement
+entries, independently of the latest quota notice. Each entry shows its saved
+timing/status, source text and post timestamp, with **查看 X 原帖** and, when the
+feed supplies a parent id, **查看上下文**. Source summaries are labeled excerpts,
+not original full text. Legacy records without a URL remain readable but have no
+active source button; they never redirect to a profile as a substitute.
+
+The compact detail separates the latest recorded reset status from the selected
+historical post. Browsing an old preview never reverts the current status. The
+**历史记录** control opens a short type-and-time list rather than a long-title
+dropdown. Original text is directly readable; the exact URL is kept behind the
+primary source button and only exposed as selectable text if browser opening
+fails. Context is a secondary text action. Empty history, missing URLs and expired
+history selections have explicit states; no new backend or account is involved.
+
+Tibo system notifications expose a **查看 X 原帖** action; clicking the banner
+itself opens that event in history. Persistent windows offer the same source
+action plus **查看动态**. Targets are carried in each notification's metadata,
+not looked up from the newest event, so a later notification or app restart cannot
+change the destination. HTTPS X/Twitter status links are validated both before
+storage and in the native UI; other schemes and hosts are rejected. Old records
+outside the retention window show an explicit fallback message.
+
 For maintainers who prefer to read Tibo's public posts directly, an optional X
 API source can be configured on macOS:
 

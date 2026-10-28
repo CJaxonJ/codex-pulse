@@ -14,6 +14,7 @@ const PREVIEW = [
   /\b(?:will|we(?:'ll| will)|going to)\b[^.\n]{0,80}\breset(?:ting)?\b/i,
   /\breset(?:ting)?\b[^.\n]{0,80}\b(?:soon|later|today|tomorrow|tonight|within|in a bit|by eod|on (?:the|its) way|coming)\b/i,
   /\b(?:landing|arriving)\b[^.\n]{0,80}\b(?:soon|today|tonight|tomorrow|within|next|by eod)\b/i,
+  /\blands?\s+by\s+(?:midnight|noon|\d{1,2}(?::\d{2})?\s*(?:am|pm))\b/i,
 ];
 const LIMIT_UPDATE =
   /\b(?:more\s+compute|capacity|usage\s+(?:limit|limits|quota|quotas)|rate\s+(?:limit|limits)|limit\s+increase|limits\s+increase|increase(?:d|s|ing)?\s+(?:the\s+)?(?:limit|limits|quota|quotas)|\d+x\s+more\s+usage|credits?\s+refunded)\b/i;

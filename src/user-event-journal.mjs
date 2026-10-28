@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import { isTiboPostEvent, tiboPostSource } from "./tibo-post-source.mjs";
 
 const DEFAULT_LIMIT = 50;
 
@@ -53,8 +54,12 @@ export class UserEventJournal {
       occurredAt: event.occurredAt ?? Math.floor(Date.now() / 1000),
       deliveryStatus: event.deliveryStatus || "unknown",
       severity: ["critical", "warning", "info"].includes(event.severity) ? event.severity : "info",
+      ...tiboPostSource(event),
     };
-    const events = [...existing, entry].slice(-this.limit);
+    const all = [...existing, entry];
+    // Quota chatter must not push every public announcement out of history.
+    const retained = new Set([...all.slice(-this.limit), ...all.filter(isTiboPostEvent).slice(-10)]);
+    const events = all.filter((item) => retained.has(item));
     await this.#write(events);
     return entry;
   }

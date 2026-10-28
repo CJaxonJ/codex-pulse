@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.9.21 — 2026-10-28
+
+- Convert public reset announcement windows and explicit relative durations to
+  dated Beijing-time notices. Keep vague or invalid timing unknown; expose
+  PST/PDT ambiguity rather than guessing a precise deadline. Timing corrections
+  notify once, survive watcher restarts and partial feeds, and expire as unconfirmed.
+- Preserve original public post text, timestamps and validated X post/reply links
+  in local history. Keep the last ten public notices independently of quota chatter;
+  notification actions target the original event, not the newest notification.
+- Add a compact native Tibo detail with the latest known reset state, selected
+  source text, a short history list and a primary source button. Historical browsing
+  does not revert the current state; summaries and missing legacy links are explicit.
+- Fix a real isolated UI-test crash when history shrinks during pending table
+  layout. Reload table data on updates and guard stale row requests; cover refresh,
+  selection preservation, long text, missing links and browser-open failure.
+- No Hook, trust, quota protection, task recovery or automatic-credit policy changes.
+
 ## 0.9.20 — 2026-10-26
 
 - Align five-hour and weekly quota values with shared typography, equal-width

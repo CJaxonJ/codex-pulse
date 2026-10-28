@@ -8,14 +8,14 @@
 <p align="center">Codex 快没额度时，帮你留住进度；恢复后，安全接着做。</p>
 
 <p align="center">
-  <a href="https://github.com/CJaxonJ/codex-pulse/releases/download/v0.9.20/Codex-Pulse-0.9.20-macOS.zip"><strong>下载 macOS 版 · v0.9.20</strong></a> ·
+  <a href="https://github.com/CJaxonJ/codex-pulse/releases/download/v0.9.21/Codex-Pulse-0.9.21-macOS.zip"><strong>下载 macOS 版 · v0.9.21</strong></a> ·
   <a href="./开始使用.md">安装指南</a> ·
-  <a href="./docs/releases/v0.9.20.md">更新记录</a>
+  <a href="./docs/releases/v0.9.21.md">更新记录</a>
 </p>
 
 ## 能帮你做什么
 
-- **少错过重置**：提醒 Tibo 的公开重置信号，区分预告、确认和个人额度到账。
+- **少错过重置**：能换算的预告直接显示北京时间；可回看原帖，区分预告、确认和个人额度到账。
 - **别把额度用到断档**：提前预警；默认在 10% 保护线阻止后续工具操作，保存任务进度。
 - **恢复后接着做**：核对原任务、文件和权限后续跑，也能先查看下一步计划。
 - **少浪费重置卡**：临期提醒；可单独授权，在不足 10 分钟且有额度可重置时自动使用一张。

@@ -125,13 +125,18 @@ async function deliverUserEvent(
       occurredAt: Math.floor(Date.now() / 1000),
       deliveryStatus: "pending",
       severity: notification.severity,
+      sourceUrl: notification.sourceUrl,
+      parentUrl: notification.parentUrl,
+      sourceText: notification.sourceText,
+      sourceTextKind: notification.sourceTextKind,
+      sourceAt: notification.sourceAt,
     });
   } catch (error) {
     log("user event journal write failed", { type: event.type, error: error.message });
   }
   let deliveryStatus = delivery.enabled ? "notification_request_accepted" : "muted_by_preferences";
   try {
-    if (delivery.enabled) await sendMacNotification(notification);
+    if (delivery.enabled) await sendMacNotification({ ...notification, eventId: journalEntry?.id });
   } catch (error) {
     deliveryStatus = "failed";
     log("notification delivery failed", {

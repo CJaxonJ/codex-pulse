@@ -139,6 +139,8 @@ export class TiboXApiClient {
               source_at: confirmed.created_at,
               summary: confirmed.text,
               url: confirmed.url,
+              text: confirmed.text,
+              in_reply_to_tweet_id: confirmed.in_reply_to_tweet_id,
             }
           : null,
         official_signal: preview
@@ -147,6 +149,7 @@ export class TiboXApiClient {
               source_at: preview.created_at,
               text: preview.text,
               url: preview.url,
+              in_reply_to_tweet_id: preview.in_reply_to_tweet_id,
             }
           : null,
         teased_window: null,
