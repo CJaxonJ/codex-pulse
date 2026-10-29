@@ -35,7 +35,9 @@ jobs:
         run: node scripts/e2e-windows-codex-hooks.mjs
       - name: Full cross-platform regression (no hosted model or credentials)
         if: always()
-        run: npm test
+        # Native UI files share one desktop. Serialize files; tests that prove
+        # concurrent ownership still start multiple real processes themselves.
+        run: npm test -- --test-concurrency=1
       - name: Preserve native UI screenshot from this isolated test run
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

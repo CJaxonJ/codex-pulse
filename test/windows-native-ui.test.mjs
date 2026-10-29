@@ -37,6 +37,9 @@ test("actual Windows native alert renders Unicode as plain text, remains open, a
       spawn: (...args) => { child = spawn(...args); child.stderr.on("data", b => diagnostics += b); closed = once(child, "exit"); return child; },
     });
     assert.deepEqual(delivery, { deliveryStatus: "window_shown" });
+    // Delivery intentionally unrefs a persistent UI process. This test must
+    // retain its OS handle while waiting for the actual dismissal/exit event.
+    child.ref();
     const screenshot = path.join(root, "build/windows/persistent-alert.png");
     const ui = await inspect(child, "-Screenshot", screenshot);
     assert.equal(ui.visible, true);
@@ -100,6 +103,7 @@ test("ordinary Windows system notice acknowledges a request, never a visible ban
       spawn: (...args) => { child = spawn(...args); closed = once(child, "exit"); return child; },
     });
     assert.equal(result.deliveryStatus, "notification_request_accepted");
+    child.ref();
     let timer;
     try {
       const end = await Promise.race([closed, new Promise((_, reject) => { timer = setTimeout(() => reject(Error("The native system notice did not release its process")), 25000); })]);

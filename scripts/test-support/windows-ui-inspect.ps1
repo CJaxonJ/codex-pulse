@@ -12,13 +12,7 @@ public static class PulseNativeButton {
     public static extern IntPtr SendMessageTimeout(IntPtr window, uint message, UIntPtr wParam, IntPtr lParam, uint flags, uint timeout, out UIntPtr result);
     [DllImport("user32.dll")]
     public static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
-    [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }
-    [StructLayout(LayoutKind.Sequential)] public struct Point { public int X, Y; }
-    [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr window, ref Point point);
-    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
-    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-    [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
-    [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint x, uint y, uint data, UIntPtr extra);
+    [DllImport("user32.dll", SetLastError=true)] public static extern bool PostMessage(IntPtr window, uint message, UIntPtr wParam, IntPtr lParam);
 }
 '@
 $condition = New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ProcessIdProperty, $TargetProcess)
@@ -67,22 +61,10 @@ if ($SelectTabIndex -ge 0) {
     [uint32]$ownerProcess = 0
     [void][PulseNativeButton]::GetWindowThreadProcessId($handle, [ref]$ownerProcess)
     if ($ownerProcess -ne $TargetProcess) { throw 'The tab belongs to another process.' }
-    $memory = [Runtime.InteropServices.Marshal]::AllocHGlobal(16)
-    try {
-        [UIntPtr]$result = [UIntPtr]::Zero
-        $sent = [PulseNativeButton]::SendMessageTimeout($handle, 0x130A, [UIntPtr][uint32]$SelectTabIndex, $memory, 2, 2000, [ref]$result)
-        if ($sent -eq [IntPtr]::Zero -or $result -eq [UIntPtr]::Zero) { throw 'The actual tab rectangle is unavailable.' }
-        $rect = [Runtime.InteropServices.Marshal]::PtrToStructure($memory, [type][PulseNativeButton+Rect])
-        $point = New-Object PulseNativeButton+Point
-        $point.X = [int](($rect.Left + $rect.Right) / 2); $point.Y = [int](($rect.Top + $rect.Bottom) / 2)
-        if (-not [PulseNativeButton]::ClientToScreen($handle, [ref]$point)) { throw 'The tab position is unavailable.' }
-        $main = [IntPtr]$window.Current.NativeWindowHandle
-        [void][PulseNativeButton]::SetForegroundWindow($main)
-        if ([PulseNativeButton]::GetForegroundWindow() -ne $main) { throw 'The isolated test window could not be focused safely.' }
-        if (-not [PulseNativeButton]::SetCursorPos($point.X, $point.Y)) { throw 'The tab could not be clicked.' }
-        [PulseNativeButton]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
-        [PulseNativeButton]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
-    } finally { [Runtime.InteropServices.Marshal]::FreeHGlobal($memory) }
+    # TCM_SETCURFOCUS selects a normal tab and sends the real parent selection
+    # notifications. All arguments are scalar: never send an address from this
+    # PowerShell process into another process via TCM_GETITEMRECT.
+    if (-not [PulseNativeButton]::PostMessage($handle, 0x1330, [UIntPtr][uint32]$SelectTabIndex, [IntPtr]::Zero)) { throw 'The tab selection request failed.' }
 }
 if ($Screenshot) {
     $bounds = $window.Current.BoundingRectangle
@@ -96,10 +78,7 @@ if ($Screenshot) {
 @{title=$window.Current.Name; visible=(-not $window.Current.IsOffscreen); buttons=@($buttons); content=@($content); elements=@($elements)} | ConvertTo-Json -Depth 5 -Compress
 if ($Click) {
     if ($null -eq $clicked) { throw 'The requested UI action was not found.' }
-    $invoke = $null
-    if ($clicked.TryGetCurrentPattern([Windows.Automation.InvokePattern]::Pattern, [ref]$invoke)) {
-        $invoke.Invoke()
-    } else {
+    if ($clicked.Current.ClassName -match '^WindowsForms10\.BUTTON\.') {
         # BM_CLICK follows the actual native button's event path. Validate
         # its process and class before sending any window message.
         if ($clicked.Current.ClassName -notmatch '^WindowsForms10\.BUTTON\.') { throw 'The control is not a native button.' }
@@ -107,8 +86,12 @@ if ($Click) {
         [uint32]$ownerProcess = 0
         [void][PulseNativeButton]::GetWindowThreadProcessId($handle, [ref]$ownerProcess)
         if ($ownerProcess -ne $TargetProcess -or -not $clicked.Current.IsEnabled -or $clicked.Current.IsOffscreen) { throw 'The native button is not safely actionable.' }
-        [UIntPtr]$result = [UIntPtr]::Zero
-        $sent = [PulseNativeButton]::SendMessageTimeout($handle, 0xF5, [UIntPtr]::Zero, [IntPtr]::Zero, 2, 2000, [ref]$result)
-        if ($sent -eq [IntPtr]::Zero -and (Get-Process -Id $TargetProcess -ErrorAction SilentlyContinue)) { throw 'The native button did not respond.' }
+        # Queue the native click rather than blocking until its handler returns:
+        # a legitimate ShowDialog handler returns only after the modal closes.
+        # Callers still have to observe the expected UI and persisted state.
+        if (-not [PulseNativeButton]::PostMessage($handle, 0xF5, [UIntPtr]::Zero, [IntPtr]::Zero)) { throw 'The native button could not be clicked.' }
+    } else {
+        $invoke = $clicked.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern)
+        $invoke.Invoke()
     }
 }
