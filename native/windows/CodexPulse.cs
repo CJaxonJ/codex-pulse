@@ -281,16 +281,17 @@ namespace CodexPulse {
                 string node = Path.Combine(root, "runtime", "node.exe");
                 string script = Path.Combine(root, "bin", "codex-pulse.mjs");
                 if (!File.Exists(node) || !File.Exists(script)) throw new IOException("安装文件不完整，请重新运行安装器。");
-                ProcessStartInfo start = new ProcessStartInfo(node, String.Join(" ", new[] { script }.Concat(args).Select(Quote).ToArray())) {
-                    UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
-                    StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8, WorkingDirectory = root
-                };
-                using (Process process = Process.Start(start)) {
-                    Task<string> output = process.StandardOutput.ReadToEndAsync();
-                    Task<string> errors = process.StandardError.ReadToEndAsync();
-                    if (!process.WaitForExit(15000)) { try { process.Kill(); } catch { } throw new IOException("本机数据暂未读到，请重试。"); }
+                using (OwnedProcess process = OwnedProcess.Start(node, new[] { script }.Concat(args).ToArray(), root)) {
+                    process.Input.Close();
+                    Task<string> output = new StreamReader(process.Output, Encoding.UTF8).ReadToEndAsync();
+                    Task<string> errors = new StreamReader(process.Error, Encoding.UTF8).ReadToEndAsync();
+                    if (!process.WaitForExit(15000)) {
+                        process.Stop(); process.WaitForExit(5000);
+                        throw new IOException("本机数据暂未读到，请重试。");
+                    }
+                    int code = process.Wait();
                     Task.WaitAll(output, errors);
-                    if (process.ExitCode != 0) throw new IOException("无法读取本机记录，请检查安装后重试。");
+                    if (code != 0) throw new IOException("无法读取本机记录，请检查安装后重试。");
                     Dictionary<string, object> result = new JavaScriptSerializer { MaxJsonLength = 4 * 1024 * 1024 }.DeserializeObject(output.Result) as Dictionary<string, object>;
                     if (result == null) throw new IOException("本机记录格式异常，请重试。");
                     return result;

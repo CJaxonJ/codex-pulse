@@ -4,7 +4,7 @@ import readline from "node:readline";
 import { readLatestTurn } from "./thread-lifecycle.mjs";
 import { queueNativeWakeup, trustedRecoveryHooks } from "./native-wakeup.mjs";
 import { codexInvocation, resolveCodexExecutable } from "./platform-runtime.mjs";
-import { appServerProcessInvocation } from "./windows-process-bridge.mjs";
+import { ownedWindowsProcessInvocation } from "./windows-process-bridge.mjs";
 
 export function resolveCodexBinary() {
   return resolveCodexExecutable();
@@ -24,7 +24,7 @@ export class AppServerClient extends EventEmitter {
   async start() {
     if (this.child) return;
     this.binary ||= resolveCodexBinary();
-    const invocation = appServerProcessInvocation(codexInvocation(this.binary, [...this.binaryArgs, "app-server"]));
+    const invocation = ownedWindowsProcessInvocation(codexInvocation(this.binary, [...this.binaryArgs, "app-server"]));
     const child = this.child = spawn(invocation.file, invocation.args, {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,

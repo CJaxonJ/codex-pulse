@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export function appServerProcessInvocation(invocation) {
+export function ownedWindowsProcessInvocation(invocation) {
   if (process.platform !== "win32") return invocation;
   if (!path.isAbsolute(invocation.file) || !existsSync(invocation.file)) {
     const error = new Error("ENOENT: Codex App Server executable was not found"); error.code = "ENOENT"; throw error;

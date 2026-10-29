@@ -47,7 +47,7 @@ namespace CodexPulse {
             SafeFileHandle safe = new SafeFileHandle(handle, true); handle = IntPtr.Zero;
             try { return new FileStream(safe, access, 4096, false); } catch { safe.Dispose(); throw; }
         }
-        internal static OwnedProcess Start(string file, string[] args) {
+        internal static OwnedProcess Start(string file, string[] args, string directory = null) {
             if (!Path.IsPathRooted(file) || !File.Exists(file)) throw new FileNotFoundException();
             OwnedProcess child = new OwnedProcess();
             IntPtr inputRead = IntPtr.Zero, inputWrite = IntPtr.Zero, outputRead = IntPtr.Zero, outputWrite = IntPtr.Zero, errorRead = IntPtr.Zero, errorWrite = IntPtr.Zero;
@@ -65,7 +65,7 @@ namespace CodexPulse {
                 StringBuilder command = new StringBuilder(String.Join(" ", new[] { file }.Concat(args).Select(Bridge.Quote).ToArray()));
                 // Suspended creation is essential: no child can escape before
                 // assignment, even on a fast machine or with an adversarial peer.
-                Check(CreateProcess(file, command, IntPtr.Zero, IntPtr.Zero, true, 0x08000004, IntPtr.Zero, Environment.CurrentDirectory, ref startup, out info));
+                Check(CreateProcess(file, command, IntPtr.Zero, IntPtr.Zero, true, 0x08000004, IntPtr.Zero, directory ?? Environment.CurrentDirectory, ref startup, out info));
                 child.process = info.Process; info.Process = IntPtr.Zero;
                 Check(AssignProcessToJobObject(child.job, child.process));
                 child.Input = Stream(ref inputWrite, FileAccess.Write); child.Output = Stream(ref outputRead, FileAccess.Read); child.Error = Stream(ref errorRead, FileAccess.Read);
@@ -88,6 +88,11 @@ namespace CodexPulse {
             uint code; Check(GetExitCodeProcess(process, out code));
             CloseJob(); // Kill remaining descendants before waiting for pipe EOF.
             return unchecked((int)code);
+        }
+        internal bool WaitForExit(int milliseconds) {
+            uint result = WaitForSingleObject(process, (uint)milliseconds);
+            if (result == 258) return false;
+            Check(result == 0); return true;
         }
         public void Dispose() {
             CloseJob();

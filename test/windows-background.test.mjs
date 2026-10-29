@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile, unlink } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { windowsUIFixture } from "../scripts/test-support/windows-ui-fixture.mjs";
 
 const windows = { skip: process.platform !== "win32", timeout: 120000 };
@@ -69,5 +70,41 @@ setInterval(()=>{if(fs.existsSync(${JSON.stringify(crash)})){fs.unlinkSync(${JSO
     assert.equal(await readFile(sentinel, "utf8"), "preserve existing work");
   } finally {
     for (const session of [host, duplicate, stop, restarted]) if (session && session.child.exitCode == null) session.child.kill();
+  }
+});
+
+test("a preparing Windows background must not be reported stopped before its event exists", windows, async () => {
+  const f = await windowsUIFixture({ installed: true });
+  await f.cli(["background-prepare"]); // Actual ACL setup, before controlling the preparation response.
+  const bin = path.join(f.appRoot, "bin", "codex-pulse.mjs"), original = await readFile(bin, "utf8");
+  const backup = path.join(f.appRoot, "bin", "real-cli.mjs"); await writeFile(backup, original);
+  const marker = path.join(f.root, "preparing"), release = path.join(f.root, "release-prepare");
+  const delayed = `import fs from 'node:fs';
+if(process.argv[2]==='background-prepare'){
+ fs.writeFileSync(${JSON.stringify(marker)},JSON.stringify({pid:process.pid}));
+ const timer=setInterval(()=>{if(fs.existsSync(${JSON.stringify(release)})){clearInterval(timer);process.stdout.write(JSON.stringify({ok:true,applicable:true})+'\\n');}},50);
+}else await import(${JSON.stringify(pathToFileURL(backup).href)});
+`;
+  await writeFile(bin, delayed);
+  const host = f.start("--background"); let during, stop, preparing;
+  try {
+    await until(async () => { if (host.child.exitCode != null) throw Error(host.diagnostic()); try { return await readFile(marker, "utf8"); } catch { return false; } });
+    during = f.start("--stop-background");
+    assert.notEqual((await during.closed)[0], 0, "Preparing without an event is unknown, not safe-to-replace");
+    assert.equal(host.child.exitCode, null);
+    await writeFile(bin, original); await writeFile(release, "resume real startup");
+    await until(async () => { try { return JSON.parse(await readFile(path.join(f.dataDir, "background-status.json"), "utf8")).generation; } catch { return false; } });
+    stop = f.start("--stop-background");
+    assert.equal((await stop.closed)[0], 0, stop.diagnostic());
+    assert.equal((await host.closed)[0], 0, host.diagnostic());
+    await unlink(marker); await unlink(release); await writeFile(bin, delayed);
+    preparing = f.start("--background");
+    const pending = await until(async () => { try { return JSON.parse(await readFile(marker, "utf8")); } catch { return null; } });
+    assert(alive(pending.pid), "The preparation subprocess must actually be running");
+    preparing.child.kill("SIGKILL"); await preparing.closed;
+    await until(() => !alive(pending.pid));
+  } finally {
+    await writeFile(bin, original); await writeFile(release, "cleanup");
+    for (const session of [host, during, stop, preparing]) if (session && session.child.exitCode == null) session.child.kill();
   }
 });

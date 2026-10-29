@@ -24,7 +24,8 @@ test("Windows data ACL removes broad existing access, protects existing files an
   assert(publicBefore.rules.includes("S-1-1-0"), JSON.stringify(publicBefore));
   assert.equal((await ensureWindowsPrivateDirectory(data)).ok, true);
   const staged = path.join(data, "app", "src"); await mkdir(staged, { recursive: true });
-  for (const name of ["private-directory.mjs", "private-directory-windows.ps1"]) await cp(path.resolve(import.meta.dirname, "../src", name), path.join(staged, name));
+  for (const name of ["private-directory.mjs", "private-directory-windows.ps1", "windows-process-bridge.mjs"]) await cp(path.resolve(import.meta.dirname, "../src", name), path.join(staged, name));
+  for (const name of ["CodexPulse.exe", "CodexPulse.exe.config"]) await cp(path.resolve(import.meta.dirname, "../build/windows", name), path.join(data, "app", name));
   const installed = await import(pathToFileURL(path.join(staged, "private-directory.mjs")).href);
   assert.equal((await installed.ensureWindowsPrivateDirectory(data)).ok, true, "The same check must work from the real data/app/src installation layout");
   for (const entry of [data, record]) {

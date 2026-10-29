@@ -4,6 +4,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Forms;
 using System.Collections.Generic;
@@ -27,7 +28,28 @@ namespace CodexPulse {
         internal static string DataDirectory() {
             string directory = Environment.GetEnvironmentVariable("CODEX_PULSE_DATA_DIR");
             if (String.IsNullOrEmpty(directory)) directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Codex Pulse");
-            return Path.GetFullPath(directory);
+            if (!Regex.IsMatch(directory, @"^[A-Za-z]:[\\/]")) throw new IOException();
+            string data = Path.GetFullPath(directory).TrimEnd('\\');
+            if (data.IndexOf(':', 2) >= 0) throw new IOException();
+            foreach (string reserved in new[] { Path.GetPathRoot(directory), Path.GetTempPath(),
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                Environment.GetFolderPath(Environment.SpecialFolder.Windows), Environment.GetFolderPath(Environment.SpecialFolder.System),
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86) }) {
+                if (String.IsNullOrEmpty(reserved)) continue;
+                string path = Path.GetFullPath(reserved).TrimEnd('\\');
+                if (path.Equals(data, StringComparison.OrdinalIgnoreCase) || path.StartsWith(data + "\\", StringComparison.OrdinalIgnoreCase)) throw new IOException();
+            }
+            string app = Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory).TrimEnd('\\');
+            if ((app.Equals(data, StringComparison.OrdinalIgnoreCase) || app.StartsWith(data + "\\", StringComparison.OrdinalIgnoreCase))
+                && !app.Equals(Path.Combine(data, "app"), StringComparison.OrdinalIgnoreCase)) throw new IOException();
+            for (string cursor = data; !String.IsNullOrEmpty(cursor); cursor = Path.GetDirectoryName(cursor)) {
+                FileAttributes attributes;
+                try { attributes = File.GetAttributes(cursor); }
+                catch (FileNotFoundException) { continue; } catch (DirectoryNotFoundException) { continue; }
+                if ((attributes & FileAttributes.ReparsePoint) != 0) throw new IOException();
+            }
+            return data;
         }
         private static string SignalName(string data, string generation) {
             using (SHA256 hash = SHA256.Create()) {
@@ -69,12 +91,18 @@ namespace CodexPulse {
             string root = Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory), data = DataDirectory();
             Environment.SetEnvironmentVariable("CODEX_PULSE_APP_ROOT", root);
             Environment.SetEnvironmentVariable("CODEX_PULSE_DATA_DIR", data);
-            Dictionary<string, object> result = Bridge.Run("background-prepare").GetAwaiter().GetResult();
-            if (!Program.BooleanValue(result, "ok", false) || !Program.BooleanValue(result, "applicable", false)) throw new IOException();
+            // Only the empty guard is created before the full private ACL check.
+            Directory.CreateDirectory(data);
             FileStream guard;
             try { guard = File.Open(Path.Combine(data, "background.guard"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
             catch (IOException error) { if (!SharingViolation(error)) throw; Program.Acknowledge("already_running"); return 0; }
-            using (guard) using (BackgroundContext background = new BackgroundContext(root, data, guard)) Application.Run(background);
+            using (guard) {
+                // A preparing host is not stopped just because its tray/event
+                // does not exist yet. Unknown startup must block replacement.
+                Dictionary<string, object> result = Bridge.Run("background-prepare").GetAwaiter().GetResult();
+                if (!Program.BooleanValue(result, "ok", false) || !Program.BooleanValue(result, "applicable", false)) throw new IOException();
+                using (BackgroundContext background = new BackgroundContext(root, data, guard)) Application.Run(background);
+            }
             return 0;
         }
         private BackgroundContext(string root, string data, FileStream guard) {
