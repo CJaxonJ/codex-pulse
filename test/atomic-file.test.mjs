@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { renameAtomic } from "../src/atomic-file.mjs";
-import { mkdtemp, writeFile, readFile, rename } from "node:fs/promises";
-import { spawn } from "node:child_process";
+import { renameAtomic, writeJsonSnapshotAtomic } from "../src/atomic-file.mjs";
+import { mkdtemp, mkdir, readdir, writeFile, readFile, rename } from "node:fs/promises";
+import { spawn, fork } from "node:child_process";
+import { once } from "node:events";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import os from "node:os";
 
@@ -46,4 +48,53 @@ test("actual Windows file sharing denial recovers without deleting or truncating
     assert(denied>0,"The real Windows file handle must actually deny at least one replacement");
     assert.equal(await readFile(destination,"utf8"),"new-record");
   }finally{await writeFile(release,"release");await exited;child.kill();}
+});
+
+test("shared JSON snapshots remain complete during real cross-process replacement, without hiding parse/read failures", { timeout: 30000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "pulse atomic 快照-")), file = path.join(root, "state.json");
+  await writeJsonSnapshotAtomic(file, { sequence: 0, payload: "", digest: createHash("sha256").update("").digest("hex") });
+  const writer = fork(path.resolve(import.meta.dirname, "../scripts/test-support/snapshot-writer.mjs"), [file], { stdio: ["ignore", "ignore", "pipe", "ipc"] });
+  let started, done = false, barrier = null, failure, reads = 0;
+  const ready = new Promise((resolve, reject) => {
+    started = resolve;
+    writer.once("error", reject);
+    writer.once("exit", code => { if (!done) { failure = Error("Snapshot writer exited before completion: " + code); reject(failure); } });
+  });
+  writer.on("message", message => {
+    if (message.type === "ready") started();
+    if (message.type === "barrier") barrier = message.sequence;
+    if (message.type === "done") done = true;
+    if (message.type === "failed") failure = Error(message.error);
+  });
+  const exit = once(writer, "exit"), observed = new Set();
+  try {
+    await ready; writer.send({ type: "start" });
+    while (!done) {
+      if (failure) throw failure;
+      // Deliberately no catch/retry around readFile or JSON.parse. An empty,
+      // absent or partial file is a failure, not an allowed intermediate state.
+      const snapshot = JSON.parse(await readFile(file, "utf8")); reads++;
+      assert.equal(createHash("sha256").update(snapshot.payload).digest("hex"), snapshot.digest);
+      assert.equal(snapshot.payload, snapshot.sequence ? String(snapshot.sequence).padStart(2, "0").repeat(128 * 1024) : "");
+      observed.add(snapshot.sequence);
+      if (barrier === snapshot.sequence) { barrier = null; writer.send({ type: "continue" }); }
+    }
+    assert.equal((await exit)[0], 0);
+    assert(reads >= 4);
+    for (const sequence of [10, 20, 30, 40]) assert(observed.has(sequence));
+    assert.equal(JSON.parse(await readFile(file, "utf8")).sequence, 40);
+    assert.deepEqual(await readdir(root), ["state.json"], "Owned temporary files must be cleaned");
+  } finally { if (writer.exitCode == null) writer.kill(); }
+});
+
+test("failed snapshot preparation or actual replacement preserves prior data and cleans only its own temporary file", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "pulse snapshot failure-")), file = path.join(root, "state.json");
+  await writeJsonSnapshotAtomic(file, { quota: 10 });
+  const circular = {}; circular.self = circular;
+  await assert.rejects(writeJsonSnapshotAtomic(file, circular), /circular/i);
+  assert.deepEqual(JSON.parse(await readFile(file, "utf8")), { quota: 10 });
+  const directory = path.join(root, "not-a-file"); await mkdir(directory); await writeFile(path.join(directory, "keep"), "preserve");
+  await assert.rejects(writeJsonSnapshotAtomic(directory, { quota: 100 }));
+  assert.equal(await readFile(path.join(directory, "keep"), "utf8"), "preserve");
+  assert.deepEqual((await readdir(root)).sort(), ["not-a-file", "state.json"]);
 });

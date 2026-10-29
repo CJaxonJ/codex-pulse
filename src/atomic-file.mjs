@@ -1,4 +1,6 @@
-import { rename } from "node:fs/promises";
+import { mkdir, open, rename, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import path from "node:path";
 
 // Antivirus/indexers can temporarily deny replacement on Windows. Keep the
 // original destination intact; retry the same prepared file, never unlink it.
@@ -12,4 +14,21 @@ export async function renameAtomic(source,destination,{platform=process.platform
       await sleep(delays[attempt]);
     }
   }
+}
+
+// Publish a complete shared snapshot. This does not replace the durable
+// credit-operation journal or its separate Windows write-through contract.
+export async function writeJsonSnapshotAtomic(destination, value) {
+  const encoded = JSON.stringify(value, null, 2);
+  if (typeof encoded !== "string") throw new TypeError("A JSON snapshot is required");
+  await mkdir(path.dirname(destination), { recursive: true });
+  const temporary = `${destination}.${randomUUID()}.tmp`;
+  let owned = false;
+  try {
+    const file = await open(temporary, "wx", 0o600);
+    owned = true;
+    try { await file.writeFile(encoded + "\n", "utf8"); await file.sync(); }
+    finally { await file.close(); }
+    await renameAtomic(temporary, destination);
+  } finally { if (owned) await rm(temporary, { force: true }); }
 }

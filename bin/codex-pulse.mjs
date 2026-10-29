@@ -6,6 +6,7 @@ import path from "node:path";
 import { pulseDataDirectory } from "../src/platform-runtime.mjs";
 import { ensureWindowsPrivateDirectory } from "../src/private-directory.mjs";
 import { acquireWatcherInstance } from "../src/watcher-instance.mjs";
+import { writeJsonSnapshotAtomic } from "../src/atomic-file.mjs";
 
 import { AppServerClient } from "../src/app-server-client.mjs";
 import { ChatContinuityController } from "../src/chat-continuity-controller.mjs";
@@ -86,8 +87,7 @@ async function loadState() {
 }
 
 async function saveState(state) {
-  await mkdir(dataDir, { recursive: true });
-  await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  await writeJsonSnapshotAtomic(statePath, state);
 }
 
 async function readQuotaSummary(client) {
