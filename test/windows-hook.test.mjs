@@ -31,15 +31,17 @@ async function fixture(){
   const binary=path.join(peer,"codex.cmd"),peerState=path.join(directory,"rpc-state.json");
   await writeFile(binary,"@echo off\r\nrem fixture is resolved without a shell\r\n");
   await writeFile(peerState,JSON.stringify({goal:{status:"active",objective:"完成原目标，保留已有修改，不扩大范围。",createdAt:1,updatedAt:1},turn:{id:"paused-turn",status:"completed"},wakes:[]}));
+  await writeFile(peerState+".jsonl",JSON.stringify({type:"event_msg",payload:{type:"task_complete",turn_id:"paused-turn"}})+"\n");
   await writeFile(path.join(peer,"node_modules/@openai/codex/bin/codex.js"),`
 const fs=require('node:fs');const file=process.env.PULSE_WINDOWS_RPC_STATE;
 if(!file)throw Error('Missing isolated RPC state');
-if(process.argv[2]==='queue'){const s=JSON.parse(fs.readFileSync(file));s.wakes.push(process.argv.slice(2));s.turn={id:'resumed-turn',status:'inProgress'};fs.writeFileSync(file,JSON.stringify(s));process.exit(0);}
+if(process.argv[2]==='queue'){const s=JSON.parse(fs.readFileSync(file));s.wakes.push(process.argv.slice(2));s.turn={id:'resumed-turn',status:'inProgress'};fs.writeFileSync(file,JSON.stringify(s));fs.appendFileSync(file+'.jsonl',JSON.stringify({type:'event_msg',payload:{type:'task_started',turn_id:'resumed-turn'}})+'\\n');process.exit(0);}
 require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
  const m=JSON.parse(line);if(m.id==null)return;const s=JSON.parse(fs.readFileSync(file));let result={};
  if(m.method==='thread/goal/get')result={goal:s.goal};
  if(m.method==='thread/goal/set'){Object.assign(s.goal,m.params);fs.writeFileSync(file,JSON.stringify(s));result={goal:s.goal};}
  if(m.method==='thread/turns/list')result={data:[s.turn]};
+ if(m.method==='thread/read')result={thread:{path:file+'.jsonl'}};
  if(m.method==='hooks/list')result={data:[{hooks:['preToolUse','userPromptSubmit'].map(eventName=>({eventName,enabled:true,trustStatus:'trusted',pluginId:'codex-pulse@codex-pulse-local'}))}]};
  process.stdout.write(JSON.stringify({id:m.id,result})+'\\n');
 });`);
@@ -52,10 +54,11 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   const invoke=async(event,shell="powershell")=>{
     const command=shell==="cmd"?"cmd.exe":"powershell.exe";
     const args=shell==="cmd"?["/d","/s","/c",WINDOWS_HOOK_COMMAND]:["-NoProfile","-NonInteractive","-Command",WINDOWS_HOOK_COMMAND];
-    const child=execFile(command,args,{env,cwd:workspace,windowsHide:true,maxBuffer:2*1024*1024,timeout:25000});
+    const child=execFile(command,args,{env,cwd:workspace,windowsHide:true,windowsVerbatimArguments:shell==="cmd",maxBuffer:2*1024*1024,timeout:25000});
     child.stdin.end(JSON.stringify({session_id:"windows-thread",turn_id:"paused-turn",cwd:workspace,...event}));
     const output=await new Promise((resolve,reject)=>{let stdout="",stderr="";child.stdout.on("data",b=>stdout+=b);child.stderr.on("data",b=>stderr+=b);child.on("error",reject);child.on("close",code=>code===0?resolve(stdout):reject(Error(`${code}: ${stderr}`)));});
-    return output.trim()?JSON.parse(output):null;
+    try {return output.trim()?JSON.parse(output):null;}
+    catch {throw Error(`${shell} hook returned non-JSON output: ${output.slice(0,160)}`);}
   };
   return {directory,data,workspace,env,now,summary,setQuota,invoke,binary,peerState};
 }
@@ -88,7 +91,9 @@ test("Windows process chain pauses at 10%, saves plan, recovers through CLI queu
     const make=()=>new ChatContinuityController({client,store,lockManager:new WorktreeLockManager(f.data)});
     await make().reconcile(f.summary(100),{now:f.now+60,workspace:new WorkspaceInspector()});
     await make().reconcile(f.summary(100),{now:f.now+120,workspace:new WorkspaceInspector()});
-    const state=JSON.parse(await readFile(f.peerState,"utf8"));assert.equal(state.wakes.length,1);
+    const state=JSON.parse(await readFile(f.peerState,"utf8"));
+    const current=await store.get("windows-thread");
+    assert.equal(state.wakes.length,1,JSON.stringify({status:current.status,blocker:current.blocker,wakeError:current.lastWakeError,resumeError:current.lastResumeError}));
     assert.deepEqual(state.wakes[0].slice(0,4),["queue","--thread","windows-thread","--message"]);
     assert.match(state.wakes[0][4],/完成原目标/);
     assert.match(state.wakes[0][4],/Next action/);
