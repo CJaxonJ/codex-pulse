@@ -69,7 +69,11 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     await waitForWindowsUI(session, ui => button(ui, "开启临期自动用卡")?.enabled, { title });
     await inspectWindowsUI(session, { title, click: "开启临期自动用卡" });
     const consentTitle = "Codex Pulse · 自动用卡授权";
-    await waitForWindowsUI(session, ui => /不会购买重置卡/.test(ui.content.join("\n")), { title: consentTitle });
+    const consent = await waitForWindowsUI(session, ui => /不会购买重置卡/.test(ui.content.join("\n")), { title: consentTitle });
+    const owner = consent.nativeWindows.find(window => window.title === title);
+    assert.equal(consent.visible, true);
+    assert.equal(consent.owner, owner.handle, "Consent must be an actual owned modal, not another application");
+    assert.equal(owner.enabled, false, "Main settings must be disabled until modal consent closes");
     await inspectWindowsUI(session, { title: consentTitle, click: "暂不开启" });
     await waitForWindowsUI(session, ui => /用卡设置未更改/.test(ui.content.join("\n")), { title });
     assert.equal(await readFile(path.join(f.dataDir, "preferences.json"), "utf8"), before);

@@ -6,27 +6,53 @@ Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName System.Drawing
 Add-Type -TypeDefinition @'
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using System.Text;
 public static class PulseNativeButton {
     [DllImport("user32.dll", SetLastError=true)]
     public static extern IntPtr SendMessageTimeout(IntPtr window, uint message, UIntPtr wParam, IntPtr lParam, uint flags, uint timeout, out UIntPtr result);
     [DllImport("user32.dll")]
     public static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
     [DllImport("user32.dll", SetLastError=true)] public static extern bool PostMessage(IntPtr window, uint message, UIntPtr wParam, IntPtr lParam);
+    private delegate bool EnumWindow(IntPtr window, IntPtr value);
+    [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindow callback, IntPtr value);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetWindowText(IntPtr window, StringBuilder text, int count);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr window);
+    [DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr window);
+    [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr window, uint relationship);
+    public sealed class Window {
+        public long handle, owner;
+        public string title;
+        public bool visible, enabled;
+    }
+    public static Window[] OwnWindows(uint process) {
+        List<Window> windows = new List<Window>();
+        EnumWindows(delegate(IntPtr handle, IntPtr unused) {
+            uint pid; GetWindowThreadProcessId(handle, out pid);
+            if (pid == process) {
+                StringBuilder title = new StringBuilder(1024); GetWindowText(handle, title, title.Capacity);
+                windows.Add(new Window { handle=handle.ToInt64(), owner=GetWindow(handle, 4).ToInt64(), title=title.ToString(), visible=IsWindowVisible(handle), enabled=IsWindowEnabled(handle) });
+            }
+            return true;
+        }, IntPtr.Zero);
+        return windows.ToArray();
+    }
 }
 '@
-$condition = New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ProcessIdProperty, $TargetProcess)
-if ($WindowTitle) {
-    $titleCondition = New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::NameProperty, $WindowTitle)
-    $condition = New-Object Windows.Automation.AndCondition($condition, $titleCondition)
-}
+# Owned modal windows need not be immediate children of the UIA desktop.
+# Enumerate real top-level HWNDs, restrict to the test process BEFORE reading
+# titles, and create UIA only for the exact native window we intend to inspect.
 $deadline = [DateTime]::UtcNow.AddSeconds(10)
 do {
-    $window = [Windows.Automation.AutomationElement]::RootElement.FindFirst([Windows.Automation.TreeScope]::Children, $condition)
-    if ($null -ne $window) { break }
+    $ownWindows = @([PulseNativeButton]::OwnWindows([uint32]$TargetProcess))
+    $native = $ownWindows | Where-Object { $_.visible -and ((-not $WindowTitle) -or $_.title -ceq $WindowTitle) } | Select-Object -First 1
+    if ($null -ne $native) { break }
     Start-Sleep -Milliseconds 100
 } while ([DateTime]::UtcNow -lt $deadline)
-if ($null -eq $window) { throw 'No native application window was found.' }
+if ($null -eq $native) { throw ('No native application window was found. Own-process HWNDs: ' + (ConvertTo-Json -InputObject @($ownWindows) -Compress)) }
+$window = [Windows.Automation.AutomationElement]::FromHandle([IntPtr]$native.handle)
+if ($window.Current.ProcessId -ne $TargetProcess) { throw 'UIA window belongs to another process.' }
 $all = $window.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)
 $buttons = @(); $content = @(); $clicked = $null; $elements = @(); $tab = $null
 foreach ($element in $all) {
@@ -75,7 +101,7 @@ if ($Screenshot) {
         $bitmap.Save($Screenshot, [Drawing.Imaging.ImageFormat]::Png)
     } finally { $graphics.Dispose(); $bitmap.Dispose() }
 }
-@{title=$window.Current.Name; visible=(-not $window.Current.IsOffscreen); buttons=@($buttons); content=@($content); elements=@($elements)} | ConvertTo-Json -Depth 5 -Compress
+@{title=$window.Current.Name; handle=$native.handle; owner=$native.owner; nativeWindows=@($ownWindows); visible=($native.visible -and (-not $window.Current.IsOffscreen)); buttons=@($buttons); content=@($content); elements=@($elements)} | ConvertTo-Json -Depth 5 -Compress
 if ($Click) {
     if ($null -eq $clicked) { throw 'The requested UI action was not found.' }
     if ($clicked.Current.ClassName -match '^WindowsForms10\.BUTTON\.') {

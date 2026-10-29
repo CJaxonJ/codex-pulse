@@ -39,6 +39,10 @@ try{
   assert.equal(await uiBase.config(),baseline,"Opening the GUI must not write trust");
   await inspectWindowsUI(session,{title,click:"查看权限详情"});
   const details=await waitForWindowsUI(session,value=>/pulse-hook-windows\.ps1/.test(value.content.join("\n")),{title:"Codex Pulse · 权限详情"});
+  const owner=details.nativeWindows.find(window=>window.title===title);
+  assert.equal(details.visible,true);
+  assert.equal(details.owner,owner.handle,"Permission details must be owned by the review window");
+  assert.equal(owner.enabled,false,"Review must wait for the real detail modal to close");
   assert.match(details.content.join("\n"),/sha256:/);
   await inspectWindowsUI(session,{title:"Codex Pulse · 权限详情",click:"返回"});
   await inspectWindowsUI(session,{title,click:"稍后开启"});
