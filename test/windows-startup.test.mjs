@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, realpath } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
@@ -21,7 +21,7 @@ async function setup() {
   assert.equal(initial.installed, false, "Each isolated data directory must map to a fresh task");
   assert.deepEqual(await control("status"), initial, "An absent task must be a stable status, not a COM lookup failure");
   const scheduler = async operation => {
-    const script = `$ErrorActionPreference='Stop';$s=New-Object -ComObject Schedule.Service;$s.Connect();$folder=$s.GetFolder('\\');$name=$env:PULSE_ISOLATED_TASK;
+    const script = `$ErrorActionPreference='Stop';[Console]::OutputEncoding=New-Object Text.UTF8Encoding($false);$s=New-Object -ComObject Schedule.Service;$s.Connect();$folder=$s.GetFolder('\\');$name=$env:PULSE_ISOLATED_TASK;
 if($env:PULSE_ISOLATED_OP -eq 'foreign'){$d=$s.NewTask(0);$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;$d.Principal.UserId=$sid;$d.Principal.LogonType=3;$d.Principal.RunLevel=0;$d.RegistrationInfo.Source='other-application';$trigger=$d.Triggers.Create(9);$trigger.UserId=$sid;$trigger.Enabled=$false;$a=$d.Actions.Create(0);$a.Path=$env:SystemRoot+'\\System32\\notepad.exe';$null=$folder.RegisterTaskDefinition($name,$d,2,$sid,$null,3,$null)}
 if($env:PULSE_ISOLATED_OP -eq 'delete'){try{$folder.DeleteTask($name,0)}catch{$e=$_.Exception;while($e.InnerException){$e=$e.InnerException};if($e.HResult -ne -2147024894){throw}};Write-Output '{}';exit}
 $t=$folder.GetTask($name);$d=$t.Definition;@{xml=$t.Xml;enabled=$t.Enabled;instances=$t.GetInstances(0).Count;lastResult=$t.LastTaskResult;user=$d.Principal.UserId;runLevel=$d.Principal.RunLevel;logonType=$d.Principal.LogonType;action=$d.Actions.Item(1).Path;arguments=$d.Actions.Item(1).Arguments;workdir=$d.Actions.Item(1).WorkingDirectory;source=$d.RegistrationInfo.Source;trigger=$d.Triggers.Item(1).Type;battery=$d.Settings.DisallowStartIfOnBatteries;network=$d.Settings.RunOnlyIfNetworkAvailable;limit=$d.Settings.ExecutionTimeLimit;restart=$d.Settings.RestartInterval;restartCount=$d.Settings.RestartCount;multiple=$d.Settings.MultipleInstances}|ConvertTo-Json -Compress`;
@@ -46,7 +46,11 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     const enabled = await f.control("enable"); assert.equal(enabled.enabled, true);
     const definition = await f.scheduler("inspect");
     assert.equal(definition.runLevel, 0); assert.equal(definition.logonType, 3); assert.equal(definition.trigger, 9);
-    assert.equal(definition.action, f.executable); assert.equal(definition.workdir, f.appRoot);
+    // Windows may expand an 8.3 TEMP prefix in the loaded executable's base
+    // directory. Compare actual existing files/directories, not path spelling;
+    // bad Unicode must still fail realpath rather than being normalized away.
+    assert.equal(await realpath(definition.action), await realpath(f.executable));
+    assert.equal(await realpath(definition.workdir), await realpath(f.appRoot));
     assert.equal(definition.arguments, `--startup-background "${f.dataDir}"`);
     assert.equal(definition.battery, false); assert.equal(definition.network, false);
     assert.equal(definition.limit, "PT0S"); assert.equal(definition.restart, "PT1M"); assert.equal(definition.restartCount, 3); assert.equal(definition.multiple, 2);
