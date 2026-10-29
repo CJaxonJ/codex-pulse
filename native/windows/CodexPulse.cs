@@ -100,7 +100,7 @@ namespace CodexPulse {
             return Icon.ExtractAssociatedIcon(Application.ExecutablePath);
         }
         internal static Button Button(string title, EventHandler click) {
-            Button button = new Button { Text = title, AutoSize = true, MinimumSize = new Size(112, 40), Margin = new Padding(8, 0, 0, 0), Padding = new Padding(12, 8, 12, 8), AccessibleName = title };
+            Button button = new Button { Text = title, AutoSize = true, MinimumSize = new Size(112, 40), Margin = new Padding(8, 0, 0, 0), Padding = new Padding(12, 8, 12, 8), AccessibleName = title, AccessibleRole = AccessibleRole.PushButton };
             button.Click += click;
             return button;
         }

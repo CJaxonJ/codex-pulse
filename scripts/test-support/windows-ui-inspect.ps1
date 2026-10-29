@@ -3,6 +3,11 @@ $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
+Add-Type -AssemblyName UIAutomationClientsideProviders
+# PowerShell is an automation host, not a dedicated UIA client. Register the
+# framework's genuine Win32/WinForms proxies; never replace controls in tests.
+$providers = [AppDomain]::CurrentDomain.GetAssemblies() | Where-Object { $_.GetName().Name -eq 'UIAutomationClientsideProviders' } | Select-Object -First 1
+[Windows.Automation.ClientSettings]::RegisterClientSideProviderAssembly($providers.GetName())
 Add-Type -AssemblyName System.Drawing
 $condition = New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ProcessIdProperty, $TargetProcess)
 $deadline = [DateTime]::UtcNow.AddSeconds(10)
