@@ -83,6 +83,15 @@ namespace CodexPulse {
             object result;
             return value.TryGetValue(key, out result) && result is bool ? (bool)result : fallback;
         }
+        internal static string LocalTime(IDictionary<string, object> value, string key) {
+            object raw;
+            if (!value.TryGetValue(key, out raw) || raw == null) return "未知";
+            try { return DateTimeOffset.FromUnixTimeSeconds(Convert.ToInt64(raw)).ToLocalTime().ToString("g"); }
+            catch (FormatException) { return "未知"; }
+            catch (OverflowException) { return "未知"; }
+            catch (InvalidCastException) { return "未知"; }
+            catch (ArgumentOutOfRangeException) { return "未知"; }
+        }
         internal static string SafeSource(string value) {
             Uri uri;
             if (value.Length > 2048 || !Uri.TryCreate(value, UriKind.Absolute, out uri) || uri.Scheme != "https"
@@ -124,7 +133,7 @@ namespace CodexPulse {
     }
 
     internal sealed class Notice {
-        internal readonly string Title, Body, Severity, Source, SourceText, Action;
+        internal readonly string Title, Body, Severity, Source, SourceText, SourceHeading, Action;
         internal readonly bool Persistent, Sound;
         internal Notice(IDictionary<string, object> value) {
             Title = Program.StringValue(value, "title", 180);
@@ -134,6 +143,7 @@ namespace CodexPulse {
             Severity = new[] { "critical", "warning", "info" }.Contains(severity) ? severity : "info";
             Source = Program.SafeSource(Program.StringValue(value, "sourceUrl"));
             SourceText = Program.StringValue(value, "sourceText");
+            SourceHeading = Program.StringValue(value, "sourceTextKind") == "summary" ? "来源摘要（非逐字原文）" : "原文";
             Action = Program.StringValue(value, "action") == "preview" ? "preview" : "history";
             Persistent = Program.BooleanValue(value, "persistent", false);
             Sound = Program.BooleanValue(value, "sound", true);
@@ -153,7 +163,7 @@ namespace CodexPulse {
                 Margin = new Padding(0, 0, 0, 16), AccessibleName = "提醒标题" };
             RichTextBox body = Program.TextArea();
             body.Margin = new Padding(0, 0, 0, 24);
-            body.Text = notice.Body + (notice.SourceText.Length > 0 ? "\n\n原文\n" + notice.SourceText : "");
+            body.Text = notice.Body + (notice.SourceText.Length > 0 ? "\n\n" + notice.SourceHeading + "\n" + notice.SourceText : "");
             FlowLayoutPanel actions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = true, Margin = new Padding(0) };
             Button dismiss = Program.Button("知道了", delegate { Close(); });
             dismiss.BackColor = Program.Green; dismiss.ForeColor = Color.White;
@@ -334,7 +344,11 @@ namespace CodexPulse {
             if (entries.SelectedIndex < 0 || entries.SelectedIndex >= records.Count) return;
             Dictionary<string, object> record = records[entries.SelectedIndex];
             if (!preview) {
-                details.Text = Program.StringValue(record, "body") + "\n\n" + Program.StringValue(record, "sourceText");
+                string received = Program.LocalTime(record, "occurredAt"), posted = Program.LocalTime(record, "sourceAt");
+                string heading = Program.StringValue(record, "sourceTextKind") == "summary" ? "来源摘要（非逐字原文）" : "原文";
+                string original = Program.StringValue(record, "sourceText");
+                details.Text = "收到时间：" + received + "\n" + Program.StringValue(record, "body")
+                    + (original.Length > 0 ? "\n\n" + heading + " · 原帖时间：" + posted + "\n" + original : "");
                 source.Enabled = Program.SafeSource(Program.StringValue(record, "sourceUrl")).Length > 0;
                 return;
             }
@@ -342,7 +356,7 @@ namespace CodexPulse {
             Dictionary<string, object> duration = record.ContainsKey("duration") ? record["duration"] as Dictionary<string, object> : null;
             string time = "";
             object at;
-            if (restart != null && restart.TryGetValue("earliestAt", out at)) time = "\n最早额度恢复时间：" + DateTimeOffset.FromUnixTimeSeconds(Convert.ToInt64(at)).ToLocalTime().ToString("g");
+            if (restart != null && restart.TryGetValue("earliestAt", out at)) time = "\n最早额度恢复时间：" + Program.LocalTime(restart, "earliestAt");
             string estimate = Program.StringValue(duration, "source");
             if (duration != null && duration.ContainsKey("minMinutes") && duration["minMinutes"] != null)
                 estimate = Program.StringValue(duration, "minMinutes") + "–" + Program.StringValue(duration, "maxMinutes") + " 分钟（估算，非承诺）";

@@ -60,10 +60,10 @@ test("actual native Windows history and plan views read isolated CLI records wit
   await mkdir(path.join(runtime, "runtime"), { recursive: true }); await mkdir(data);
   for (const entry of ["bin", "src", "package.json"]) await cp(path.join(root, entry), path.join(runtime, entry), { recursive: true });
   await cp(process.execPath, path.join(runtime, "runtime/node.exe"));
-  await writeFile(path.join(data, "user-events.json"), JSON.stringify({ events: [{ title: "预告测试", body: "并非重置到账", sourceText: "保留的原帖全文", sourceUrl: "https://x.com/thsottiaux/status/123" }] }));
+  await writeFile(path.join(data, "user-events.json"), JSON.stringify({ events: [{ title: "预告测试", body: "并非重置到账", sourceTextKind: "summary", sourceText: "保留的来源摘要", occurredAt: "invalid-legacy-date", sourceUrl: "https://x.com/thsottiaux/status/123" }] }));
   await mkdir(path.join(data, "chat-continuity"));
   await writeFile(path.join(data, "chat-continuity/task.json"), JSON.stringify({ sessionId: "isolated", status: "paused_quota", initialGoal: { objective: "保留最开始的用户目标" }, checkpoint: { summary: "Completed: 保留修改\nRemaining: 继续测试\nNext action: 检查真实工作区\nBlockers: quota" } }));
-  for (const [mode, expected] of [["--history", /保留的原帖全文/], ["--preview", /保留最开始的用户目标[\s\S]*检查真实工作区/]]) {
+  for (const [mode, expected] of [["--history", /来源摘要（非逐字原文）[\s\S]*保留的来源摘要/], ["--preview", /保留最开始的用户目标[\s\S]*检查真实工作区/]]) {
     const child = spawn(app, [mode], { env: { ...process.env, CODEX_PULSE_APP_ROOT: runtime, CODEX_PULSE_DATA_DIR: data, CODEX_BINARY: "nonexistent-no-account.exe" }, windowsHide: false, stdio: ["ignore", "ignore", "pipe"] });
     let diagnostics = ""; child.stderr.on("data", b => diagnostics += b);
     const closed = once(child, "exit");

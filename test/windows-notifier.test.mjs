@@ -14,6 +14,7 @@ test("Windows notifications transfer bounded plain text over stdin and whitelist
   assert.equal(packet.command, undefined);
   assert.equal(windowsNotificationPayload({ sourceUrl: "https://twitter.com/thsottiaux/status/123?tracking=test" }).sourceUrl, "https://x.com/thsottiaux/status/123");
   assert.equal(windowsNotificationPayload({ sourceText: "x".repeat(22000) }).sourceText.length, 20000);
+  assert.equal(windowsNotificationPayload({ sourceTextKind: "summary" }).sourceTextKind, "summary", "Do not relabel a source summary as a verbatim post");
 });
 
 function fakeProcess(start) {

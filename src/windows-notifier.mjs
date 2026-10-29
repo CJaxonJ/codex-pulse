@@ -13,6 +13,7 @@ export function windowsNotificationPayload(notice) {
     action: notice.action === "preview" ? "preview" : "history",
     sourceUrl: xPostUrl(notice.sourceUrl),
     sourceText: String(notice.sourceText || "").slice(0, 20000),
+    sourceTextKind: notice.sourceTextKind === "summary" ? "summary" : "original",
     eventId: typeof notice.eventId === "string" && /^[\w:-]{1,180}$/.test(notice.eventId) ? notice.eventId : null,
   };
 }
