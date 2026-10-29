@@ -80,3 +80,5 @@ Windows watcher 启动前新增真实 DACL 检查：只允许当前 Windows 用�
 新增 Windows 真机测试会先给隔离文件加入 Everyone 访问，再验证移除、已有内容不变、新文件继承、重复调用、junction／失效 junction／过宽目录拒绝且原权限不变。这些是本机 ACL 行为验证，不是已完成安装器验收，也不代表能抵御管理员或同一用户下的恶意程序。Windows runner 结果未读回前不勾选完成。
 
 [首轮 ACL 工作流 40837768452](https://github.com/CJaxonJ/codex-pulse/actions/runs/40837768452) 失败在测试前置条件：尚未调用产品权限实现时，隔离文件未观测到预期的 Everyone 规则。链接／过宽目录拒绝、已有设置及授权窗口测试通过。后续修正仅修改 DACL 的测试准备，启用 PowerShell 严格失败输出，并打印隔离 ACL 状态以定位；不能把拒绝测试通过当作正向权限设置已经成功。另将 reparse 检查改为直接读取文件属性，补失效 junction 作为祖先的测试。
+
+后续 `a063cd0` 的真实日志进一步证明：测试的 `Get-Acl` 无法加载 runner 环境中的 `Microsoft.PowerShell.Security`。因此更正首轮所谓的“拒绝测试通过”：当时准备与读取没有严格报错，空 ACL 对比和接受任意拒绝可能假通过，不能作为边界证据。产品和测试改用 .NET Framework 文件 ACL API，不依赖该 PowerShell 模块；测试严格报错，且必须匹配 linked／broad 等实际拒绝原因。新增从 data/app/src 安装拓扑执行的正向验收，不能只测源码目录。

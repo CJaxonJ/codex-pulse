@@ -11,13 +11,17 @@ $reserved = @([IO.Path]::GetPathRoot($target), [IO.Path]::GetTempPath(),
     [Environment]::GetFolderPath('UserProfile'), [Environment]::GetFolderPath('LocalApplicationData'),
     [Environment]::GetFolderPath('ApplicationData'), [Environment]::GetFolderPath('CommonApplicationData'),
     [Environment]::GetFolderPath('Windows'), [Environment]::GetFolderPath('System'),
-    [Environment]::GetFolderPath('ProgramFiles'), [Environment]::GetFolderPath('ProgramFilesX86'),
-    (Split-Path -Parent $PSScriptRoot))
+    [Environment]::GetFolderPath('ProgramFiles'), [Environment]::GetFolderPath('ProgramFilesX86'))
 foreach ($reservedPath in $reserved) {
     if (-not $reservedPath) { continue }
     $reservedPath = [IO.Path]::GetFullPath($reservedPath).TrimEnd('\')
     if ($reservedPath -ieq $target -or $reservedPath.StartsWith($target + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Refusing a broad data directory.' }
 }
+# A packaged app lives in data/app/src, unlike a source-checkout test. Permit
+# exactly that owned runtime child, not the checkout or arbitrary ancestors.
+$applicationRoot = Split-Path -Parent $PSScriptRoot
+$containsApplication = $applicationRoot -ieq $target -or $applicationRoot.StartsWith($target + '\', [StringComparison]::OrdinalIgnoreCase)
+if ($containsApplication -and $applicationRoot -ine [IO.Path]::Combine($target, 'app')) { throw 'Refusing a checkout or application root.' }
 function Assert-NotLink([string]$path) {
     # Test-Path and Get-Item can report a dangling junction as missing. Native
     # file attributes inspect the link entry even when its destination is gone.
@@ -58,8 +62,11 @@ foreach ($item in $entries) {
         $rule = New-Object Security.AccessControl.FileSystemAccessRule($identity, [Security.AccessControl.FileSystemRights]::FullControl, $inheritance, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)
         $security.AddAccessRule($rule)
     }
-    Set-Acl -LiteralPath $item.FullName -AclObject $security
-    $readback = Get-Acl -LiteralPath $item.FullName
+    # Do not autoload Microsoft.PowerShell.Security. A PowerShell 7 parent can
+    # leave a PSModulePath whose Security module Windows PowerShell cannot load.
+    # These are the .NET Framework file-system APIs, with DACL-only changes.
+    $item.SetAccessControl($security)
+    $readback = $item.GetAccessControl()
     if (-not $readback.AreAccessRulesProtected) { throw 'ACL protection was not persisted.' }
     $rules = @($readback.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
     if ($rules.Count -ne 2) { throw 'Unexpected access rules remain.' }
