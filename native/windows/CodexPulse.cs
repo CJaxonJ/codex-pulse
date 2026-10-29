@@ -19,8 +19,6 @@ namespace CodexPulse {
         [STAThread]
         private static int Main(string[] args) {
             try {
-                Console.InputEncoding = new UTF8Encoding(false);
-                Console.OutputEncoding = new UTF8Encoding(false);
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
                 if (args.Length == 1 && args[0] == "--notify") {
@@ -40,9 +38,10 @@ namespace CodexPulse {
                     using (HistoryWindow window = new HistoryWindow(args.Length == 1 && args[0] == "--preview")) Application.Run(window);
                 } else { throw new ArgumentException(); }
                 return 0;
-            } catch {
+            } catch (Exception error) {
                 // Do not leak prompt text, home paths or credentials in the UI protocol.
-                Console.Error.WriteLine("Codex Pulse could not open its Windows interface.");
+                string method = error.TargetSite == null ? "startup" : error.TargetSite.DeclaringType.FullName + "." + error.TargetSite.Name;
+                Console.Error.WriteLine("Codex Pulse interface failed: " + error.GetType().Name + " at " + method);
                 return 1;
             }
         }
@@ -50,15 +49,21 @@ namespace CodexPulse {
             char[] buffer = new char[4096];
             StringBuilder value = new StringBuilder();
             int count;
-            while ((count = Console.In.Read(buffer, 0, buffer.Length)) > 0) {
-                value.Append(buffer, 0, count);
-                if (value.Length > 65536) throw new InvalidDataException();
+            // A WinExe has no console code page. Setting Console.InputEncoding
+            // calls SetConsoleCP and fails without a console; decode the pipe.
+            using (StreamReader input = new StreamReader(Console.OpenStandardInput(), new UTF8Encoding(false, true))) {
+                while ((count = input.Read(buffer, 0, buffer.Length)) > 0) {
+                    value.Append(buffer, 0, count);
+                    if (value.Length > 65536) throw new InvalidDataException();
+                }
             }
             return value.ToString();
         }
         internal static void Acknowledge(string status) {
-            Console.Out.WriteLine("{\"status\":\"" + status + "\"}");
-            Console.Out.Flush();
+            using (StreamWriter output = new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false), 1024, true)) {
+                output.WriteLine("{\"status\":\"" + status + "\"}");
+                output.Flush();
+            }
         }
         internal static string StringValue(IDictionary<string, object> value, string key, int limit = 20000) {
             object result;

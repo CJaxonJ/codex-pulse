@@ -6,6 +6,7 @@ import { once } from "node:events";
 import { cp, mkdir, mkdtemp, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { sendWindowsNotification } from "../src/windows-notifier.mjs";
 
 const execute = promisify(execFile);
 const root = path.resolve(import.meta.dirname, "..");
@@ -29,12 +30,13 @@ async function until(check) {
 
 test("actual Windows native alert renders Unicode as plain text, remains open, and can be dismissed by its real button", windows, async () => {
   assert((await stat(app)).isFile(), "Build the native Windows application before running this acceptance test");
-  const child = spawn(app, ["--notify"], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
-  const closed = once(child, "exit");
+  let child, closed, diagnostics = "";
   try {
-    const acknowledged = new Promise((resolve, reject) => { let output = ""; child.stdout.on("data", chunk => { output += chunk; if (output.includes("\n")) resolve(JSON.parse(output.trim())); }); child.on("error", reject); child.on("exit", () => reject(Error("Native alert exited without a display acknowledgement"))); });
-    child.stdin.end(JSON.stringify({ title: "【测试】额度恢复，并非真实通知", body: "保留原目标。<b>不是 HTML</b> & $(不是命令)", sourceUrl: "https://x.com/thsottiaux/status/123", sourceText: "测试原文，不连接 X", persistent: true, severity: "critical", sound: false }));
-    assert.deepEqual(await acknowledged, { status: "shown" });
+    const delivery = await sendWindowsNotification({ title: "【测试】额度恢复，并非真实通知", body: "保留原目标。<b>不是 HTML</b> & $(不是命令)", sourceUrl: "https://x.com/thsottiaux/status/123", sourceText: "测试原文，不连接 X", persistent: true, severity: "critical", sound: false }, {
+      env: { ...process.env, CODEX_PULSE_NOTIFIER_APP: app, CODEX_PULSE_DISABLE_NOTIFICATIONS: "0" },
+      spawn: (...args) => { child = spawn(...args); child.stderr.on("data", b => diagnostics += b); closed = once(child, "exit"); return child; },
+    });
+    assert.deepEqual(delivery, { deliveryStatus: "window_shown" });
     const screenshot = path.join(root, "build/windows/persistent-alert.png");
     const ui = await inspect(child, "-Screenshot", screenshot);
     assert.equal(ui.visible, true);
@@ -48,7 +50,8 @@ test("actual Windows native alert renders Unicode as plain text, remains open, a
     assert.equal(child.exitCode, null, "Persistent notice must not immediately dismiss itself");
     await inspect(child, "-Click", "知道了");
     assert.equal((await closed)[0], 0);
-  } finally { if (child.exitCode == null) child.kill(); }
+  } catch (error) { throw new Error(error.message + (diagnostics ? " · " + diagnostics.trim() : "")); }
+  finally { if (child && child.exitCode == null) child.kill(); }
 });
 
 test("actual native Windows history and plan views read isolated CLI records without an account or model", windows, async () => {
@@ -61,7 +64,8 @@ test("actual native Windows history and plan views read isolated CLI records wit
   await mkdir(path.join(data, "chat-continuity"));
   await writeFile(path.join(data, "chat-continuity/task.json"), JSON.stringify({ sessionId: "isolated", status: "paused_quota", initialGoal: { objective: "保留最开始的用户目标" }, checkpoint: { summary: "Completed: 保留修改\nRemaining: 继续测试\nNext action: 检查真实工作区\nBlockers: quota" } }));
   for (const [mode, expected] of [["--history", /保留的原帖全文/], ["--preview", /保留最开始的用户目标[\s\S]*检查真实工作区/]]) {
-    const child = spawn(app, [mode], { env: { ...process.env, CODEX_PULSE_APP_ROOT: runtime, CODEX_PULSE_DATA_DIR: data, CODEX_BINARY: "nonexistent-no-account.exe" }, windowsHide: true, stdio: "ignore" });
+    const child = spawn(app, [mode], { env: { ...process.env, CODEX_PULSE_APP_ROOT: runtime, CODEX_PULSE_DATA_DIR: data, CODEX_BINARY: "nonexistent-no-account.exe" }, windowsHide: true, stdio: ["ignore", "ignore", "pipe"] });
+    let diagnostics = ""; child.stderr.on("data", b => diagnostics += b);
     const closed = once(child, "exit");
     try {
       const ui = await until(async () => { const value = await inspect(child); return expected.test(value.content.join("\n")) ? value : null; });
@@ -69,6 +73,7 @@ test("actual native Windows history and plan views read isolated CLI records wit
       if (mode === "--history") assert(ui.buttons.some(b => b.name === "查看原帖" && b.enabled));
       await inspect(child, "-Click", "关闭");
       assert.equal((await closed)[0], 0);
-    } finally { if (child.exitCode == null) child.kill(); }
+    } catch (error) { throw new Error(error.message + (diagnostics ? " · " + diagnostics.trim() : "")); }
+    finally { if (child.exitCode == null) child.kill(); }
   }
 });

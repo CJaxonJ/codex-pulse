@@ -187,6 +187,7 @@ async function testNotification() {
     quotaPolicy: preferences.quotaPolicy,
   });
   const notification = {
+    ...quotaExample,
     title: `【测试】${quotaExample.title}`,
     body: `这是一条测试通知，不代表真实额度。${quotaExample.body}`,
   };
@@ -682,7 +683,7 @@ async function watch() {
   await client.start();
   client.on("exit", (error) => {
     if (stopped) return;
-    log("app server exited; launchd will restart the watcher", {
+    log("app server exited; background supervisor must restart the watcher", {
       error: error.message,
     });
     process.exit(1);
