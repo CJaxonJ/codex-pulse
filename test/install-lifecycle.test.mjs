@@ -1,10 +1,13 @@
 import test from "node:test";
+import { describe } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { rmSync, existsSync, readdirSync, appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { installerFixture } from "../scripts/test-support/installer-fixture.mjs";
 import { lockInstallation } from "../scripts/installation-transaction.mjs";
 const project=path.resolve(import.meta.dirname,"..");
+
+describe("macOS-specific installation lifecycle",{skip:process.platform!=="darwin"},()=>{
 
 for(const failure of ["account","compiler","build","bootstrap","plugin","doctor","kickstart","bootout","unknown-service"]) test(`failed ${failure} preserves the previous installed bundle and history`,()=>{
   const f=installerFixture(project,{existing:true});
@@ -114,4 +117,5 @@ test("uninstall does not remove an unrelated plugin",()=>{
   const f=installerFixture(project,{existing:true});
   try {assert.equal(f.run("uninstall-macos.mjs").code,0);assert.ok(f.platform().plugins.some(p=>p.pluginId==="unrelated@other"));}
   finally {rmSync(f.root,{recursive:true,force:true});}
+});
 });

@@ -15,8 +15,7 @@ async function fixture(platform='darwin') {
   await writeFile(path.join(plugin,'scripts/pulse-hook-windows.ps1'),'windows fixture');
   const hooks=['preToolUse','postToolUse','sessionStart','userPromptSubmit','stop','interrupt'].map((eventName,i)=>({
     key:`codex-pulse@codex-pulse-local:${eventName}`,eventName,handlerType:'command',
-    command:'/usr/bin/env node "$PLUGIN_ROOT/scripts/pulse-hook.mjs"',source:'plugin',isManaged:false,async:false,
-    ...(platform==='win32'?{commandWindows:WINDOWS_HOOK_COMMAND}:{}),
+    command:platform==='win32'?WINDOWS_HOOK_COMMAND:'/usr/bin/env node "$PLUGIN_ROOT/scripts/pulse-hook.mjs"',source:'plugin',isManaged:false,async:false,
     timeoutSec:3,sourcePath:path.join(plugin,'.codex-plugin/plugin.json'),pluginId:'codex-pulse@codex-pulse-local',
     currentHash:'sha256:'+String(i).repeat(64),enabled:true,trustStatus:'untrusted',
   }));
@@ -83,9 +82,9 @@ test('Windows consent reviews the actual Windows command and pins the launcher b
   await assert.rejects(f.controller.enable(review.reviewId,{confirmed:true}),/变化/);
   assert.equal(f.writes.length,0);
 });
-test('Windows missing or modified override cannot be trusted even if the Unix command is intact',async()=>{
-  for(const override of [undefined,'powershell.exe -Command bad']){
-    const f=await fixture('win32');f.hooks[0].commandWindows=override;
+test('Windows missing or modified effective command cannot be trusted; metadata does not invent commandWindows',async()=>{
+  for(const override of [undefined,'/usr/bin/env node "$PLUGIN_ROOT/scripts/pulse-hook.mjs"','powershell.exe -Command bad']){
+    const f=await fixture('win32');f.hooks[0].command=override;
     await assert.rejects(f.controller.prepare(),/组件/);assert.equal(f.writes.length,0);
   }
   const f=await fixture('win32'),review=await f.controller.prepare();

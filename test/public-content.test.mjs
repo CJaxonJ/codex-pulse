@@ -12,6 +12,7 @@ const temporary = () => mkdtempSync(path.join(os.tmpdir(), "pulse-public-check-"
 test("public checks preserve useful architecture, public endpoints and synthetic examples", () => {
   const text = "https://codex-reset.com /Users/tester dev@example.invalid hooks/list config/batchWrite";
   assert.deepEqual(publicContentFindings("README.md", Buffer.from(text)), []);
+  assert.deepEqual(publicContentFindings("fixture.test.mjs", Buffer.from("/Users/test /home/test")), []);
   assert.deepEqual(publicContentFindings(".env.example", Buffer.from("TOKEN=replace-me")), []);
 });
 

@@ -12,7 +12,7 @@ export function resolveCodexBinary() {
 export class AppServerClient extends EventEmitter {
   constructor(options = {}) {
     super();
-    this.binary = options.binary || resolveCodexBinary();
+    this.binary = options.binary || null;
     this.binaryArgs = options.binaryArgs || [];
     this.requestTimeoutMs = options.requestTimeoutMs || 15_000;
     this.nextId = 1;
@@ -22,6 +22,7 @@ export class AppServerClient extends EventEmitter {
 
   async start() {
     if (this.child) return;
+    this.binary ||= resolveCodexBinary();
     const invocation = codexInvocation(this.binary, [...this.binaryArgs, "app-server"]);
     this.child = spawn(invocation.file, invocation.args, {
       stdio: ["pipe", "pipe", "pipe"],

@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, cpSync, existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 export function installerFixture(source,{existing=false,realCodex=null}={}) {
   const root=mkdtempSync(path.join(os.tmpdir(),"pulse-install-fixture-"));
@@ -37,7 +38,7 @@ export function installerFixture(source,{existing=false,realCodex=null}={}) {
   const env={...process.env,HOME:home,CODEX_HOME:path.join(home,".codex"),
     CODEX_BINARY:realCodex || path.join(root,"fixture-codex"),PULSE_INSTALL_FIXTURE:home,
     PULSE_INSTALL_REAL_CODEX:realCodex ? "1" : "0",
-    NODE_OPTIONS:`--import=${loader}`,CODEX_PULSE_INTERACTIVE_INSTALL:"1"};
+    NODE_OPTIONS:`--import=${pathToFileURL(loader).href}`,CODEX_PULSE_INTERACTIVE_INSTALL:"1"};
   const run=(script,failure="")=>{
     try {return {code:0,stdout:execFileSync(process.execPath,[path.join(project,"scripts",script)],{env:{...env,PULSE_INSTALL_FAILURE:failure},encoding:"utf8",stdio:"pipe",timeout:20000})};}
     catch(e){return {code:e.status || 1,stdout:e.stdout?.toString() || "",stderr:e.stderr?.toString() || ""};}

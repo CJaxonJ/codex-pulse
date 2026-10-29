@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, open, rename, chmod } from "node:fs/promises";
+import { mkdir, readFile, open, chmod } from "node:fs/promises";
 import path from "node:path";
 import { WorktreeLockManager } from "./worktree-lock-manager.mjs";
 import { evaluateFiveHourSample } from "./quota-monitor-core.mjs";
+import { durableReplace } from "./durable-replace.mjs";
 
 export function evaluateCreditAwareQuota(state, summary, redemption, { now, config }) {
   const evaluated = evaluateFiveHourSample(state.fiveHour, summary, { now, config });
@@ -88,9 +89,7 @@ export class CreditOperationStore {
     const handle = await open(temporary, "wx", 0o600);
     try { await handle.writeFile(JSON.stringify(value)); await handle.sync(); }
     finally { await handle.close(); }
-    await rename(temporary, file);
-    const directory = await open(this.root, "r");
-    try { await directory.sync(); } finally { await directory.close(); }
+    await durableReplace(temporary, file);
   }
 }
 

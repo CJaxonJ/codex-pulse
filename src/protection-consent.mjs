@@ -26,9 +26,9 @@ export class ProtectionConsent {
     }
     const list=[...hooks.values()].sort((a,b)=>a.eventName.localeCompare(b.eventName));
     if(list.length!==EVENTS.length || new Set(list.map(h=>h.eventName)).size!==EVENTS.length ||
-      list.some(h=>!EVENTS.includes(h.eventName) || h.handlerType!=='command' || h.command!==COMMAND ||
+      list.some(h=>!EVENTS.includes(h.eventName) || h.handlerType!=='command' ||
+        h.command!==(this.platform==='win32'?WINDOWS_HOOK_COMMAND:COMMAND) ||
         (h.commandWindows != null && h.commandWindows!==WINDOWS_HOOK_COMMAND) ||
-        (this.platform==='win32' && h.commandWindows!==WINDOWS_HOOK_COMMAND) ||
         h.source!=='plugin' || h.isManaged || h.async || !h.key.startsWith(PLUGIN+':') ||
         !/^sha256:[a-f0-9]{64}$/.test(h.currentHash) || !Number.isFinite(h.timeoutSec) || h.timeoutSec>15)) {
       throw Error('保护组件缺失或发生了无法确认的变化，请重新安装官方发布包');
@@ -53,7 +53,7 @@ export class ProtectionConsent {
     const files={manifest:digest(await readFile(source,'utf8')),script:digest(await readFile(script,'utf8'))};
     if(this.platform==='win32') files.windowsLauncher=digest(await readFile(path.join(path.dirname(script),'pulse-hook-windows.ps1'),'utf8'));
     return {definitions,files,ready:list.every(h=>h.enabled && h.trustStatus==='trusted'),
-      details:list.map(h=>({purpose:LABELS[h.eventName],command:this.platform==='win32'?h.commandWindows:h.command,source:h.sourcePath,hash:h.currentHash})),
+      details:list.map(h=>({purpose:LABELS[h.eventName],command:h.command,source:h.sourcePath,hash:h.currentHash})),
       fingerprint:digest({definitions,files})};
   }
   async status() {

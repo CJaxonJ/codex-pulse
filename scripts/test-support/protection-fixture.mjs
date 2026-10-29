@@ -4,6 +4,7 @@ import {promisify} from 'node:util';
 import path from 'node:path';
 import os from 'node:os';
 import {resolveCodexBinary} from '../../src/app-server-client.mjs';
+import {codexInvocation} from '../../src/platform-runtime.mjs';
 export async function protectionFixture(project) {
   const root=await mkdtemp(path.join(os.tmpdir(),'pulse-consent-e2e-'));
   const home=path.join(root,'codex'),dataDir=path.join(root,'data'),market=path.join(root,'market');
@@ -12,7 +13,8 @@ export async function protectionFixture(project) {
   await cp(path.join(project,'plugin'),path.join(market,'plugin'),{recursive:true});
   await cp(path.join(project,'.agents/plugins/marketplace.json'),path.join(market,'.agents/plugins/marketplace.json'));
   const env={...process.env,CODEX_HOME:home,CODEX_PULSE_DATA_DIR:dataDir,CODEX_PULSE_APP_ROOT:project};
-  const run=async(args)=>JSON.parse((await promisify(execFile)(resolveCodexBinary(),args,{env,timeout:20000})).stdout);
+  const run=async(args)=>{const call=codexInvocation(resolveCodexBinary(),args);
+    return JSON.parse((await promisify(execFile)(call.file,call.args,{env,timeout:20000,windowsHide:true})).stdout);};
   await run(['plugin','marketplace','add',market,'--json']);
   await run(['plugin','add','codex-pulse@codex-pulse-local','--json']);
   const cli=async(args)=>{

@@ -236,13 +236,15 @@ test("trusted hook records stop only the installer-owned review CLI", async () =
   );
   const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
     stdio: "ignore",
+    windowsHide: true,
   });
   await writeFile(pidPath, String(child.pid));
 
   assert.equal(waitForTrust({ configPath, pidPath, timeoutMs: 1_000,
     trustCheck: areCodexPulseHooksTrusted }), "trusted");
   const exit = await new Promise((resolve) => child.once("exit", (code, signal) => resolve({ code, signal })));
-  assert.equal(exit.signal, "SIGTERM");
+  if(process.platform==="win32") assert.equal(exit.code,1); // Windows reports forced process termination as an exit code.
+  else assert.equal(exit.signal, "SIGTERM");
 });
 
 test("restart stays explicit and reopens ChatGPT only after user confirmation", () => {

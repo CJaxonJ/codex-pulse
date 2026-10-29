@@ -20,7 +20,9 @@ test("visual settings validate user fields without exposing or modifying account
   assert.equal(saved.tiboSource, "disabled");
   assert.equal(userSettings(saved).lowQuotaPercent, 35);
   assert.doesNotMatch(JSON.stringify(userSettings(saved)), /accountBinding|bbbbbbbb|consentedAt/);
-  assert.equal((await stat(store.filePath)).mode & 0o777, 0o600);
+  // POSIX mode bits do not represent Windows ACLs. Windows root ACLs must be
+  // verified by the native installer acceptance, not by asserting fake 0600.
+  if(process.platform!=="win32") assert.equal((await stat(store.filePath)).mode & 0o777, 0o600);
   const before = await readFile(store.filePath, "utf8");
   for (const patch of [{ lowQuotaPercent: 10 }, { lowQuotaPercent: 81 }, { lowQuotaPercent: 25.5 },
     { quotaAlertsEnabled: "false" }, { autoRedeem: { enabled: true } }, { resumeFloor: 10 }, { quotaPolicy: "unknown" }]) {
