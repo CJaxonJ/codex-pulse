@@ -67,6 +67,14 @@ Windows 原生通知、原帖历史和续跑计划界面已实现，并在 [Wind
 - 已证实原失败为 UIA 桌面直接子节点查找遗漏 owned modal；改用本测试进程的准确 HWND 后，真实详情及用卡模态窗口都能读取和操作。没有删掉断言、改成点击成功就算通过，或扩大等待来掩盖错误。
 - 实际官方 Windows CLI 的完整保护界面验收通过：打开／取消不改配置，详情可查当前命令与哈希，脚本变化拒绝确认，恢复后重新审查并确认，最后由官方 CLI 读回 trusted。
 - 用卡使用隔离 RPC 对端而不是真实账号／卡：取消无偏好写入且无账户请求；仅明确确认后写入账号哈希，关闭可读回；只允许 initialize 和 account/read。没有模拟消费成功，也没有真实用卡。
-- 新发现的安装前检查缺口：Windows 复用旧插件时也必须比较 PowerShell 启动脚本，不能只比较 JS 和 manifest。正在补真实官方 CLI 的改动后拒绝／恢复后允许验收；macOS 不受 Windows-only 脚本变化影响。该补丁尚待下一轮门禁，不能借用 b5a5250 的成功结果。
+- 新发现的安装前检查缺口已修复：Windows 复用旧插件时也比较 PowerShell 启动脚本，不只比较 JS 和 manifest。[44c1de4 的 Windows 工作流](https://github.com/CJaxonJ/codex-pulse/actions/runs/40837115965) 两组全部通过；真实官方 CLI 验证脚本改动后拒绝／恢复后允许，未改现有配置与授权。macOS 安装回归另有测试确认 Windows-only 脚本变化不影响已有 macOS 授权。[对应 macOS 门禁](https://github.com/CJaxonJ/codex-pulse/actions/runs/40837115956)通过。
 
 下一段仍按顺序做用户级后台、自启与 ACL，然后安装升级回滚及卸载。后台设计须区分 watcher／App Server 与独立提醒窗口，不能为了清理子进程而误杀用户 Codex 或使常驻提醒随 watcher 重启消失。
+
+## 私有目录接线（待 Windows 实测）
+
+Windows watcher 启动前新增真实 DACL 检查：只允许当前 Windows 用户和 SYSTEM，覆盖已有文件并让新文件继承；设置失败则不启动后台，不把 chmod 当成 Windows 权限保障。它不改变所有者、SACL 或系统策略，也不会请求提升权限。
+
+权限修改前先验证目录边界和完整现有树：拒绝磁盘／个人资料／系统／Temp 等大目录及其祖先、UNC、备用数据流和 reparse point（包括失效 junction）；限制扫描规模。已有检查点内容不改，不跟随链接去处理树外路径。
+
+新增 Windows 真机测试会先给隔离文件加入 Everyone 访问，再验证移除、已有内容不变、新文件继承、重复调用、junction／失效 junction／过宽目录拒绝且原权限不变。这些是本机 ACL 行为验证，不是已完成安装器验收，也不代表能抵御管理员或同一用户下的恶意程序。Windows runner 结果未读回前不勾选完成。

@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pulseDataDirectory } from "../src/platform-runtime.mjs";
+import { ensureWindowsPrivateDirectory } from "../src/private-directory.mjs";
 
 import { AppServerClient } from "../src/app-server-client.mjs";
 import { ChatContinuityController } from "../src/chat-continuity-controller.mjs";
@@ -489,6 +490,7 @@ async function manageCreditPolicy() {
 }
 
 async function watch() {
+  await ensureWindowsPrivateDirectory(dataDir);
   const client = new AppServerClient();
   const preferencesStore = new PulsePreferencesStore(dataDir);
   const tiboClient = new TiboResetClient({
