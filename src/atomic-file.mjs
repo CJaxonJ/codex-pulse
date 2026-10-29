@@ -5,8 +5,9 @@ import path from "node:path";
 // Antivirus/indexers can temporarily deny replacement on Windows. Keep the
 // original destination intact; retry the same prepared file, never unlink it.
 export async function renameAtomic(source,destination,{platform=process.platform,move=rename,
+  retryDelays=[10,20,40,80,160,200],
   sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms))}={}){
-  const delays=[10,20,40,80,160,200];
+  const delays=retryDelays;
   for(let attempt=0;;attempt++){
     try{return await move(source,destination);}
     catch(error){
@@ -29,6 +30,11 @@ export async function writeJsonSnapshotAtomic(destination, value) {
     owned = true;
     try { await file.writeFile(encoded + "\n", "utf8"); await file.sync(); }
     finally { await file.close(); }
-    await renameAtomic(temporary, destination);
+    // A shared status snapshot has active cross-process readers. Its publisher
+    // can tolerate a longer bounded contention window than a Hook checkpoint;
+    // never truncate/unlink the prior snapshot to make replacement succeed.
+    await renameAtomic(temporary, destination, {
+      retryDelays: [10,20,40,80,160,200,250,300,400,500,500,500],
+    });
   } finally { if (owned) await rm(temporary, { force: true }); }
 }

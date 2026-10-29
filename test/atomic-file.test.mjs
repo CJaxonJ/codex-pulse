@@ -87,6 +87,30 @@ test("shared JSON snapshots remain complete during real cross-process replacemen
   } finally { if (writer.exitCode == null) writer.kill(); }
 });
 
+test("Windows snapshot publishing survives a real sharing handle held beyond the ordinary checkpoint retry budget", { skip: process.platform !== "win32", timeout: 20000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "pulse snapshot occupied-")), file = path.join(root, "state.json");
+  await writeJsonSnapshotAtomic(file, { quota: 10 });
+  const script = `$f=[IO.File]::Open($env:PULSE_LOCK_TARGET,'Open','Read',[IO.FileShare]::Read);try{[Console]::WriteLine('locked');[Console]::Out.Flush();Start-Sleep -Milliseconds 1000}finally{$f.Dispose()}`;
+  const holder = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
+    windowsHide: true, env: { ...process.env, PULSE_LOCK_TARGET: file }, stdio: ["ignore", "pipe", "pipe"],
+  });
+  const exited = once(holder, "exit");
+  try {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(Error("Sharing holder never became ready")), 10000);
+      holder.stdout.on("data", value => { if (value.toString().includes("locked")) { clearTimeout(timer); resolve(); } });
+      holder.once("error", error => { clearTimeout(timer); reject(error); });
+      holder.once("exit", () => { clearTimeout(timer); reject(Error("Sharing holder exited before readiness")); });
+    });
+    const publishing = writeJsonSnapshotAtomic(file, { quota: 100 });
+    assert.deepEqual(JSON.parse(await readFile(file, "utf8")), { quota: 10 }, "Denied replacement must leave the old complete snapshot readable");
+    await publishing;
+    assert.deepEqual(JSON.parse(await readFile(file, "utf8")), { quota: 100 });
+    assert.deepEqual(await readdir(root), ["state.json"]);
+    assert.equal((await exited)[0], 0);
+  } finally { if (holder.exitCode == null) holder.kill(); }
+});
+
 test("failed snapshot preparation or actual replacement preserves prior data and cleans only its own temporary file", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "pulse snapshot failure-")), file = path.join(root, "state.json");
   await writeJsonSnapshotAtomic(file, { quota: 10 });
