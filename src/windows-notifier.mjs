@@ -27,7 +27,9 @@ export function sendWindowsNotification(notice, options = {}) {
   const timeoutMs = options.timeoutMs ?? 10000;
   const payload = windowsNotificationPayload(notice);
   return new Promise((resolve, reject) => {
-    const child = start(nativeApp, ["--notify"], { windowsHide: true, detached: true, stdio: ["pipe", "pipe", "pipe"], env });
+    // This is a WinExe, so it has no console to hide. windowsHide also sets
+    // SW_HIDE for GUI windows and would make a successful alert invisible.
+    const child = start(nativeApp, ["--notify"], { windowsHide: false, detached: true, stdio: ["pipe", "pipe", "pipe"], env });
     let settled = false, output = "";
     const finish = (error, result) => {
       if (settled) return;

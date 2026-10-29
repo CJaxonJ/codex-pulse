@@ -16,9 +16,13 @@ namespace CodexPulse {
     internal static class Program {
         internal static readonly JavaScriptSerializer Json = new JavaScriptSerializer { MaxJsonLength = 4 * 1024 * 1024 };
         internal static readonly Color Green = Color.FromArgb(46, 133, 117);
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool IsWindowVisible(IntPtr window);
         [STAThread]
         private static int Main(string[] args) {
             try {
+                Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
                 if (args.Length == 1 && args[0] == "--notify") {
@@ -28,7 +32,10 @@ namespace CodexPulse {
                     Notice notice = new Notice(payload);
                     if (notice.Persistent) {
                         using (NoticeWindow window = new NoticeWindow(notice)) {
-                            window.Shown += delegate { Acknowledge("shown"); };
+                            window.Shown += delegate {
+                                if (!window.Visible || !IsWindowVisible(window.Handle)) throw new IOException();
+                                Acknowledge("shown");
+                            };
                             Application.Run(window);
                         }
                     } else {

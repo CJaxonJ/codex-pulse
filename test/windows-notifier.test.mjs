@@ -35,7 +35,7 @@ test("Windows delivery requires a native UI acknowledgement, not a spawned proce
   assert.deepEqual(result, { deliveryStatus: "window_shown" });
   assert.deepEqual(invocation[1], ["--notify"]);
   assert.equal(invocation[2].shell, undefined);
-  assert.equal(invocation[2].windowsHide, true);
+  assert.equal(invocation[2].windowsHide, false, "Do not pass SW_HIDE to the native GUI executable");
   assert.equal(child.unreferenced, true);
   assert.equal(child.killed, undefined);
 });

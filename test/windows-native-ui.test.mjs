@@ -64,7 +64,7 @@ test("actual native Windows history and plan views read isolated CLI records wit
   await mkdir(path.join(data, "chat-continuity"));
   await writeFile(path.join(data, "chat-continuity/task.json"), JSON.stringify({ sessionId: "isolated", status: "paused_quota", initialGoal: { objective: "保留最开始的用户目标" }, checkpoint: { summary: "Completed: 保留修改\nRemaining: 继续测试\nNext action: 检查真实工作区\nBlockers: quota" } }));
   for (const [mode, expected] of [["--history", /保留的原帖全文/], ["--preview", /保留最开始的用户目标[\s\S]*检查真实工作区/]]) {
-    const child = spawn(app, [mode], { env: { ...process.env, CODEX_PULSE_APP_ROOT: runtime, CODEX_PULSE_DATA_DIR: data, CODEX_BINARY: "nonexistent-no-account.exe" }, windowsHide: true, stdio: ["ignore", "ignore", "pipe"] });
+    const child = spawn(app, [mode], { env: { ...process.env, CODEX_PULSE_APP_ROOT: runtime, CODEX_PULSE_DATA_DIR: data, CODEX_BINARY: "nonexistent-no-account.exe" }, windowsHide: false, stdio: ["ignore", "ignore", "pipe"] });
     let diagnostics = ""; child.stderr.on("data", b => diagnostics += b);
     const closed = once(child, "exit");
     try {
