@@ -4,7 +4,6 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { setTimeout as delay } from "node:timers/promises";
 
 import { WorkspaceInspector } from "../src/workspace-inspector.mjs";
 
@@ -78,17 +77,27 @@ test("git fingerprint supports more than 2100 untracked files", async () => {
   assert.equal(inspector.failureDiagnostic(), null);
 });
 
-test("filesystem fingerprint retries when the workspace appears during a transient scan failure", async () => {
+test("filesystem fingerprint retries when the workspace appears during a transient scan failure", async (context) => {
   const parent = await mkdtemp(path.join(os.tmpdir(), "codex-pulse-retry-"));
   const cwd = path.join(parent, "workspace");
   const inspector = new WorkspaceInspector();
-  const pendingFingerprint = inspector.fingerprint(cwd, { strategy: "filesystem" });
-
-  await delay(10);
-  await mkdir(cwd);
-  await writeFile(path.join(cwd, "work.txt"), "ready\n");
-
-  assert.match(await pendingFingerprint, /^fs:[a-f0-9]{64}$/);
+  // Do not assume mkdir/writeFile finish in a 15 ms scheduling window on
+  // Windows. The first real scan must fail; complete the fixture before
+  // delivering the real retry timer. No filesystem result is fabricated.
+  const schedule = globalThis.setTimeout;
+  let retries = 0, setupError;
+  context.mock.method(globalThis, "setTimeout", (callback, ms, ...args) => {
+    retries++;
+    return schedule(async () => {
+      try { await mkdir(cwd); await writeFile(path.join(cwd, "work.txt"), "ready\n"); }
+      catch (error) { setupError = error; }
+      callback(...args);
+    }, ms);
+  });
+  const fingerprint = await inspector.fingerprint(cwd, { strategy: "filesystem" });
+  if (setupError) throw setupError;
+  assert.equal(retries, 1, "the real missing workspace must trigger exactly one retry");
+  assert.match(fingerprint, /^fs:[a-f0-9]{64}$/);
   assert.equal(inspector.failureDiagnostic(), null);
 });
 
