@@ -3,7 +3,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { pulseDataDirectory } from "../src/platform-runtime.mjs";
+import { pulseDataDirectory, resolveCodexExecutable } from "../src/platform-runtime.mjs";
 import { ensureWindowsPrivateDirectory } from "../src/private-directory.mjs";
 import { acquireWatcherInstance } from "../src/watcher-instance.mjs";
 import { writeJsonSnapshotAtomic } from "../src/atomic-file.mjs";
@@ -753,7 +753,13 @@ async function watchOwned() {
 }
 
 try {
-  if (command === "background-prepare") console.log(JSON.stringify(await ensureWindowsPrivateDirectory(dataDir)));
+  if (command === "startup-context") {
+    const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+    const codexBinary = resolveCodexExecutable();
+    if (process.platform !== "win32" || !path.isAbsolute(codexHome) || !path.isAbsolute(codexBinary)) throw Error("Windows 自启需要明确的本机 Codex 路径。");
+    console.log(JSON.stringify({ codexHome, codexBinary }));
+  }
+  else if (command === "background-prepare") console.log(JSON.stringify(await ensureWindowsPrivateDirectory(dataDir)));
   else if (command === "background-probe") {
     const release = await acquireWatcherInstance(dataDir);
     await release(); console.log(JSON.stringify({ ok: true, watcherStopped: true }));

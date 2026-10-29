@@ -26,10 +26,12 @@ namespace CodexPulse {
             try {
                 if (args.Length == 2 && args[0] == "--process-identity") return ProcessIdentity.Read(args[1]);
                 if (args.Length >= 2 && args[0] == "--app-server-bridge") return OwnedProcess.BridgeServer(args[1], args.Skip(2).ToArray());
+                if (args.Length == 2 && args[0] == "--startup") return StartupTask.Control(args[1]);
+                if (args.Length == 2 && args[0] == "--startup-background") StartupTask.LoadContext(args[1]);
                 Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
-                if (args.Length == 1 && args[0] == "--background") return BackgroundContext.Run();
+                if ((args.Length == 1 && args[0] == "--background") || (args.Length == 2 && args[0] == "--startup-background")) return BackgroundContext.Run();
                 if (args.Length == 1 && args[0] == "--stop-background") return BackgroundContext.RequestStop();
                 if (args.Length == 1 && args[0] == "--notify") {
                     string text = ReadPayload();
