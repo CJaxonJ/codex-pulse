@@ -8,15 +8,18 @@ import path from "node:path";
 import { ensureWindowsPrivateDirectory } from "../src/private-directory.mjs";
 
 const windows = { skip: process.platform !== "win32", timeout: 90000 };
-const shell = async (target, command) => JSON.parse((await promisify(execFile)("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], { env: { ...process.env, PULSE_ACL_TARGET: target }, encoding: "utf8", windowsHide: true, timeout: 20000 })).stdout.replace(/^\uFEFF/, ""));
+const shell = async (target, command) => JSON.parse((await promisify(execFile)("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; " + command], { env: { ...process.env, PULSE_ACL_TARGET: target }, encoding: "utf8", windowsHide: true, timeout: 20000 })).stdout.replace(/^\uFEFF/, ""));
 const acl = target => shell(target, "$a=Get-Acl -LiteralPath $env:PULSE_ACL_TARGET; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; @{protected=$a.AreAccessRulesProtected; sddl=$a.Sddl; expected=@($sid,'S-1-5-18'); rules=@($a.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]) | ForEach-Object {$_.IdentityReference.Value})} | ConvertTo-Json -Compress");
 
 test("Windows data ACL removes broad existing access, protects existing files and future children, and is repeatable", windows, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "pulse 私有 ACL-"));
   const data = path.join(root, "数据 空格"), record = path.join(data, "checkpoint.json");
   await mkdir(data); await writeFile(record, "preserved checkpoint");
-  await shell(record, "$a=Get-Acl -LiteralPath $env:PULSE_ACL_TARGET; $s=New-Object Security.Principal.SecurityIdentifier('S-1-1-0'); $a.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($s,'Read','Allow'))); Set-Acl -LiteralPath $env:PULSE_ACL_TARGET -AclObject $a; @{ok=$true} | ConvertTo-Json -Compress");
-  assert((await acl(record)).rules.includes("S-1-1-0"));
+  // Modify DACL only. Get-Acl/Set-Acl of the full descriptor can also attempt
+  // an owner write, which is neither needed nor allowed for this fixture.
+  await shell(record, "$a=New-Object Security.AccessControl.FileSecurity; $current=[IO.File]::GetAccessControl($env:PULSE_ACL_TARGET); $a.SetSecurityDescriptorSddlForm($current.GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access),[Security.AccessControl.AccessControlSections]::Access); $s=New-Object Security.Principal.SecurityIdentifier('S-1-1-0'); $a.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($s,'Read','Allow'))); [IO.File]::SetAccessControl($env:PULSE_ACL_TARGET,$a); @{ok=$true} | ConvertTo-Json -Compress");
+  const publicBefore = await acl(record);
+  assert(publicBefore.rules.includes("S-1-1-0"), JSON.stringify(publicBefore));
   assert.equal((await ensureWindowsPrivateDirectory(data)).ok, true);
   assert.equal((await ensureWindowsPrivateDirectory(data)).ok, true);
   for (const entry of [data, record]) {
@@ -50,6 +53,7 @@ test("Windows ACL guard rejects broad roots and junctions before altering either
   await symlink(path.join(root, "missing-target"), path.join(broken, "junction"), "junction");
   const brokenAcl = (await acl(broken)).sddl;
   await assert.rejects(ensureWindowsPrivateDirectory(broken), /无法确认/);
+  await assert.rejects(ensureWindowsPrivateDirectory(path.join(broken, "junction", "new")), /无法确认/);
   assert.equal((await acl(broken)).sddl, brokenAcl);
 });
 

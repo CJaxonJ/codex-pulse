@@ -19,10 +19,12 @@ foreach ($reservedPath in $reserved) {
     if ($reservedPath -ieq $target -or $reservedPath.StartsWith($target + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Refusing a broad data directory.' }
 }
 function Assert-NotLink([string]$path) {
-    # Test-Path can be false for a dangling junction. Inspect the entry itself.
-    try { $item = Get-Item -LiteralPath $path -Force }
-    catch [Management.Automation.ItemNotFoundException] { return }
-    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Refusing a linked data directory or entry.' }
+    # Test-Path and Get-Item can report a dangling junction as missing. Native
+    # file attributes inspect the link entry even when its destination is gone.
+    try { $attributes = [IO.File]::GetAttributes($path) }
+    catch [IO.FileNotFoundException] { return }
+    catch [IO.DirectoryNotFoundException] { return }
+    if (($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Refusing a linked data directory or entry.' }
 }
 $cursor = $target
 while ($cursor) { Assert-NotLink $cursor; $cursor = Split-Path -Parent $cursor }

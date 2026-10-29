@@ -78,3 +78,5 @@ Windows watcher 启动前新增真实 DACL 检查：只允许当前 Windows 用�
 权限修改前先验证目录边界和完整现有树：拒绝磁盘／个人资料／系统／Temp 等大目录及其祖先、UNC、备用数据流和 reparse point（包括失效 junction）；限制扫描规模。已有检查点内容不改，不跟随链接去处理树外路径。
 
 新增 Windows 真机测试会先给隔离文件加入 Everyone 访问，再验证移除、已有内容不变、新文件继承、重复调用、junction／失效 junction／过宽目录拒绝且原权限不变。这些是本机 ACL 行为验证，不是已完成安装器验收，也不代表能抵御管理员或同一用户下的恶意程序。Windows runner 结果未读回前不勾选完成。
+
+[首轮 ACL 工作流 40837768452](https://github.com/CJaxonJ/codex-pulse/actions/runs/40837768452) 失败在测试前置条件：尚未调用产品权限实现时，隔离文件未观测到预期的 Everyone 规则。链接／过宽目录拒绝、已有设置及授权窗口测试通过。后续修正仅修改 DACL 的测试准备，启用 PowerShell 严格失败输出，并打印隔离 ACL 状态以定位；不能把拒绝测试通过当作正向权限设置已经成功。另将 reparse 检查改为直接读取文件属性，补失效 junction 作为祖先的测试。
