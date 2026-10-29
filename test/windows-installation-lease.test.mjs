@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile, readdir } from "node:fs/promises";
-import { spawn } from "node:child_process";
+import { mkdir, readFile, writeFile, readdir, rename, cp } from "node:fs/promises";
+import { spawn, execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { pathToFileURL } from "node:url";
 import { once } from "node:events";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -89,4 +91,18 @@ test("installation helper running inside the installed runtime refuses to move i
   const f = await windowsUIFixture({ installed: true }); await f.cli(["background-prepare"]);
   await assert.rejects(openWindowsInstallationLease(options(f)), /维护锁/);
   assert((await readdir(f.appRoot)).includes("CodexPulse.exe"));
+});
+
+test("neither a staged native helper nor the actual bundled Node running from staging may replace itself", windows, async () => {
+  const f = await windowsUIFixture({ installed: true }); await f.cli(["background-prepare"]);
+  const staged = ownedName("install"), stage = path.join(f.dataDir, staged);
+  await rename(f.appRoot, stage);
+  await assert.rejects(openWindowsInstallationLease({ binary: path.join(stage, "CodexPulse.exe"), env: f.env }), /维护锁/);
+  const outside = path.join(f.root, "outside-installer"); await mkdir(outside);
+  for (const name of ["CodexPulse.exe", "CodexPulse.exe.config"]) await cp(path.join(stage, name), path.join(outside, name));
+  const module = pathToFileURL(path.join(stage, "src/windows-installation-lease.mjs")).href;
+  await assert.rejects(promisify(execFile)(path.join(stage, "runtime/node.exe"), ["--input-type=module", "-e", `import {openWindowsInstallationLease} from ${JSON.stringify(module)};await openWindowsInstallationLease({binary:${JSON.stringify(path.join(outside, "CodexPulse.exe"))}});`], {
+    env: f.env, windowsHide: true, encoding: "utf8", timeout: 20000,
+  }), error => /不能替换正在执行安装操作的运行时/.test(error.stderr || ""));
+  assert((await readdir(stage)).includes("CodexPulse.exe"));
 });

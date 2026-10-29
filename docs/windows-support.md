@@ -215,3 +215,5 @@ Windows watcher 另加独立的进程归属记录：长驻计时器完成初始�
 新增真实 Windows 进程用例：维护期间拒绝托盘、直接 CLI 和第二个安装者；实际移动旧／新目录再恢复旧目录；活托盘或独立 watcher 阻止维护但不被杀；强杀真实 helper 后不能移动、后续能重新获取锁；绕过 JS 校验直接向原生端发送目录穿越仍不能移动隔离的外部目录；拒绝从已安装运行时执行自替换。全部使用隔离文件和 Codex RPC 对端，不调用模型或用卡。
 
 这只是安装事务所需的系统边界，尚未包含安装编排、插件／配置回滚、依赖包、卸载或 GUI 引导，不据此勾选安装交付。
+
+实现 `ad94f71` 的 [Windows 工作流 40878375000](https://github.com/CJaxonJ/codex-pulse/actions/runs/40878375000) 最后观察时两组关键组合及官方 CLI 检查均通过，完整回归仍在运行，尚无整轮结论。[对应 macOS 门禁 40878375383](https://github.com/CJaxonJ/codex-pulse/actions/runs/40878375383)成功，本机 287 通过、33 项 Windows 专属跳过。后续审查将防自替换扩展至 install／backup／failed 运行目录，并以真正从暂存目录启动的捆绑 Node 验证；维护 guard 的 reparse 检查不依赖会漏掉失效链接的 File.Exists。新增用例待 Windows 回读，不能用 ad94f71 的结果替代它。

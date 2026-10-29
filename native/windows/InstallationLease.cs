@@ -9,7 +9,8 @@ namespace CodexPulse {
         internal static FileStream Acquire(string data) {
             Directory.CreateDirectory(data);
             string file = Path.Combine(data, "maintenance.guard");
-            if (File.Exists(file) && (File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0) throw new IOException();
+            try { if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0) throw new IOException(); }
+            catch (FileNotFoundException) { } catch (DirectoryNotFoundException) { }
             return File.Open(file, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         }
         private static string RuntimePath(string data, string name) {
@@ -25,8 +26,10 @@ namespace CodexPulse {
                 string own = Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory).TrimEnd('\\');
                 // A helper running out of the installed runtime cannot be
                 // trusted to rename/delete its own mapped executable.
-                if (own.Equals(Path.Combine(data, "app"), StringComparison.OrdinalIgnoreCase)
-                    || own.StartsWith(Path.Combine(data, "app") + "\\", StringComparison.OrdinalIgnoreCase)) throw new IOException();
+                if (own.StartsWith(data + "\\", StringComparison.OrdinalIgnoreCase)) {
+                    string child = own.Substring(data.Length + 1).Split('\\')[0];
+                    if (child.Equals("app", StringComparison.OrdinalIgnoreCase) || Regex.IsMatch(child, @"^app-(?:install|backup|failed)-[a-f0-9]{32}$", RegexOptions.IgnoreCase)) throw new IOException();
+                }
             }
             using (FileStream lease = Acquire(data)) {
                 if (installation) BackgroundContext.AssertQuiescent(data);
