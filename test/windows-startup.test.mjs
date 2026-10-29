@@ -19,10 +19,11 @@ async function setup() {
   const control = command => call(["--startup", command]);
   const initial = await control("status");
   assert.equal(initial.installed, false, "Each isolated data directory must map to a fresh task");
+  assert.deepEqual(await control("status"), initial, "An absent task must be a stable status, not a COM lookup failure");
   const scheduler = async operation => {
     const script = `$ErrorActionPreference='Stop';$s=New-Object -ComObject Schedule.Service;$s.Connect();$folder=$s.GetFolder('\\');$name=$env:PULSE_ISOLATED_TASK;
 if($env:PULSE_ISOLATED_OP -eq 'foreign'){$d=$s.NewTask(0);$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;$d.Principal.UserId=$sid;$d.Principal.LogonType=3;$d.Principal.RunLevel=0;$d.RegistrationInfo.Source='other-application';$trigger=$d.Triggers.Create(9);$trigger.UserId=$sid;$trigger.Enabled=$false;$a=$d.Actions.Create(0);$a.Path=$env:SystemRoot+'\\System32\\notepad.exe';$null=$folder.RegisterTaskDefinition($name,$d,2,$sid,$null,3,$null)}
-if($env:PULSE_ISOLATED_OP -eq 'delete'){$folder.DeleteTask($name,0);Write-Output '{}';exit}
+if($env:PULSE_ISOLATED_OP -eq 'delete'){try{$folder.DeleteTask($name,0)}catch{$e=$_.Exception;while($e.InnerException){$e=$e.InnerException};if($e.HResult -ne -2147024894){throw}};Write-Output '{}';exit}
 $t=$folder.GetTask($name);$d=$t.Definition;@{xml=$t.Xml;enabled=$t.Enabled;instances=$t.GetInstances(0).Count;lastResult=$t.LastTaskResult;user=$d.Principal.UserId;runLevel=$d.Principal.RunLevel;logonType=$d.Principal.LogonType;action=$d.Actions.Item(1).Path;arguments=$d.Actions.Item(1).Arguments;workdir=$d.Actions.Item(1).WorkingDirectory;source=$d.RegistrationInfo.Source;trigger=$d.Triggers.Item(1).Type;battery=$d.Settings.DisallowStartIfOnBatteries;network=$d.Settings.RunOnlyIfNetworkAvailable;limit=$d.Settings.ExecutionTimeLimit;restart=$d.Settings.RestartInterval;restartCount=$d.Settings.RestartCount;multiple=$d.Settings.MultipleInstances}|ConvertTo-Json -Compress`;
     return JSON.parse((await execute("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
       env: { ...process.env, PULSE_ISOLATED_TASK: initial.taskName, PULSE_ISOLATED_OP: operation }, windowsHide: true, encoding: "utf8", timeout: 30000,
@@ -83,7 +84,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     // Never enumerate or delete production startup tasks or kill recorded PIDs.
     try { await f.control("disable"); } catch {}
     try { await f.call(["--stop-background"]); } catch {}
-    if ((await f.control("status")).installed) await f.scheduler("delete");
+    await f.scheduler("delete");
   }
 });
 

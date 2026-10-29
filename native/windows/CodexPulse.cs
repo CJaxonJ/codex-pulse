@@ -60,7 +60,7 @@ namespace CodexPulse {
             } catch (Exception error) {
                 // Do not leak prompt text, home paths or credentials in the UI protocol.
                 string method = error.TargetSite == null ? "startup" : error.TargetSite.DeclaringType.FullName + "." + error.TargetSite.Name;
-                Console.Error.WriteLine("Codex Pulse interface failed: " + error.GetType().Name + " at " + method);
+                Console.Error.WriteLine("Codex Pulse interface failed: " + error.GetType().Name + " (0x" + error.HResult.ToString("X8") + ") at " + method);
                 return 1;
             }
         }

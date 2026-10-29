@@ -24,13 +24,17 @@ namespace CodexPulse {
         private static dynamic Find(dynamic folder, string name) {
             try { return folder.GetTask(name); }
             catch (COMException error) { if (error.ErrorCode == unchecked((int)0x80070002)) return null; throw; }
+            // The dynamic COM binder maps HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)
+            // to FileNotFoundException rather than COMException on .NET Framework.
+            // Only this exact missing-task result is absent, not denied/unknown.
+            catch (FileNotFoundException error) { if (error.HResult == unchecked((int)0x80070002)) return null; throw; }
         }
         private static bool SameUser(string value) {
             if (value == Sid) return true;
             try { return ((SecurityIdentifier)new NTAccount(value).Translate(typeof(SecurityIdentifier))).Value == Sid; }
             catch (IdentityNotMappedException) { return false; }
         }
-        private static void Verify(dynamic task, string data) {
+        private static void VerifyOwner(dynamic task, string data) {
             dynamic d = task.Definition;
             if ((string)d.RegistrationInfo.Source != Source || !SameUser((string)d.Principal.UserId)
                 || (int)d.Principal.LogonType != 3 || (int)d.Principal.RunLevel != 0
@@ -40,8 +44,12 @@ namespace CodexPulse {
                 || !String.Equals((string)d.Actions.Item(1).WorkingDirectory, Root, StringComparison.OrdinalIgnoreCase)
                 || (int)d.Triggers.Count != 1 || (int)d.Triggers.Item(1).Type != 9 || !SameUser((string)d.Triggers.Item(1).UserId))
                 throw new InvalidDataException("An existing startup task does not belong to this installation.");
+        }
+        private static void Verify(dynamic task, string data) {
+            VerifyOwner(task, data);
+            dynamic d = task.Definition;
             dynamic s = d.Settings;
-            if ((int)s.MultipleInstances != 2 || (bool)s.DisallowStartIfOnBatteries || (bool)s.StopIfGoingOnBatteries
+            if (!(bool)d.Triggers.Item(1).Enabled || (int)s.MultipleInstances != 2 || (bool)s.DisallowStartIfOnBatteries || (bool)s.StopIfGoingOnBatteries
                 || (bool)s.RunOnlyIfNetworkAvailable || (bool)s.RunOnlyIfIdle || (bool)s.WakeToRun
                 || !(bool)s.AllowDemandStart || !(bool)s.StartWhenAvailable || (string)s.ExecutionTimeLimit != "PT0S"
                 || (string)s.RestartInterval != "PT1M" || (int)s.RestartCount != 3)
@@ -117,18 +125,33 @@ namespace CodexPulse {
                     Dictionary<string, object> prepared = Bridge.Run("background-prepare").GetAwaiter().GetResult();
                     if (!Program.BooleanValue(prepared, "ok", false)) throw new IOException();
                 } else if (task == null) { Print(name, null); return 0; }
-                using (FileStream guard = File.Open(Path.Combine(data, "startup-control.guard"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)) {
+                string guardPath = Path.Combine(data, "startup-control.guard");
+                if (File.Exists(guardPath) && (File.GetAttributes(guardPath) & FileAttributes.ReparsePoint) != 0) throw new IOException();
+                using (FileStream guard = File.Open(guardPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)) {
                     task = Find(folder, name); if (task != null) Verify(task, data);
                     if (command == "enable") {
                         string file = ContextFile(data);
                         if (File.Exists(file) && ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0 || new FileInfo(file).Length > 16384)) throw new IOException();
                         string previous = File.Exists(file) ? File.ReadAllText(file, Encoding.UTF8) : null;
+                        bool created = task == null, previouslyEnabled = !created && (bool)task.Enabled;
                         Publish(file, Program.Json.Serialize(Capture(data)));
                         try {
                             if (task == null) task = folder.RegisterTaskDefinition(name, Definition(service, data), 2, Sid, null, 3, null);
                             else task.Enabled = true;
                             Verify(task, data);
-                        } catch { if (previous == null) File.Delete(file); else Publish(file, previous); throw; }
+                        } catch {
+                            // Registration/readback can fail after a task was
+                            // created. Do not leave enabled startup pointing
+                            // at a rolled-back/deleted context. Never repair
+                            // a subsequently replaced foreign definition.
+                            dynamic current = Find(folder, name);
+                            if (current != null) {
+                                if (created) { VerifyOwner(current, data); current.Enabled = false; folder.DeleteTask(name, 0); }
+                                else { Verify(current, data); current.Enabled = previouslyEnabled; }
+                            }
+                            if (previous == null) File.Delete(file); else Publish(file, previous);
+                            throw;
+                        }
                     } else if (task != null) {
                         if (command == "disable") task.Enabled = false; // Stopping is a separate generation-scoped action.
                         else if (command == "start") { LoadContext(data); if (!(bool)task.Enabled) throw new InvalidOperationException(); task.Run(null); }

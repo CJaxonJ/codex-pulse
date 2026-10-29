@@ -9,7 +9,7 @@
 - [x] 提醒与简洁设置界面：等级、常驻提醒、原帖回看、续跑计划、偏好及单独用卡授权（见真实 Windows 验收记录；系统勿扰和物理桌面显示仍有独立边界）。
 - [ ] 用户级后台：登录后启动，异常退出重启，断网／睡眠恢复，不需要管理员权限。
 - [ ] 安装包：依赖处理、安装前检查、升级失败回滚、重复安装和完整卸载（默认保留历史）。
-- [ ] 核心链路：真实 Windows 进程测试 10% 阻止新工具、保存原目标和计划、额度恢复后同一会话仅续跑一次。
+- [x] 隔离核心链路：真实 Windows 后台与 Hook 测试 10% 阻止新工具、保存原目标和计划、宿主替换后恢复只排队一次。RPC／接收端是测试对端，真实 Desktop 和模型执行仍待验收。
 - [ ] 恢复安全：后台重启、并发、重复事件、正在运行／状态未知、审批、取消、工作区变更。
 - [x] 当前代码的 macOS 完整回归，不改用户本机现有安装和信任；后续改动继续执行门禁。
 - [ ] Windows runner 执行证据；物理睡眠和桌面通知若未实测，明确保留未验收状态。
@@ -128,13 +128,13 @@ Windows watcher 另加独立的进程归属记录：长驻计时器完成初始�
 
 启动中测试先执行真实 ACL，再单独延迟准备阶段的响应以确定性重现中间态：此时 stop 返回非成功；放行后正常 stop 成功。另确认准备子进程实际存活后强杀宿主，验证该子进程确实死亡。延迟响应仅用于控制此项测试时序，不是 ACL 成功或模型任务完成的证明。
 
-### 下一轮具体接续
+### 历史实施检查点（下文已有新验收）
 
 1. `bin/codex-pulse.mjs` 的 `saveState` 仍直接覆写共享 JSON；后台读写并发时可能暴露半份状态。改为同目录临时文件加原子替换，并用真实并发读取／写入验证，不靠读者吞掉解析错误来过测试。
 2. 现有 Windows Hook 链路和原生后台崩溃验收是两组证据，不能拼成“实际后台完整续跑已验证”。复用隔离 RPC／Hook 场景，将 10% 保存原目标和计划、宿主替换、恢复后仅排队一次放入实际后台运行，再分别保留实际模型／Desktop 尚未验收的边界。
 3. 当前用户登录自启须校验确切启动动作、用户和权限，不存 Windows 密码，不提升权限，不覆盖无关任务；安装器先禁用自启，再确认宿主与实际 watcher 都停止，才替换文件。完成失败回滚、卸载、捆绑运行时及最简 Windows 引导后，才产生候选包。
 
-## 共享额度快照与原生后台恢复集成（待 Windows 回读）
+## 共享额度快照与原生后台恢复集成
 
 额度状态不再直接覆写 `state.json`：先在同目录独占创建随机临时文件，完整编码／写入／同步后使用既有有界 Windows 替换重试；失败不删除或截断旧目标。清理只针对本次成功创建的临时文件，不改变用卡账本的独立 durable/write-through 约定。
 
@@ -155,3 +155,34 @@ Windows watcher 另加独立的进程归属记录：长驻计时器完成初始�
 按 OpenAI Docs 核对安装前置时，发现当前官方用户级命令目录是 `%LOCALAPPDATA%\Programs\OpenAI\Codex\bin`，原先候选遗漏了 Programs。已补该目录及显式 CODEX_INSTALL_DIR，保持 CODEX_BINARY 优先，不要求用户刷新终端 PATH 才能发现；旧目录只作兼容后备。候选映射有测试，但不冒称已安装并运行每一种 standalone 包。官方 Windows app 与原生 CLI 共享用户的 `.codex`，WSL 默认不共享；不能用 SYSTEM 的配置或另一个 Linux 用户的登录态冒充本人账号。
 
 依据：[官方环境变量](https://learn.chatgpt.com/docs/config-file/environment-variables)、[Windows app](https://learn.chatgpt.com/docs/app/windows)、[Windows 部署上下文](https://learn.chatgpt.com/docs/enterprise/windows-deployment)。不更改用户 PATH、执行策略或系统账号，不复制裸 `codex.exe` 冒充完整 standalone 安装。官方 CLI 验收另显式绑定 npm 安装的确切 shim，并读取 --version 核对 pin，避免新增发现路径后悄悄测试了另一版本。
+
+### 后续通过及再次暴露的问题
+
+`662c8b5` 的 [Windows 工作流 40849810200](https://github.com/CJaxonJ/codex-pulse/actions/runs/40849810200) 全部成功，证明延迟暂停回包不能覆盖 Stop 计划、进程身份判活及原生后台内的隔离恢复闭环。随后 `6e3ea48` 的 [工作流 40851260269](https://github.com/CJaxonJ/codex-pulse/actions/runs/40851260269) 又在 Node 20 并发快照测试失败：发布者收到 EPERM，既有约 510ms 的替换重试预算耗尽。没有用读者吞错或重复运行覆盖失败；不把本次 EPERM 的唯一底层占用者断言为已确定。
+
+共享状态发布单独使用约 3 秒的有界重试，Hook 检查点仍保留原先较短预算；永久拒绝仍报错且保留旧文件。新增真实 Windows 共享句柄持有 1 秒的用例，确认旧快照仍完整可读，释放后才发布新快照。持续并发读取测试保留直接读取、解析和哈希校验，不隐藏任何读取失败。
+
+最终 `6ca0348` 的 [Windows 工作流 40852299681](https://github.com/CJaxonJ/codex-pulse/actions/runs/40852299681) 两组 Node 20／22 全部通过：关键进程组合各 78 项通过、零跳过；全量各 288 项通过、2 项非当前平台用例跳过。官方 CLI GUI 审查另核对实际可执行版本为 `0.163.0-alpha.11.1`，不是只安装指定版本但运行另一份二进制。[对应 macOS 门禁](https://github.com/CJaxonJ/codex-pulse/actions/runs/40852299644)通过。
+
+以上仍不证明实际模型执行、真实 Desktop 接收任务、物理睡眠或重启后的恢复。Windows 没有发布包。
+
+## 当前用户登录自启（d90269b 开始，待 Windows 验收）
+
+接入 Task Scheduler COM：确切原生程序路径和参数、当前用户 InteractiveToken、RunLevel 0，不保存 Windows 密码，不使用 SYSTEM，不提权。仅当前用户登录触发；网络不可用／电池模式不阻止启动，不唤醒电脑；禁用默认 72 小时超时，宿主失败以 1 分钟间隔最多重试 3 次。实际 watcher 仍有自己的互斥与退避，不把 Task Scheduler 的注册成功当成后台已启动。
+
+任务名由本数据目录和用户 SID 派生；修改／删除前核对来源、用户、启动动作、工作目录、触发器及策略，遇到同名非本安装定义就拒绝。关闭登录自启不杀现有后台，停止仍走 generation-scoped 协议；卸载要先禁用，再停止，最后移除本安装任务。
+
+私有启动上下文只保存版本、用户 SID、应用／数据目录、Codex HOME 及确切启动路径，不复制 token、密码、提示词、测试额度或调用进程的全部环境。这样系统登录启动不依赖用户以前某个终端的临时 PATH／环境。包含未知字段或其他用户／安装的配置拒绝启动。
+
+新增真实系统验收会在随机隔离数据目录下注册任务，读取系统定义，再由 Task Scheduler 实际运行原生后台，确认使用隔离 Codex HOME，重复启动只一个实例，禁用不杀当前后台，停止和移除有效；同名外部任务不得改变。Codex 接收端仍是假服务，不读取真实账号、不调用模型或用卡；任务定义＋手动执行不等同于物理退出登录／重新登录测试。
+
+依据：[Task Scheduler 安全上下文](https://learn.microsoft.com/en-us/windows/win32/taskschd/security-contexts-for-running-tasks)、[执行时限](https://learn.microsoft.com/en-us/windows/win32/taskschd/tasksettings-executiontimelimit)、[ExecAction 与环境缓存](https://learn.microsoft.com/en-us/windows/win32/taskschd/execaction)。尚待 Windows 结果，不能据此宣布自启或安装器已通过。
+
+### 当前续接点
+
+- `d90269b` 已推送。首轮 [Windows 工作流 40853000811](https://github.com/CJaxonJ/codex-pulse/actions/runs/40853000811) 已编译成功，但 Node 20／22 的关键组合均失败；最后观察时，两组完整回归仍运行，不能宣布整轮成功。尚未取得最终失败日志，不推测成因，也不重新触发来覆盖调查。
+- [对应 macOS 门禁 40853000944](https://github.com/CJaxonJ/codex-pulse/actions/runs/40853000944)成功。本机 315 项中 287 通过、28 项 Windows 专属跳过；这些跳过不是自启验收证据。
+- 工作区另有尚未提交的自启审查修正：拒绝被关闭的登录触发器；注册／读回失败时先核对本安装任务，再撤销新建任务或恢复旧开启状态，随后还原上下文；拒绝 guard 链接。隔离用例的清理不再让状态读取失败遮蔽原失败。仅语法／差异检查通过，未经过真实 Windows 验收，必须保留并复核。
+- 下一步先读取 40853000811 最终日志定位关键组合失败，再处理最小修复和原生门禁。当前没有 Windows 安装包；自启、安装升级回滚、卸载及真实模型／Desktop／物理睡眠仍未交付。不要把上一轮快照与隔离恢复门禁成功延伸为这些能力已完成。
+
+已读取 40853000811 最终日志：两组全部失败在自启用例的第一次 `--startup status`，尚未创建任务。Task Scheduler 的 GetTask 在任务不存在时，经 .NET Framework dynamic COM binder 抛出 FileNotFoundException；原代码只接住 COMException，所以“尚未安装”误成接口失败。修复只额外识别该确切 HRESULT（0x80070002）的 FileNotFoundException，不把权限拒绝／未知错误当未安装；重复初始 status 必须稳定返回 absent。原生错误诊断补脱敏 HRESULT。该修复及前述审查修正需新的 Windows 门禁证明，不能拿 macOS 跳过的用例宣称有效。
