@@ -4,6 +4,7 @@ import readline from "node:readline";
 import { readLatestTurn } from "./thread-lifecycle.mjs";
 import { queueNativeWakeup, trustedRecoveryHooks } from "./native-wakeup.mjs";
 import { codexInvocation, resolveCodexExecutable } from "./platform-runtime.mjs";
+import { appServerProcessInvocation } from "./windows-process-bridge.mjs";
 
 export function resolveCodexBinary() {
   return resolveCodexExecutable();
@@ -23,13 +24,14 @@ export class AppServerClient extends EventEmitter {
   async start() {
     if (this.child) return;
     this.binary ||= resolveCodexBinary();
-    const invocation = codexInvocation(this.binary, [...this.binaryArgs, "app-server"]);
-    this.child = spawn(invocation.file, invocation.args, {
+    const invocation = appServerProcessInvocation(codexInvocation(this.binary, [...this.binaryArgs, "app-server"]));
+    const child = this.child = spawn(invocation.file, invocation.args, {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });
 
-    this.child.on("error", (error) => {
+    child.on("error", (error) => {
+      if (this.child !== child) return;
       for (const { reject, timeout } of this.pending.values()) {
         clearTimeout(timeout);
         reject(error);
@@ -39,12 +41,18 @@ export class AppServerClient extends EventEmitter {
       this.emit("exit", error);
     });
 
-    this.child.stderr.on("data", (chunk) => {
+    child.stdin.on("error", error => {
+      if (this.child !== child) return;
+      for (const { reject, timeout } of this.pending.values()) { clearTimeout(timeout); reject(error); }
+      this.pending.clear();
+    });
+    child.stderr.on("data", (chunk) => {
       this.stderrTail += chunk.toString();
       if (this.stderrTail.length > 4_000) this.stderrTail = this.stderrTail.slice(-4_000);
     });
 
-    this.child.on("exit", (code) => {
+    child.on("exit", (code) => {
+      if (this.child !== child) return;
       const error = new Error(
         `Codex App Server exited with code ${code}${
           this.stderrTail.trim() ? `: ${this.stderrTail.trim()}` : ""
@@ -59,17 +67,16 @@ export class AppServerClient extends EventEmitter {
       this.emit("exit", error);
     });
 
-    const lines = readline.createInterface({ input: this.child.stdout });
+    const lines = readline.createInterface({ input: child.stdout });
     lines.on("line", (line) => this._onLine(line));
 
-    await this.request("initialize", {
-      clientInfo: {
-        name: "codex_pulse",
-        title: "Codex Pulse",
-        version: "0.9.20",
-      },
-    });
-    this.notify("initialized", {});
+    try {
+      await this.request("initialize", {
+        clientInfo: { name: "codex_pulse", title: "Codex Pulse", version: "0.9.20" },
+      });
+      this.notify("initialized", {});
+    }
+    catch (error) { this.stop(); throw error; }
   }
 
   _onLine(line) {
@@ -143,7 +150,10 @@ export class AppServerClient extends EventEmitter {
   wakeThread(record) { return queueNativeWakeup(this.binary, record); }
 
   stop() {
-    this.child?.kill();
+    const child = this.child;
     this.child = null;
+    for (const { reject, timeout } of this.pending.values()) { clearTimeout(timeout); reject(new Error("Codex App Server was stopped")); }
+    this.pending.clear();
+    child?.kill();
   }
 }
