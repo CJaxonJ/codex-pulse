@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 
-function nativeWindowsComponent() {
+export function nativeWindowsComponent() {
   const root = fileURLToPath(new URL("../", import.meta.url));
   const installed = path.join(root, "CodexPulse.exe");
   const bridge = existsSync(installed) ? installed : path.join(root, "build/windows/CodexPulse.exe");

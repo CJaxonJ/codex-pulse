@@ -492,8 +492,7 @@ async function manageCreditPolicy() {
 }
 
 async function watch() {
-  await ensureWindowsPrivateDirectory(dataDir);
-  const release = process.platform === "win32" ? await acquireWatcherInstance(dataDir) : null;
+  const release = process.platform === "win32" ? await acquireWatcherInstance(dataDir, { prepare: () => ensureWindowsPrivateDirectory(dataDir) }) : null;
   try {
     await watchOwned();
     // The long-running watcher keeps its process-owned record until actual OS
@@ -761,7 +760,9 @@ try {
   }
   else if (command === "background-prepare") console.log(JSON.stringify(await ensureWindowsPrivateDirectory(dataDir)));
   else if (command === "background-probe") {
-    const release = await acquireWatcherInstance(dataDir);
+    // Read-only ownership probe, also called while the native maintenance
+    // lease is held. This command never starts a watcher or model task.
+    const release = await acquireWatcherInstance(dataDir, { startupGate: false });
     await release(); console.log(JSON.stringify({ ok: true, watcherStopped: true }));
   }
   else if (command === "status") await printStatus();

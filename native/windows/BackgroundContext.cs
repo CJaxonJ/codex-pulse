@@ -70,6 +70,10 @@ namespace CodexPulse {
             Dictionary<string, object> probe = Bridge.Run("background-probe").GetAwaiter().GetResult();
             if (!Program.BooleanValue(probe, "watcherStopped", false)) throw new IOException();
         }
+        internal static void AssertQuiescent(string data) {
+            if (!GuardFree(data)) throw new IOException();
+            ConfirmWatcherStopped(data);
+        }
         internal static int RequestStop() {
             string data = DataDirectory(), file = Path.Combine(data, "background-status.json");
             if (GuardFree(data)) { ConfirmWatcherStopped(data); Program.Acknowledge("not_running"); return 0; }
@@ -94,8 +98,10 @@ namespace CodexPulse {
             // Only the empty guard is created before the full private ACL check.
             Directory.CreateDirectory(data);
             FileStream guard;
-            try { guard = File.Open(Path.Combine(data, "background.guard"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
-            catch (IOException error) { if (!SharingViolation(error)) throw; Program.Acknowledge("already_running"); return 0; }
+            using (FileStream maintenance = InstallationLease.Acquire(data)) {
+                try { guard = File.Open(Path.Combine(data, "background.guard"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
+                catch (IOException error) { if (!SharingViolation(error)) throw; Program.Acknowledge("already_running"); return 0; }
+            }
             using (guard) {
                 // A preparing host is not stopped just because its tray/event
                 // does not exist yet. Unknown startup must block replacement.

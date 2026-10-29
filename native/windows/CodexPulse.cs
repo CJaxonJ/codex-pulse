@@ -25,6 +25,7 @@ namespace CodexPulse {
         private static int Main(string[] args) {
             try {
                 if (args.Length == 2 && args[0] == "--process-identity") return ProcessIdentity.Read(args[1]);
+                if (args.Length == 1 && (args[0] == "--installation-lease" || args[0] == "--maintenance-gate")) return InstallationLease.Run(args[0] == "--installation-lease");
                 if (args.Length >= 2 && args[0] == "--app-server-bridge") return OwnedProcess.BridgeServer(args[1], args.Skip(2).ToArray());
                 if (args.Length == 2 && args[0] == "--startup") return StartupTask.Control(args[1]);
                 if (args.Length == 2 && args[0] == "--startup-background") StartupTask.LoadContext(args[1]);
