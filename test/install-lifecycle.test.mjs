@@ -73,6 +73,17 @@ test("changed reviewed definitions fail preflight without removing the old plugi
   } finally {rmSync(f.root,{recursive:true,force:true});}
 });
 
+test("a Windows-only launcher difference does not invalidate compatible macOS hooks",()=>{
+  const f=installerFixture(project,{existing:true});
+  try {
+    appendFileSync(path.join(f.project,"plugin/scripts/pulse-hook-windows.ps1"),"\n# Windows-only change\n");
+    const config=f.read(path.join(f.home,".codex/config.toml"));
+    const result=f.run("install-macos.mjs");assert.equal(result.code,0,result.stderr);
+    assert.equal(f.read(path.join(f.home,".codex/config.toml")),config);
+    assert.equal(f.calls().some(c=>c.args[0]==="plugin" && ["remove","add"].includes(c.args[1])),false);
+  } finally {rmSync(f.root,{recursive:true,force:true});}
+});
+
 test("failed fresh install removes its new marketplace and leaves user history",()=>{
   const f=installerFixture(project);
   try {

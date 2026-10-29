@@ -85,8 +85,9 @@ if (installed && packageManifest.codexPulse?.compatiblePluginVersions?.includes(
   const cached = path.join(codexHome, "plugins/cache", marketplaceName, pluginName, installed.version);
   try {
     const cachedManifest = JSON.parse(readFileSync(path.join(cached, ".codex-plugin/plugin.json"), "utf8"));
+    const scripts = ["scripts/pulse-hook.mjs", ...(process.platform === "win32" ? ["scripts/pulse-hook-windows.ps1"] : [])];
     reusedExistingInstall = JSON.stringify(cachedManifest.hooks) === JSON.stringify(manifest.hooks) &&
-      readFileSync(path.join(cached, "scripts/pulse-hook.mjs"), "utf8") === readFileSync(path.join(projectDir, "plugin/scripts/pulse-hook.mjs"), "utf8");
+      scripts.every(script => readFileSync(path.join(cached, script), "utf8") === readFileSync(path.join(projectDir, "plugin", script), "utf8"));
   } catch { /* A missing or different installed definition needs explicit replacement/review. */ }
 }
 

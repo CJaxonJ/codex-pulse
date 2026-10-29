@@ -5,6 +5,8 @@ import { AppServerClient } from "../src/app-server-client.mjs";
 import { resolveCodexBinary } from "../src/app-server-client.mjs";
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { windowsUIFixture, inspectWindowsUI, waitForWindowsUI } from "./test-support/windows-ui-fixture.mjs";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 if(process.platform!=="win32")throw Error("This acceptance requires native Windows, not a platform mock");
 const project=path.resolve(import.meta.dirname,"..");
@@ -33,6 +35,8 @@ const ui=await windowsUIFixture({root:uiBase.root,dataDir:uiBase.dataDir,env:{..
 const title="Codex Pulse · 保护授权";
 const ready=value=>value.buttons.some(b=>b.name==="开启自动保护" && b.enabled && !b.offscreen);
 const baseline=await uiBase.config();
+const checkInstall=()=>promisify(execFile)(process.execPath,[path.join(project,"scripts/install-plugin.mjs"),"--check"],{env:ui.env,timeout:30000,windowsHide:true});
+assert.equal(JSON.parse((await checkInstall()).stdout).reusedExistingInstall,true);
 let session=ui.start("--protection");
 try{
   await waitForWindowsUI(session,ready,{title});
@@ -58,10 +62,13 @@ try{
   const launcher=path.join(cache,versions[0],"scripts/pulse-hook-windows.ps1");
   const original=await readFile(launcher,"utf8");
   await writeFile(launcher,original+"\n# Changed after review in this isolated UI test\n");
+  await assert.rejects(checkInstall(),error=>/现有插件与授权未更改/.test(error.stderr),"Upgrade must not silently reuse a changed Windows launcher");
+  assert.equal(await uiBase.config(),baseline,"Failed preflight must not change existing config or trust");
   await inspectWindowsUI(session,{title,click:"开启自动保护"});
   await waitForWindowsUI(session,value=>/尚未确认授权生效/.test(value.content.join("\n")),{title});
   assert.equal(await uiBase.config(),baseline,"A changed launcher must fail before writing trust");
   await writeFile(launcher,original);
+  assert.equal(JSON.parse((await checkInstall()).stdout).reusedExistingInstall,true);
   await inspectWindowsUI(session,{title,click:"重新核对"});
   await waitForWindowsUI(session,ready,{title});
   await inspectWindowsUI(session,{title,click:"开启自动保护"});
