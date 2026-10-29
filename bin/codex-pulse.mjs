@@ -3,6 +3,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { pulseDataDirectory, resolveCodexExecutable } from "../src/platform-runtime.mjs";
 import { ensureWindowsPrivateDirectory } from "../src/private-directory.mjs";
 import { acquireWatcherInstance } from "../src/watcher-instance.mjs";
@@ -569,7 +570,7 @@ async function watchOwned() {
       // old 9% sample and immediately stop the recovered task again. Auxiliary
       // Tibo requests must not delay this critical chain either.
       state = { ...state, fiveHour: evaluated.state,
-        resetCredits: creditEvaluation.state, lastSummary: summary, quotaCheckedAt: now };
+        resetCredits: creditEvaluation.state, lastSummary: summary, quotaCheckedAt: now, quotaSampleId: randomUUID() };
       await saveState(state);
       try {
         await managedController.reconcile(summary, { now });

@@ -7,7 +7,7 @@ import { ChatContinuityStore } from "../../src/chat-continuity-store.mjs";
 import { WINDOWS_HOOK_COMMAND } from "../../src/protection-consent.mjs";
 
 const project = path.resolve(import.meta.dirname, "../..");
-export async function windowsRecoveryBackgroundFixture({ gatePause = false, installed = true } = {}) {
+export async function windowsRecoveryBackgroundFixture({ gatePause = false, installed = true, nativeRateReads = false } = {}) {
   const f = await windowsUIFixture({ installed });
   const workspace = path.join(f.root, "工作 项目"), plugin = path.join(f.root, "plugin 空格");
   await mkdir(workspace); await cp(path.join(project, "plugin"), plugin, { recursive: true });
@@ -17,6 +17,7 @@ export async function windowsRecoveryBackgroundFixture({ gatePause = false, inst
   const peer = path.join(f.root, "Codex CLI"), entry = path.join(peer, "node_modules/@openai/codex/bin");
   const binary = path.join(peer, "codex.cmd"), peerState = path.join(f.root, "rpc-state.json"), trace = peerState + ".jsonl", wakes = path.join(f.root, "actual-queues.jsonl");
   const pauseMarker = path.join(f.root, "pause-rpc-pending"), releasePause = path.join(f.root, "release-pause-rpc");
+  const input = path.join(f.root, "quota-input.json");
   await mkdir(entry, { recursive: true });
   await writeFile(binary, "@echo off\r\nrem safely resolved without a shell\r\n");
   await writeJsonSnapshotAtomic(peerState, { goal: { status: "active", objective, createdAt: 1, updatedAt: 1 }, turn: { id: "paused-turn", status: "inProgress" } });
@@ -35,6 +36,10 @@ require('node:readline').createInterface({input:process.stdin}).on('line',async 
  try{
   const s=read();let result;
   if(m.method==='initialize')result={};
+  else if(${JSON.stringify(nativeRateReads)} && m.method==='account/rateLimits/read'){
+   const q=JSON.parse(fs.readFileSync(${JSON.stringify(input)},'utf8'));
+   result={planType:q.planType,rateLimitsByLimitId:{codex:{limitId:'codex',planType:q.planType,primary:{usedPercent:q.fiveHour.usedPercent,windowDurationMins:300,resetsAt:q.fiveHour.resetsAt},secondary:{usedPercent:q.weekly.usedPercent,windowDurationMins:10080,resetsAt:q.weekly.resetsAt}}},rateLimitResetCredits:{availableCount:0,credits:[]}};
+  }
   else if(m.method==='thread/goal/get')result={goal:s.goal};
   else if(m.method==='thread/goal/set'){
    Object.assign(s.goal,m.params);save(s);result={goal:s.goal};
@@ -50,7 +55,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',async 
   process.stdout.write(JSON.stringify({id:m.id,result})+'\\n');
  }catch(error){process.stdout.write(JSON.stringify({id:m.id,error:{code:-32601,message:error.message}})+'\\n');}
 });`);
-  const now = Math.floor(Date.now() / 1000), input = path.join(f.root, "quota-input.json");
+  const now = Math.floor(Date.now() / 1000);
   const setQuota = percent => writeJsonSnapshotAtomic(input, { planType: "plus", fiveHour: { remainingPercent: percent, usedPercent: 100 - percent, resetsAt: now + 3600 }, weekly: { remainingPercent: 75, usedPercent: 25, resetsAt: now + 86400 }, resetCredits: { availableCount: 0, expiries: [] } });
   await setQuota(70);
   Object.assign(f.env, { NODE_ENV: "test", CODEX_PULSE_TEST_MODE: "watcher-restart-e2e", CODEX_PULSE_TEST_QUOTA_SUMMARY_PATH: input, CODEX_PULSE_DISABLE_NOTIFICATIONS: "1", CODEX_PULSE_POLL_SECONDS: "1", CODEX_PULSE_APP_ROOT: f.appRoot, CODEX_BINARY: binary, PLUGIN_ROOT: plugin });

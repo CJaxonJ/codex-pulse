@@ -113,6 +113,22 @@ namespace CodexPulse {
             Environment.SetEnvironmentVariable("CODEX_PULSE_APP_ROOT", Root);
         }
         internal static int Control(string command) {
+            if (command == "configure") {
+                string contextData = BackgroundContext.DataDirectory();
+                Environment.SetEnvironmentVariable("CODEX_PULSE_APP_ROOT", Root);
+                Dictionary<string, object> prepared = Bridge.Run("background-prepare").GetAwaiter().GetResult();
+                if (!Program.BooleanValue(prepared, "ok", false)) throw new IOException();
+                string contextGuard = Path.Combine(contextData, "startup-control.guard");
+                try { if ((File.GetAttributes(contextGuard) & FileAttributes.ReparsePoint) != 0) throw new IOException(); }
+                catch (FileNotFoundException) { } catch (DirectoryNotFoundException) { }
+                using (FileStream guard = File.Open(contextGuard, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)) {
+                    string contextPath = ContextFile(contextData);
+                    try { if ((File.GetAttributes(contextPath) & FileAttributes.ReparsePoint) != 0) throw new IOException(); }
+                    catch (FileNotFoundException) { } catch (DirectoryNotFoundException) { }
+                    Publish(contextPath, Program.Json.Serialize(Capture(contextData)));
+                }
+                Program.Acknowledge("context_configured"); return 0;
+            }
             if (command != "status" && command != "enable" && command != "disable" && command != "start" && command != "remove") throw new ArgumentException();
             string data = BackgroundContext.DataDirectory(), name = TaskName(data);
             dynamic service = Activator.CreateInstance(Type.GetTypeFromProgID("Schedule.Service", true));

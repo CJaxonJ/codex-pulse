@@ -74,6 +74,13 @@ namespace CodexPulse {
             if (!GuardFree(data)) throw new IOException();
             ConfirmWatcherStopped(data);
         }
+        internal static int Inspect() {
+            string data = DataDirectory();
+            bool running = !GuardFree(data);
+            if (!running) ConfirmWatcherStopped(data);
+            Console.Out.WriteLine(Program.Json.Serialize(new Dictionary<string, object> { { "ok", true }, { "running", running } }));
+            return 0;
+        }
         internal static int RequestStop() {
             string data = DataDirectory(), file = Path.Combine(data, "background-status.json");
             if (GuardFree(data)) { ConfirmWatcherStopped(data); Program.Acknowledge("not_running"); return 0; }

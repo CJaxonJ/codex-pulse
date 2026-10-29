@@ -5,17 +5,19 @@ import path from "node:path";
 import { nativeWindowsComponent } from "./windows-process-bridge.mjs";
 import { pulseDataDirectory } from "./platform-runtime.mjs";
 
+export async function assertInstallerOutsideRuntime({ dataDir, executable = process.execPath }) {
+  if (process.platform !== "win32") return;
+  const data = (await realpath(dataDir)).toLowerCase(), owner = (await realpath(executable)).toLowerCase();
+  if (owner.startsWith(data + path.sep)) {
+    const child = owner.slice(data.length + 1).split(path.sep)[0];
+    if (child === "app" || /^app-(?:install|backup|failed)-[a-f0-9]{32}$/.test(child)) throw Error("请从下载的安装包运行升级，不能替换正在执行安装操作的运行时。");
+  }
+}
+
 export async function openWindowsInstallationLease({ gate = false, binary = nativeWindowsComponent(), env = process.env } = {}) {
   if (process.platform !== "win32") throw Error("A real Windows installation lease is required");
   if (!path.isAbsolute(binary)) throw Error("An absolute bundled Windows component is required");
-  if (!gate) {
-    const data = (await realpath(pulseDataDirectory({ env }))).toLowerCase();
-    const owner = (await realpath(process.execPath)).toLowerCase();
-    if (owner.startsWith(data + path.sep)) {
-      const child = owner.slice(data.length + 1).split(path.sep)[0];
-      if (child === "app" || /^app-(?:install|backup|failed)-[a-f0-9]{32}$/.test(child)) throw Error("请从下载的安装包运行升级，不能替换正在执行安装操作的运行时。");
-    }
-  }
+  if (!gate) await assertInstallerOutsideRuntime({ dataDir: pulseDataDirectory({ env }) });
   const child = spawn(binary, [gate ? "--maintenance-gate" : "--installation-lease"], { env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
   let sequence = 0, released = false, pending = null, diagnostic = "";
   child.stderr.on("data", value => { diagnostic = (diagnostic + value).slice(-2000); });
