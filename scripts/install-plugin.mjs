@@ -5,12 +5,11 @@ import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { codexInvocation, pulseDataDirectory, resolveCodexExecutable } from "../src/platform-runtime.mjs";
 
 const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const dataDir = path.join(os.homedir(), "Library", "Application Support", "Codex Pulse");
+const dataDir = pulseDataDirectory();
 const marketplaceRoot = path.join(dataDir, "marketplace");
-const desktopCodex =
-  "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex";
 const marketplaceName = "codex-pulse-local";
 const pluginName = "codex-pulse";
 const pluginId = `${pluginName}@${marketplaceName}`;
@@ -18,28 +17,22 @@ const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
 const configPath = path.join(codexHome, "config.toml");
 const CLI_COMMAND_TIMEOUT_MS = 90_000;
 
-if (process.platform !== "darwin") {
-  throw new Error("The current Codex Pulse plugin installer supports macOS only.");
+if (!["darwin", "win32"].includes(process.platform)) {
+  throw new Error("The Codex Pulse plugin installer supports macOS and native Windows only.");
 }
 
 function resolveCodexPath() {
-  if (process.env.CODEX_BINARY) return process.env.CODEX_BINARY;
-  if (existsSync(desktopCodex)) return desktopCodex;
-  try {
-    return execFileSync("/usr/bin/which", ["codex"], { encoding: "utf8" }).trim();
-  } catch {
-    throw new Error(
-      "Codex was not found. Install/sign in to the ChatGPT desktop app or Codex CLI first.",
-    );
-  }
+  return resolveCodexExecutable();
 }
 
 function runJson(codexPath, args) {
-  const output = execFileSync(codexPath, args, {
+  const invocation = codexInvocation(codexPath, args);
+  const output = execFileSync(invocation.file, invocation.args, {
     encoding: "utf8",
     env: process.env,
     timeout: CLI_COMMAND_TIMEOUT_MS,
     maxBuffer: 10 * 1024 * 1024,
+    windowsHide: true,
   });
   return JSON.parse(output);
 }

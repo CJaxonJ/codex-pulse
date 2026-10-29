@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { codexInvocation } from "./platform-runtime.mjs";
 
 const execute = promisify(execFile);
 
@@ -25,7 +26,8 @@ export function trustedRecoveryHooks(result) {
 export async function queueNativeWakeup(binary, record, executeCommand = execute) {
   // Official queue routes to the owning session through the local daemon.
   // It does not claim the thread's writer lock or start another writer.
-  await executeCommand(binary, ["queue", "--thread", record.sessionId, "--message", recoveryWakeMessage(record)], {
-    cwd: record.cwd, timeout: 20000, maxBuffer: 1024 * 1024,
+  const invocation = codexInvocation(binary, ["queue", "--thread", record.sessionId, "--message", recoveryWakeMessage(record)]);
+  await executeCommand(invocation.file, invocation.args, {
+    cwd: record.cwd, timeout: 20000, maxBuffer: 1024 * 1024, windowsHide: true,
   });
 }

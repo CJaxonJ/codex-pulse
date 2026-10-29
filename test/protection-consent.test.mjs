@@ -3,18 +3,20 @@ import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,writeFile,readFile} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {ProtectionConsent} from '../src/protection-consent.mjs';
+import {ProtectionConsent,WINDOWS_HOOK_COMMAND} from '../src/protection-consent.mjs';
 
-async function fixture() {
+async function fixture(platform='darwin') {
   const root=await mkdtemp(path.join(os.tmpdir(),'pulse-consent-unit-'));
   const codexHome=path.join(root,'codex');
   const plugin=path.join(codexHome,'plugins/cache/codex-pulse-local/codex-pulse/1.0.0');
   await mkdir(path.join(plugin,'.codex-plugin'),{recursive:true}); await mkdir(path.join(plugin,'scripts'));
   await writeFile(path.join(plugin,'.codex-plugin/plugin.json'),'{}');
   await writeFile(path.join(plugin,'scripts/pulse-hook.mjs'),'fixture');
+  await writeFile(path.join(plugin,'scripts/pulse-hook-windows.ps1'),'windows fixture');
   const hooks=['preToolUse','postToolUse','sessionStart','userPromptSubmit','stop','interrupt'].map((eventName,i)=>({
     key:`codex-pulse@codex-pulse-local:${eventName}`,eventName,handlerType:'command',
     command:'/usr/bin/env node "$PLUGIN_ROOT/scripts/pulse-hook.mjs"',source:'plugin',isManaged:false,async:false,
+    ...(platform==='win32'?{commandWindows:WINDOWS_HOOK_COMMAND}:{}),
     timeoutSec:3,sourcePath:path.join(plugin,'.codex-plugin/plugin.json'),pluginId:'codex-pulse@codex-pulse-local',
     currentHash:'sha256:'+String(i).repeat(64),enabled:true,trustStatus:'untrusted',
   }));
@@ -25,7 +27,7 @@ async function fixture() {
     if(method==='config/batchWrite') {writes.push(params); for(const h of hooks) h.trustStatus='trusted';return {status:'ok'};}
     throw Error('Unexpected '+method);
   }};
-  const controller=new ProtectionConsent({client,dataDir:path.join(root,'data'),codexHome,now:()=>now});
+  const controller=new ProtectionConsent({client,dataDir:path.join(root,'data'),codexHome,now:()=>now,platform});
   return {controller,hooks,writes,client,plugin,advance:()=>{now+=16*60*1000;}};
 }
 test('preparing/cancelling review never writes trust; explicit confirmation scopes exact definitions',async()=>{
@@ -73,4 +75,19 @@ test('concurrent confirmation cannot submit the same review twice',async()=>{
     f.controller.enable(review.reviewId,{confirmed:true}),f.controller.enable(review.reviewId,{confirmed:true}),
   ]);
   assert.equal(results.filter(r=>r.status==='fulfilled').length,1); assert.equal(f.writes.length,1);
+});
+test('Windows consent reviews the actual Windows command and pins the launcher bytes',async()=>{
+  const f=await fixture('win32'),review=await f.controller.prepare();
+  assert(review.details.every(h=>h.command===WINDOWS_HOOK_COMMAND));
+  await writeFile(path.join(f.plugin,'scripts/pulse-hook-windows.ps1'),'changed after user review');
+  await assert.rejects(f.controller.enable(review.reviewId,{confirmed:true}),/变化/);
+  assert.equal(f.writes.length,0);
+});
+test('Windows missing or modified override cannot be trusted even if the Unix command is intact',async()=>{
+  for(const override of [undefined,'powershell.exe -Command bad']){
+    const f=await fixture('win32');f.hooks[0].commandWindows=override;
+    await assert.rejects(f.controller.prepare(),/组件/);assert.equal(f.writes.length,0);
+  }
+  const f=await fixture('win32'),review=await f.controller.prepare();
+  const result=await f.controller.enable(review.reviewId,{confirmed:true});assert.equal(result.trusted,true);
 });

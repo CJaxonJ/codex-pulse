@@ -1,0 +1,28 @@
+name: Windows compatibility
+
+on:
+  push:
+    branches: ['codex/windows-support']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-windows:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Native Windows process and PowerShell recovery tests
+        run: node --test test/platform-runtime.test.mjs test/windows-hook.test.mjs test/protection-consent.test.mjs test/native-wakeup.test.mjs test/worktree-lock-process.test.mjs test/chat-continuity-full-chain.test.mjs
+      - name: Full cross-platform regression (no hosted model or credentials)
+        run: npm test

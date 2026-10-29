@@ -585,7 +585,9 @@ export async function handleHook(input, options = {}) {
   const dataDir =
     options.dataDir ||
     process.env.CODEX_PULSE_DATA_DIR ||
-    path.join(os.homedir(), "Library", "Application Support", "Codex Pulse");
+    (process.platform === "win32"
+      ? path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local"), "Codex Pulse")
+      : path.join(os.homedir(), "Library", "Application Support", "Codex Pulse"));
   const appRoot =
     options.appRoot ||
     process.env.CODEX_PULSE_APP_ROOT ||

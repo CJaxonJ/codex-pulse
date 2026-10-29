@@ -6,13 +6,14 @@ import { WorktreeLockManager } from './worktree-lock-manager.mjs';
 
 const PLUGIN = 'codex-pulse@codex-pulse-local';
 const COMMAND = '/usr/bin/env node "$PLUGIN_ROOT/scripts/pulse-hook.mjs"';
+export const WINDOWS_HOOK_COMMAND = `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "& ([IO.Path]::Combine([Environment]::GetEnvironmentVariable('PLUGIN_ROOT'), 'scripts', 'pulse-hook-windows.ps1'))"`;
 const EVENTS = ['preToolUse','postToolUse','sessionStart','userPromptSubmit','stop','interrupt'];
 const LABELS = { preToolUse:'执行前检查额度',postToolUse:'执行后记录进度',sessionStart:'会话开始时检查保护',
   userPromptSubmit:'开始任务前评估额度',stop:'暂停时保存进度',interrupt:'保留中断状态' };
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export class ProtectionConsent {
-  constructor({client,dataDir,codexHome = process.env.CODEX_HOME || path.join(os.homedir(),'.codex'),now=()=>Date.now()}) {
-    Object.assign(this,{client,dataDir,codexHome,now});
+  constructor({client,dataDir,codexHome = process.env.CODEX_HOME || path.join(os.homedir(),'.codex'),now=()=>Date.now(),platform=process.platform}) {
+    Object.assign(this,{client,dataDir,codexHome,now,platform});
     this.directory=path.join(dataDir,'protection-review');
     this.locks=new WorktreeLockManager(this.directory);
   }
@@ -26,6 +27,8 @@ export class ProtectionConsent {
     const list=[...hooks.values()].sort((a,b)=>a.eventName.localeCompare(b.eventName));
     if(list.length!==EVENTS.length || new Set(list.map(h=>h.eventName)).size!==EVENTS.length ||
       list.some(h=>!EVENTS.includes(h.eventName) || h.handlerType!=='command' || h.command!==COMMAND ||
+        (h.commandWindows != null && h.commandWindows!==WINDOWS_HOOK_COMMAND) ||
+        (this.platform==='win32' && h.commandWindows!==WINDOWS_HOOK_COMMAND) ||
         h.source!=='plugin' || h.isManaged || h.async || !h.key.startsWith(PLUGIN+':') ||
         !/^sha256:[a-f0-9]{64}$/.test(h.currentHash) || !Number.isFinite(h.timeoutSec) || h.timeoutSec>15)) {
       throw Error('保护组件缺失或发生了无法确认的变化，请重新安装官方发布包');
@@ -40,7 +43,7 @@ export class ProtectionConsent {
         throw Error('保护组件来源无法确认，请重新安装');
       }
       sources.add(source);
-      definitions.push({key:h.key,event:h.eventName,command:h.command,hash:h.currentHash,source,
+      definitions.push({key:h.key,event:h.eventName,command:h.command,commandWindows:h.commandWindows,hash:h.currentHash,source,
         enabled:h.enabled,trust:h.trustStatus,matcher:h.matcher,timeout:h.timeoutSec,
         contextLimit:h.additionalContextLimit,statusMessage:h.statusMessage});
     }
@@ -48,8 +51,9 @@ export class ProtectionConsent {
     const source=[...sources][0];
     const script=path.resolve(path.dirname(source),'../scripts/pulse-hook.mjs');
     const files={manifest:digest(await readFile(source,'utf8')),script:digest(await readFile(script,'utf8'))};
+    if(this.platform==='win32') files.windowsLauncher=digest(await readFile(path.join(path.dirname(script),'pulse-hook-windows.ps1'),'utf8'));
     return {definitions,files,ready:list.every(h=>h.enabled && h.trustStatus==='trusted'),
-      details:list.map(h=>({purpose:LABELS[h.eventName],command:h.command,source:h.sourcePath,hash:h.currentHash})),
+      details:list.map(h=>({purpose:LABELS[h.eventName],command:this.platform==='win32'?h.commandWindows:h.command,source:h.sourcePath,hash:h.currentHash})),
       fingerprint:digest({definitions,files})};
   }
   async status() {

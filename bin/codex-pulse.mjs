@@ -3,6 +3,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pulseDataDirectory } from "../src/platform-runtime.mjs";
 
 import { AppServerClient } from "../src/app-server-client.mjs";
 import { ChatContinuityController } from "../src/chat-continuity-controller.mjs";
@@ -61,9 +62,7 @@ const packageManifest = JSON.parse(
 const command = args[0] || "status";
 const once = args.includes("--once");
 const pollSeconds = Number(process.env.CODEX_PULSE_POLL_SECONDS || 60);
-const dataDir =
-  process.env.CODEX_PULSE_DATA_DIR ||
-  path.join(os.homedir(), "Library", "Application Support", "Codex Pulse");
+const dataDir = pulseDataDirectory();
 const statePath = path.join(dataDir, "state.json");
 
 function argValue(name, fallback = null) {

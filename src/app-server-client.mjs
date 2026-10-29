@@ -1,23 +1,19 @@
 import { EventEmitter } from "node:events";
-import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import readline from "node:readline";
 import { readLatestTurn } from "./thread-lifecycle.mjs";
 import { queueNativeWakeup, trustedRecoveryHooks } from "./native-wakeup.mjs";
-
-const DESKTOP_CODEX =
-  "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex";
+import { codexInvocation, resolveCodexExecutable } from "./platform-runtime.mjs";
 
 export function resolveCodexBinary() {
-  if (process.env.CODEX_BINARY) return process.env.CODEX_BINARY;
-  if (existsSync(DESKTOP_CODEX)) return DESKTOP_CODEX;
-  return "codex";
+  return resolveCodexExecutable();
 }
 
 export class AppServerClient extends EventEmitter {
   constructor(options = {}) {
     super();
     this.binary = options.binary || resolveCodexBinary();
+    this.binaryArgs = options.binaryArgs || [];
     this.requestTimeoutMs = options.requestTimeoutMs || 15_000;
     this.nextId = 1;
     this.pending = new Map();
@@ -26,8 +22,20 @@ export class AppServerClient extends EventEmitter {
 
   async start() {
     if (this.child) return;
-    this.child = spawn(this.binary, ["app-server"], {
+    const invocation = codexInvocation(this.binary, [...this.binaryArgs, "app-server"]);
+    this.child = spawn(invocation.file, invocation.args, {
       stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    });
+
+    this.child.on("error", (error) => {
+      for (const { reject, timeout } of this.pending.values()) {
+        clearTimeout(timeout);
+        reject(error);
+      }
+      this.pending.clear();
+      this.child = null;
+      this.emit("exit", error);
     });
 
     this.child.stderr.on("data", (chunk) => {
