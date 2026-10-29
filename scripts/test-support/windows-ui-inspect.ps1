@@ -13,8 +13,9 @@ do {
 } while ([DateTime]::UtcNow -lt $deadline)
 if ($null -eq $window) { throw 'No native application window was found.' }
 $all = $window.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)
-$buttons = @(); $content = @(); $clicked = $null
+$buttons = @(); $content = @(); $clicked = $null; $elements = @()
 foreach ($element in $all) {
+    $elements += @{name=$element.Current.Name; type=$element.Current.ControlType.ProgrammaticName; class=$element.Current.ClassName}
     if ($element.Current.ControlType -eq [Windows.Automation.ControlType]::Button) {
         $bounds = $element.Current.BoundingRectangle
         $buttons += @{name=$element.Current.Name; enabled=$element.Current.IsEnabled; offscreen=$element.Current.IsOffscreen; x=$bounds.X; y=$bounds.Y; width=$bounds.Width; height=$bounds.Height}
@@ -25,6 +26,10 @@ foreach ($element in $all) {
     $pattern = $null
     if ($element.TryGetCurrentPattern([Windows.Automation.TextPattern]::Pattern, [ref]$pattern)) {
         $content += $pattern.DocumentRange.GetText(-1)
+    } elseif ($element.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
+        $content += $pattern.Current.Value
+    } elseif ($element.TryGetCurrentPattern([Windows.Automation.LegacyIAccessiblePattern]::Pattern, [ref]$pattern)) {
+        if ($pattern.Current.Value) { $content += $pattern.Current.Value }
     }
 }
 if ($Screenshot) {
@@ -36,7 +41,7 @@ if ($Screenshot) {
         $bitmap.Save($Screenshot, [Drawing.Imaging.ImageFormat]::Png)
     } finally { $graphics.Dispose(); $bitmap.Dispose() }
 }
-@{title=$window.Current.Name; visible=(-not $window.Current.IsOffscreen); buttons=@($buttons); content=@($content)} | ConvertTo-Json -Depth 5 -Compress
+@{title=$window.Current.Name; visible=(-not $window.Current.IsOffscreen); buttons=@($buttons); content=@($content); elements=@($elements)} | ConvertTo-Json -Depth 5 -Compress
 if ($Click) {
     if ($null -eq $clicked) { throw 'The requested UI action was not found.' }
     $invoke = $clicked.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern)

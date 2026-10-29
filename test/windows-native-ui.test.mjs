@@ -40,8 +40,8 @@ test("actual Windows native alert renders Unicode as plain text, remains open, a
     const screenshot = path.join(root, "build/windows/persistent-alert.png");
     const ui = await inspect(child, "-Screenshot", screenshot);
     assert.equal(ui.visible, true);
-    assert(ui.buttons.some(b => b.name === "查看原帖" && b.enabled && !b.offscreen));
-    assert(ui.buttons.some(b => b.name === "知道了" && b.enabled && !b.offscreen));
+    assert(ui.buttons.some(b => b.name === "查看原帖" && b.enabled && !b.offscreen), JSON.stringify(ui));
+    assert(ui.buttons.some(b => b.name === "知道了" && b.enabled && !b.offscreen), JSON.stringify(ui));
     assert.match(ui.content.join("\n"), /<b>不是 HTML<\/b> & \$\(不是命令\)/);
     const visible = ui.buttons.filter(b => !b.offscreen && ["知道了", "查看消息历史", "查看原帖"].includes(b.name));
     assert.equal(new Set(visible.map(b => Math.round(b.y))).size, 1, "Alert action buttons must share a baseline");
@@ -67,13 +67,14 @@ test("actual native Windows history and plan views read isolated CLI records wit
     const child = spawn(app, [mode], { env: { ...process.env, CODEX_PULSE_APP_ROOT: runtime, CODEX_PULSE_DATA_DIR: data, CODEX_BINARY: "nonexistent-no-account.exe" }, windowsHide: false, stdio: ["ignore", "ignore", "pipe"] });
     let diagnostics = ""; child.stderr.on("data", b => diagnostics += b);
     const closed = once(child, "exit");
+    let last;
     try {
-      const ui = await until(async () => { const value = await inspect(child); return expected.test(value.content.join("\n")) ? value : null; });
+      const ui = await until(async () => { const value = await inspect(child); last = value; return expected.test(value.content.join("\n")) ? value : null; });
       assert.equal(ui.visible, true);
       if (mode === "--history") assert(ui.buttons.some(b => b.name === "查看原帖" && b.enabled));
       await inspect(child, "-Click", "关闭");
       assert.equal((await closed)[0], 0);
-    } catch (error) { throw new Error(error.message + (diagnostics ? " · " + diagnostics.trim() : "")); }
+    } catch (error) { throw new Error(error.message + (diagnostics ? " · " + diagnostics.trim() : "") + (last ? " · " + JSON.stringify(last) : "")); }
     finally { if (child.exitCode == null) child.kill(); }
   }
 });
