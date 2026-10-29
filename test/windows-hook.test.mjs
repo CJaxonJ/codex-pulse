@@ -97,5 +97,30 @@ test("Windows process chain pauses at 10%, saves plan, recovers through CLI queu
     assert.deepEqual(state.wakes[0].slice(0,4),["queue","--thread","windows-thread","--message"]);
     assert.match(state.wakes[0][4],/完成原目标/);
     assert.match(state.wakes[0][4],/Next action/);
+    const prompt=state.wakes[0][4];
+    const admitted=await f.invoke({hook_event_name:"UserPromptSubmit",turn_id:"resumed-turn",prompt});
+    assert.notEqual(admitted?.decision,"block");
+    const firstTool=await f.invoke({hook_event_name:"PreToolUse",turn_id:"resumed-turn",tool_name:"apply_patch"});
+    assert.notEqual(firstTool?.decision,"block");
+    assert((await store.get("windows-thread")).workspaceValidatedAt,"The real Windows hook must validate the saved workspace before allowing work");
+    const duplicate=await f.invoke({hook_event_name:"UserPromptSubmit",turn_id:"unwanted-duplicate-turn",prompt});
+    assert.equal(duplicate.decision,"block");
   } finally {client.stop();if(previous===undefined)delete process.env.PULSE_WINDOWS_RPC_STATE;else process.env.PULSE_WINDOWS_RPC_STATE=previous;}
+});
+
+test("Windows recovery must not queue a task when the persisted lifecycle is unknown or still running",windows,async()=>{
+  for(const lifecycle of [null,{type:"event_msg",payload:{type:"task_started",turn_id:"paused-turn"}}]){
+    const f=await fixture();await f.setQuota(10);
+    await f.invoke({hook_event_name:"PreToolUse",tool_name:"apply_patch"});
+    await f.invoke({hook_event_name:"Stop",last_assistant_message:"Completed: checked files.\nRemaining: finish original work.\nNext action: inspect files.\nBlockers: quota."});
+    await writeFile(f.peerState+".jsonl",lifecycle?JSON.stringify(lifecycle)+"\n":"");
+    const previous=process.env.PULSE_WINDOWS_RPC_STATE;process.env.PULSE_WINDOWS_RPC_STATE=f.peerState;
+    const client=new AppServerClient({binary:f.binary});
+    try{
+      await client.start();
+      const controller=new ChatContinuityController({client,store:new ChatContinuityStore(f.data),lockManager:new WorktreeLockManager(f.data)});
+      await controller.reconcile(f.summary(100),{now:f.now+100000});
+      assert.equal(JSON.parse(await readFile(f.peerState,"utf8")).wakes.length,0);
+    }finally{client.stop();if(previous===undefined)delete process.env.PULSE_WINDOWS_RPC_STATE;else process.env.PULSE_WINDOWS_RPC_STATE=previous;}
+  }
 });

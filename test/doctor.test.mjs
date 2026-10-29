@@ -5,9 +5,12 @@ import path from "node:path";
 import test from "node:test";
 
 import {
-  inspectLocalInstallation,
+  inspectLocalInstallation as inspectInstallation,
   redactDiagnosticText,
 } from "../src/doctor.mjs";
+
+// These fixtures model macOS explicitly, even when the test host is Windows.
+const inspectLocalInstallation = options => inspectInstallation({...options,platform:"darwin",env:{}});
 
 function createInstalledFixture() {
   const homeDir = path.join(
@@ -48,6 +51,24 @@ function createInstalledFixture() {
   );
   return homeDir;
 }
+
+test("Windows doctor uses LocalAppData and does not mistake a registered but idle task for a running monitor",{skip:process.platform!=="win32"},()=>{
+  const homeDir=createInstalledFixture();
+  const dataDir=path.join(homeDir,"Local App Data","Codex Pulse");
+  mkdirSync(path.join(dataDir,"app/bin"),{recursive:true});
+  writeFileSync(path.join(dataDir,"app/bin/codex-pulse.mjs"),"");
+  writeFileSync(path.join(dataDir,"app/package.json"),JSON.stringify({version:"0.9.0"}));
+  writeFileSync(path.join(dataDir,"app/CodexPulse.exe"),"fixture");
+  for(const state of ["Ready","Running"]){
+    const calls=[];
+    const result=inspectInstallation({homeDir,platform:"win32",env:{LOCALAPPDATA:path.join(homeDir,"Local App Data")},expectedVersion:"0.9.0",
+      run:(command,args,options)=>{calls.push({command,args,options});return JSON.stringify({state});}});
+    assert.equal(result.checks.find(c=>c.id==="scheduled-task").status,state==="Running"?"pass":"fail");
+    assert.equal(result.checks.find(c=>c.id==="notifications").status,"pass");
+    assert.equal(calls[0].command,"powershell.exe");assert.equal(calls[0].options.windowsHide,true);
+    assert.equal(JSON.stringify(result).includes(homeDir),false);
+  }
+});
 
 test("doctor reports a healthy installed runtime without exposing account data", () => {
   const homeDir = createInstalledFixture();

@@ -265,7 +265,7 @@ async function runDoctor() {
         privacy:
           "This report excludes authentication material, reset-credit IDs, prompt text, and absolute home paths.",
         nextStep: !ok
-          ? "Re-run node scripts/install-macos.mjs, then run doctor again. If it still fails, share this report with the developer."
+          ? (process.platform === "win32" ? "重新运行 Windows 安装器后再检查；仍失败时，可预览脱敏报告后向开发者反馈。" : "Re-run node scripts/install-macos.mjs, then run doctor again. If it still fails, share this report with the developer.")
           : hookObserved
             ? "Codex Pulse is installed and a Hook execution was observed. If protection seems inactive, check current trust through Codex Pulse → 保护授权."
             : "Open Codex Pulse → 保护授权, personally review and confirm the definitions, then reopen Codex when convenient. New sessions load the authorization; no CLI trust keypress is required.",

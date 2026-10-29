@@ -6,6 +6,7 @@ import {
   statSync,
 } from "node:fs";
 import path from "node:path";
+import { pulseDataDirectory } from "./platform-runtime.mjs";
 
 const SERVICE_LABEL = "com.cjaxonj.codex-pulse";
 const PLUGIN_ID = "codex-pulse@codex-pulse-local";
@@ -79,8 +80,10 @@ export function inspectLocalInstallation({
   compatiblePluginVersions = expectedVersion ? [expectedVersion] : [],
   now = Date.now(),
   run = execFileSync,
+  platform = process.platform,
+  env = process.env,
 } = {}) {
-  const dataDir = path.join(homeDir, "Library", "Application Support", "Codex Pulse");
+  const dataDir = pulseDataDirectory({platform,env,home:homeDir});
   const runtimePath = path.join(dataDir, "app", "bin", "codex-pulse.mjs");
   const runtimeVersion = packageVersion(path.join(dataDir, "app", "package.json"));
   const plistPath = path.join(
@@ -89,7 +92,7 @@ export function inspectLocalInstallation({
     "LaunchAgents",
     `${SERVICE_LABEL}.plist`,
   );
-  const notifierPath = path.join(homeDir, "Applications", "Codex Pulse.app");
+  const notifierPath = platform === "win32" ? path.join(dataDir,"app","CodexPulse.exe") : path.join(homeDir, "Applications", "Codex Pulse.app");
   const configPath = path.join(codexHome, "config.toml");
   const statePath = path.join(dataDir, "state.json");
   const logPath = path.join(dataDir, "monitor.log");
@@ -100,10 +103,16 @@ export function inspectLocalInstallation({
 
   let serviceLoaded = false;
   try {
-    run("/bin/launchctl", ["print", `gui/${uid}/${SERVICE_LABEL}`], {
-      stdio: "ignore",
-    });
-    serviceLoaded = true;
+    if(platform === "win32") {
+      const raw=run("powershell.exe",["-NoProfile","-NonInteractive","-Command",
+        "$t=Get-ScheduledTask -TaskName 'Codex Pulse Monitor' -ErrorAction Stop; @{state=$t.State.ToString()} | ConvertTo-Json -Compress"],{
+        encoding:"utf8",windowsHide:true,timeout:10000,
+      });
+      serviceLoaded=JSON.parse(String(raw)).state === "Running";
+    } else {
+      run("/bin/launchctl", ["print", `gui/${uid}/${SERVICE_LABEL}`], {stdio: "ignore"});
+      serviceLoaded = true;
+    }
   } catch {
     serviceLoaded = false;
   }
@@ -159,8 +168,8 @@ export function inspectLocalInstallation({
           : `后台运行文件已安装（${runtimeVersion || "版本未知"}）`,
     ),
     check(
-      "launch-agent",
-      existsSync(plistPath) && serviceLoaded ? "pass" : "fail",
+      platform === "win32" ? "scheduled-task" : "launch-agent",
+      (platform === "win32" || existsSync(plistPath)) && serviceLoaded ? "pass" : "fail",
       serviceLoaded ? "后台监控正在运行" : "后台监控没有运行",
     ),
     check(
