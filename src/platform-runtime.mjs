@@ -15,8 +15,14 @@ export function resolveCodexExecutable({ platform = process.platform, env = proc
   if (platform === "win32") {
     const p = path.win32;
     const local = env.LOCALAPPDATA || p.join(home, "AppData", "Local");
-    const candidates = [p.join(local, "OpenAI", "Codex", "bin", "codex.exe"),
+    if (env.CODEX_INSTALL_DIR && !p.isAbsolute(env.CODEX_INSTALL_DIR)) throw Error("CODEX_INSTALL_DIR 必须是 Windows 绝对路径，请核对 Codex 安装目录。");
+    const candidates = [
+      ...(env.CODEX_INSTALL_DIR ? [p.join(env.CODEX_INSTALL_DIR, "codex.exe")] : []),
+      p.join(local, "Programs", "OpenAI", "Codex", "bin", "codex.exe"),
       p.join(env.CODEX_HOME || p.join(home, ".codex"), "packages", "standalone", "current", "bin", "codex.exe")];
+    // Older/user-managed installs may still use this layout. Do not prefer it
+    // over the current documented per-user installer location.
+    candidates.push(p.join(local, "OpenAI", "Codex", "bin", "codex.exe"));
     for (const candidate of candidates) if (exists(candidate)) return candidate;
     for (const name of ["codex.exe", "codex.cmd"]) {
       try {

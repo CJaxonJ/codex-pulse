@@ -27,6 +27,14 @@ test("npm launch forwards shell metacharacters as literal arguments, never throu
   assert.throws(()=>codexInvocation("codex.cmd",args,{platform:"win32"}),/absolute/);
   assert.throws(()=>codexInvocation("C:\\bad.cmd",args,{platform:"win32",exists:()=>false}),/npm/);
 });
+test("Windows discovery uses the documented per-user command directory even before PATH refresh", () => {
+  const expected = "D:\\Local Data\\Programs\\OpenAI\\Codex\\bin\\codex.exe";
+  const found = resolveCodexExecutable({ platform: "win32", home: "C:\\Users\\Test", env: { LOCALAPPDATA: "D:\\Local Data" }, exists: p => p === expected, find: () => { throw Error("PATH must not be required"); } });
+  assert.equal(found, expected);
+  const custom = "E:\\Tools 中文\\codex.exe";
+  assert.equal(resolveCodexExecutable({ platform: "win32", env: { LOCALAPPDATA: "D:\\Local", CODEX_INSTALL_DIR: "E:\\Tools 中文" }, exists: p => p === custom || p.endsWith("bin\\codex.exe"), find: () => { throw Error("PATH must not be required"); } }), custom);
+  assert.throws(() => resolveCodexExecutable({ platform: "win32", env: { CODEX_INSTALL_DIR: "relative-bin" } }), /绝对路径/);
+});
 test("App Server start reports a missing executable promptly without uncaught process errors", async () => {
   const client=new AppServerClient({binary:path.join(os.tmpdir(),"pulse-no-such-binary-"+process.pid),requestTimeoutMs:10000});
   const start=Date.now(); await assert.rejects(client.start(),/ENOENT/); assert(Date.now()-start<5000);client.stop();

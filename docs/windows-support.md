@@ -151,3 +151,7 @@ Windows watcher 另加独立的进程归属记录：长驻计时器完成初始�
 审查另以固定时序复现真实恢复风险：后台等暂停 Goal RPC 时，Stop 已保存最终计划，旧成功／超时回包却把它覆写回 checkpoint_requested。两个回归先失败；修复为回包后重读同一 turn 的当前检查点，保留新 Stop 内容及状态，不覆盖新用户 turn；迟到检查点失败也不能清掉已经保存的计划。原生后台正向用例追加延迟暂停 RPC 的确定性 gate，确保 Stop 真正先于回包完成，并等待下一次实际轮询后再检查计划。
 
 以上后续修复和 PID 身份读取仍待新 Windows 门禁，不用首轮串行成功替代本次验证。
+
+按 OpenAI Docs 核对安装前置时，发现当前官方用户级命令目录是 `%LOCALAPPDATA%\Programs\OpenAI\Codex\bin`，原先候选遗漏了 Programs。已补该目录及显式 CODEX_INSTALL_DIR，保持 CODEX_BINARY 优先，不要求用户刷新终端 PATH 才能发现；旧目录只作兼容后备。候选映射有测试，但不冒称已安装并运行每一种 standalone 包。官方 Windows app 与原生 CLI 共享用户的 `.codex`，WSL 默认不共享；不能用 SYSTEM 的配置或另一个 Linux 用户的登录态冒充本人账号。
+
+依据：[官方环境变量](https://learn.chatgpt.com/docs/config-file/environment-variables)、[Windows app](https://learn.chatgpt.com/docs/app/windows)、[Windows 部署上下文](https://learn.chatgpt.com/docs/enterprise/windows-deployment)。不更改用户 PATH、执行策略或系统账号，不复制裸 `codex.exe` 冒充完整 standalone 安装。官方 CLI 验收另显式绑定 npm 安装的确切 shim，并读取 --version 核对 pin，避免新增发现路径后悄悄测试了另一版本。

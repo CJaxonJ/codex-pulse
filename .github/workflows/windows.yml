@@ -29,7 +29,14 @@ jobs:
         run: node --test test/atomic-file.test.mjs test/platform-runtime.test.mjs test/windows-process-identity.test.mjs test/windows-owned-process.test.mjs test/windows-watcher-instance.test.mjs test/windows-background.test.mjs test/windows-background-recovery.test.mjs test/windows-hook.test.mjs test/protection-consent.test.mjs test/native-wakeup.test.mjs test/worktree-lock-process.test.mjs test/chat-continuity-controller.test.mjs test/chat-continuity-full-chain.test.mjs
       - name: Install pinned official CLI for isolated protocol acceptance
         if: matrix.node == 22
-        run: npm install --global @openai/codex@0.163.0-alpha.11.1
+        run: |
+          npm install --global @openai/codex@0.163.0-alpha.11.1
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned Codex installation failed.' }
+          $prefix = (npm prefix --global).Trim()
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned Codex prefix could not be read.' }
+          $binary = Join-Path $prefix 'codex.cmd'
+          if (-not (Test-Path -LiteralPath $binary)) { throw 'Pinned Codex shim is missing.' }
+          "CODEX_BINARY=$binary" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Real Codex Windows hook review protocol (isolated config, no model)
         if: matrix.node == 22
         run: node scripts/e2e-windows-codex-hooks.mjs

@@ -7,9 +7,13 @@ import { readFile, readdir, writeFile } from "node:fs/promises";
 import { windowsUIFixture, inspectWindowsUI, waitForWindowsUI } from "./test-support/windows-ui-fixture.mjs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { codexInvocation } from "../src/platform-runtime.mjs";
 
 if(process.platform!=="win32")throw Error("This acceptance requires native Windows, not a platform mock");
 const project=path.resolve(import.meta.dirname,"..");
+const versionCall=codexInvocation(resolveCodexBinary(),["--version"]);
+const actualCodexVersion=(await promisify(execFile)(versionCall.file,versionCall.args,{encoding:"utf8",timeout:15000,windowsHide:true})).stdout.trim().split(/\s+/).at(-1);
+assert.equal(actualCodexVersion,"0.163.0-alpha.11.1","Acceptance must use the actually pinned official CLI, not another installation found first");
 const fixture=await protectionFixture(project);
 const originalHome=process.env.CODEX_HOME;
 process.env.CODEX_HOME=fixture.home;
@@ -78,4 +82,4 @@ try{
   await inspectWindowsUI(session,{title,click:"完成"});
   assert.equal((await session.closed)[0],0);
 }finally{if(session.child.exitCode==null)session.child.kill();}
-console.log(JSON.stringify({ok:true,nativeWindows:true,actualCodex:true,actualUserInterface:true,cancelNoTrustWrite:true,changedDefinitionRejected:true,isolatedConsentOnly:true,productionConfigTouched:false,quotaSpent:0}));
+console.log(JSON.stringify({ok:true,nativeWindows:true,actualCodex:true,actualCodexVersion,actualUserInterface:true,cancelNoTrustWrite:true,changedDefinitionRejected:true,isolatedConsentOnly:true,productionConfigTouched:false,quotaSpent:0}));
