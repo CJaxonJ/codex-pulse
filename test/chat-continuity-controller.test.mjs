@@ -84,6 +84,30 @@ function observingChat(overrides = {}) {
     reserveBaseline: baseline.checkpoint, ...overrides };
 }
 
+for (const pauseResult of ["success", "timeout"]) test(`a delayed ${pauseResult} from quota pausing must preserve a newer Stop checkpoint`, async () => {
+  const original = observingChat();
+  const store = new MemoryChatContinuityStore([original]);
+  const client = new FakeClient(); client.latestTurnStatus = "inProgress";
+  client.goalStatus = "active"; client.goalObjective = original.initialGoal.objective;
+  const request = client.request.bind(client);
+  client.request = async (method, params) => {
+    if (method === "thread/goal/set" && params.status === "paused") {
+      const pending = await store.get(original.sessionId);
+      assert.equal(pending.status, "checkpoint_requested");
+      // A real Stop callback can complete while the quota observer awaits RPC.
+      await store.put({ ...pending, status: "paused_quota", checkpoint: { ...pending.checkpoint, summary: "Completed: final handoff. Next action: keep this exact plan.", completedAt: 17 } });
+      if (pauseResult === "timeout") throw Error("request timed out after the Stop checkpoint was saved");
+    }
+    return request(method, params);
+  };
+  await new ChatContinuityController({ client, store }).reconcile(summary(10), { now: 20 });
+  const saved = await store.get(original.sessionId);
+  assert.equal(saved.status, "paused_quota");
+  assert.equal(saved.checkpoint.summary, "Completed: final handoff. Next action: keep this exact plan.");
+  assert.equal(saved.checkpoint.completedAt, 17);
+  assert.equal(saved.initialGoal.objective, original.initialGoal.objective);
+});
+
 test("an independent recovery submits the official wake only after arming first-tool validation", async () => {
   const store = new MemoryChatContinuityStore([pausedChat({ wakeAdmissionVersion: 1 })]);
   const client = new FakeClient();

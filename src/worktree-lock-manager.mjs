@@ -9,17 +9,26 @@ import {
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
+import { currentWindowsProcessIdentity, readWindowsProcessIdentity } from "./windows-process-bridge.mjs";
 
 const INCOMPLETE_LOCK_GRACE_MS = 30_000;
 
-function processIsAlive(pid) {
+function processIsAlive(pid, owner) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
-    return true;
   } catch (error) {
-    return error?.code === "EPERM";
+    if (error?.code !== "EPERM") return false;
   }
+  const identity = owner?.processIdentity;
+  if (process.platform === "win32" && identity?.platform === "win32" && /^\d{1,20}$/.test(identity.creationTimeFileTime)) {
+    try {
+      const actual = pid === process.pid ? currentWindowsProcessIdentity() : readWindowsProcessIdentity(pid);
+      if (!actual) return true; // Unknown is never evidence that a writer stopped.
+      return actual.exists !== false && actual.creationTimeFileTime === identity.creationTimeFileTime;
+    } catch { return true; }
+  }
+  return true; // Legacy PID-only locks remain conservative.
 }
 
 async function canonicalPath(cwd) {
@@ -42,6 +51,7 @@ export class WorktreeLockManager {
       pid = process.pid,
       isProcessAlive = processIsAlive,
       now = () => Date.now(),
+      processIdentity = null,
     } = {},
   ) {
     this.rootDir = path.join(dataDir, "worktree-locks");
@@ -49,6 +59,7 @@ export class WorktreeLockManager {
     this.pid = pid;
     this.isProcessAlive = isProcessAlive;
     this.now = now;
+    this.processIdentity = processIdentity;
   }
 
   async acquire(cwd, taskId) {
@@ -69,6 +80,7 @@ export class WorktreeLockManager {
           pid: this.pid,
           token,
           acquiredAt: this.now(),
+          ...(this.processIdentity ? { processIdentity: this.processIdentity } : {}),
         };
         try {
           await writeFile(
@@ -94,7 +106,7 @@ export class WorktreeLockManager {
         return { acquired: true, handle: owner };
       }
 
-      if (owner && this.isProcessAlive(owner.pid)) {
+      if (owner && this.isProcessAlive(owner.pid, owner)) {
         return { acquired: false, reason: "worktree_busy", owner };
       }
       if (!owner && !(await this.#incompleteLockIsStale(lockDir))) {

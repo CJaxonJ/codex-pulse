@@ -47,6 +47,11 @@ function retryIsDue(record, now) {
   return record.retryNotBefore == null || now >= record.retryNotBefore;
 }
 
+function samePendingCheckpoint(current, expected) {
+  return current?.turnId === expected.turnId &&
+    ["checkpoint_requested", "checkpointing", "paused_quota"].includes(current?.status);
+}
+
 function retryableResumeError(error) {
   const message = String(error?.message || error || "").toLowerCase();
   return [
@@ -270,7 +275,9 @@ export class ChatContinuityController {
       const result = await this.client.request("thread/goal/get", { threadId: current.sessionId });
       const goal = result.goal;
       if (goal?.status === "complete") {
-        await this.store.put({ ...requested, status: "complete", autoResume: false });
+        const latest = await this.store.get(current.sessionId);
+        if (!samePendingCheckpoint(latest, requested)) return null;
+        await this.store.put({ ...latest, status: "complete", autoResume: false });
         return null;
       }
       if (goal && (!current.initialGoal ||
@@ -283,18 +290,24 @@ export class ChatContinuityController {
       if (goal) await this.client.request("thread/goal/set", {
         threadId: current.sessionId, status: "paused", origin: "automatic",
       });
-      await this.store.put({ ...requested, goalWasActive: Boolean(goal),
+      // Stop or a newer user turn may finish while either Goal RPC is pending.
+      // Merge only into the current same-turn checkpoint, never the pre-RPC copy.
+      const latest = await this.store.get(current.sessionId);
+      if (!samePendingCheckpoint(latest, requested)) return null;
+      await this.store.put({ ...latest, goalWasActive: Boolean(goal),
         goalAtPause: goal || null, resumeMode: goal ? "native_goal" : "manual",
         autoResume: Boolean(goal), resumeUnavailableReason: goal ? null : "native_goal_required",
       });
     } catch (error) {
+      const latest = await this.store.get(current.sessionId);
+      if (!samePendingCheckpoint(latest, requested)) return null;
       if (retryableResumeError(error)) {
         // Preserve the pending checkpoint; repair will recheck history after
         // connectivity returns rather than requiring another model event.
-        await this.#deferRetry(requested, error, now, { status: "checkpoint_requested" });
+        await this.#deferRetry(latest, error, now, { status: latest.status });
         return null;
       }
-      return this.#checkpointAttention(requested, "native_goal_state_unavailable", now);
+      return this.#checkpointAttention(latest, "native_goal_state_unavailable", now);
     }
     return null;
   }
@@ -354,7 +367,10 @@ export class ChatContinuityController {
   }
 
   async #checkpointAttention(record, reason, now) {
-    await this.store.put({ ...record, status: "needs_attention", autoResume: false,
+    const current = await this.store.get(record.sessionId);
+    if (current?.turnId !== record.turnId ||
+      !["observing", "checkpoint_requested", "checkpointing"].includes(current?.status)) return null;
+    await this.store.put({ ...current, status: "needs_attention", autoResume: false,
       blocker: reason, checkpointFailedAt: now });
     return { type: "chat_continuity_attention", sessionId: record.sessionId, reason };
   }

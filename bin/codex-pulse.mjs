@@ -7,6 +7,7 @@ import { pulseDataDirectory } from "../src/platform-runtime.mjs";
 import { ensureWindowsPrivateDirectory } from "../src/private-directory.mjs";
 import { acquireWatcherInstance } from "../src/watcher-instance.mjs";
 import { writeJsonSnapshotAtomic } from "../src/atomic-file.mjs";
+import { currentWindowsProcessIdentity } from "../src/windows-process-bridge.mjs";
 
 import { AppServerClient } from "../src/app-server-client.mjs";
 import { ChatContinuityController } from "../src/chat-continuity-controller.mjs";
@@ -507,7 +508,7 @@ async function watchOwned() {
   const tiboClient = new TiboResetClient({
     sourceProvider: async () => (await preferencesStore.get()).tiboSource,
   });
-  const lockManager = new WorktreeLockManager(dataDir);
+  const lockManager = new WorktreeLockManager(dataDir, { processIdentity: currentWindowsProcessIdentity() });
   const autoRedeemer = new CreditAutoRedeemer({ client, preferences: preferencesStore, dataDir });
   const managedTaskStore = new ManagedTaskStore(dataDir);
   const eventJournal = new UserEventJournal(dataDir);

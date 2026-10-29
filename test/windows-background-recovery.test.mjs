@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { windowsRecoveryBackgroundFixture } from "../scripts/test-support/windows-recovery-background-fixture.mjs";
+import { readWindowsProcessIdentity } from "../src/windows-process-bridge.mjs";
 
 const windows = { skip: process.platform !== "win32", timeout: 120000 };
 const alive = pid => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === "EPERM"; } };
@@ -21,14 +22,17 @@ async function start(f, sessions, percent) {
     if (host.child.exitCode != null) throw Error(host.diagnostic());
     const health = await readOptional(path.join(f.dataDir, "background-status.json")), state = await readOptional(path.join(f.dataDir, "state.json"));
     if (health?.supervisorPid !== host.child.pid || health.state !== "running" || state?.lastSummary?.fiveHour?.remainingPercent !== percent) return null;
-    assert(alive(health.watcherPid)); return { host, health, state };
+    assert(alive(health.watcherPid));
+    const identity = readWindowsProcessIdentity(health.watcherPid); assert.equal(identity.exists, true);
+    return { host, health, state, identity };
   });
 }
 async function stop(f, sessions, active) {
   const stopping = f.start("--stop-background"); sessions.push(stopping);
   assert.equal((await stopping.closed)[0], 0, stopping.diagnostic());
   assert.equal((await active.host.closed)[0], 0, active.host.diagnostic());
-  assert.equal(alive(active.health.watcherPid), false);
+  const current = readWindowsProcessIdentity(active.health.watcherPid);
+  assert(current.exists === false || current.creationTimeFileTime !== active.identity.creationTimeFileTime, "The old process identity must have ended, even if Windows reused its PID");
 }
 async function pause(f, sessions) {
   const active = await start(f, sessions, 70);
@@ -36,11 +40,19 @@ async function pause(f, sessions) {
   assert.equal((await f.store.get("native-windows-thread")).initialGoal.objective, f.objective);
   await f.setQuota(10);
   await until(f, async () => (await readOptional(path.join(f.dataDir, "state.json")))?.lastSummary?.fiveHour?.remainingPercent === 10);
+  if (f.gatePause) await until(f, async () => { try { return await readFile(f.pauseMarker, "utf8"); } catch (error) { if (error.code === "ENOENT") return false; throw error; } });
   const blocked = await f.invoke({ hook_event_name: "PreToolUse", tool_name: "apply_patch" });
   assert.equal(blocked.decision, "block");
   const saved = await f.invoke({ hook_event_name: "Stop", last_assistant_message: f.plan });
   assert.equal(saved.continue, false);
   await f.setTurn("completed");
+  if (f.gatePause) {
+    const samples = (await readOptional(path.join(f.dataDir, "state.json"))).fiveHour.samples.length;
+    await f.releasePause();
+    // A later real poll proves the delayed pause RPC has returned and its
+    // reconciliation completed; a pre-RPC record must not replace the plan.
+    await until(f, async () => (await readOptional(path.join(f.dataDir, "state.json"))).fiveHour.samples.length > samples);
+  }
   const record = await f.store.get("native-windows-thread");
   assert.equal(record.status, "paused_quota");
   assert.equal(record.initialGoal.objective, f.objective);
@@ -51,14 +63,15 @@ async function pause(f, sessions) {
 }
 
 test("native Windows background preserves the original goal and checkpoint, queues once after replacement, and keeps first-tool fencing across another replacement", windows, async () => {
-  const f = await windowsRecoveryBackgroundFixture(), sessions = [];
+  const f = await windowsRecoveryBackgroundFixture({ gatePause: true }), sessions = [];
   try {
     const original = await pause(f, sessions);
     await stop(f, sessions, original);
     await f.setQuota(100);
     const recovered = await start(f, sessions, 100);
     const record = await until(f, async () => { const value = await f.store.get("native-windows-thread"); return value?.executionObservedAt && value.status === "native_goal_active" ? value : null; });
-    assert.notEqual(recovered.health.watcherPid, original.health.watcherPid);
+    assert.notEqual(recovered.health.generation, original.health.generation);
+    assert.notDeepEqual([recovered.health.watcherPid, recovered.identity.creationTimeFileTime], [original.health.watcherPid, original.identity.creationTimeFileTime]);
     assert.equal(record.initialGoal.objective, f.objective);
     assert.equal(record.checkpoint.summary, f.plan);
     assert.equal(record.resumeCount, 1);
