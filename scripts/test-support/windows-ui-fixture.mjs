@@ -7,11 +7,11 @@ import path from "node:path";
 
 const execute = promisify(execFile);
 const project = path.resolve(import.meta.dirname, "../..");
-export async function windowsUIFixture({ root, dataDir, env = {} } = {}) {
+export async function windowsUIFixture({ root, dataDir, env = {}, installed = false } = {}) {
   if (process.platform !== "win32") throw Error("A real Windows runtime is required");
   root ||= await mkdtemp(path.join(os.tmpdir(), "pulse 设置 中文-"));
   dataDir ||= path.join(root, "数据");
-  const appRoot = path.join(root, "app 空格"), home = path.join(root, "codex");
+  const appRoot = installed ? path.join(dataDir, "app") : path.join(root, "app 空格"), home = path.join(root, "codex");
   await mkdir(path.join(appRoot, "runtime"), { recursive: true });
   await mkdir(dataDir, { recursive: true }); await mkdir(home, { recursive: true });
   for (const entry of ["bin", "src", "package.json"]) await cp(path.join(project, entry), path.join(appRoot, entry), { recursive: true });

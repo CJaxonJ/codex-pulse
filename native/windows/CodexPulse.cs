@@ -28,6 +28,8 @@ namespace CodexPulse {
                 Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
+                if (args.Length == 1 && args[0] == "--background") return BackgroundContext.Run();
+                if (args.Length == 1 && args[0] == "--stop-background") return BackgroundContext.RequestStop();
                 if (args.Length == 1 && args[0] == "--notify") {
                     string text = ReadPayload();
                     Dictionary<string, object> payload = Json.DeserializeObject(text) as Dictionary<string, object>;

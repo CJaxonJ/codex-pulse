@@ -752,7 +752,12 @@ async function watchOwned() {
 }
 
 try {
-  if (command === "status") await printStatus();
+  if (command === "background-prepare") console.log(JSON.stringify(await ensureWindowsPrivateDirectory(dataDir)));
+  else if (command === "background-probe") {
+    const release = await acquireWatcherInstance(dataDir);
+    await release(); console.log(JSON.stringify({ ok: true, watcherStopped: true }));
+  }
+  else if (command === "status") await printStatus();
   else if (command === "activity") await printActivity();
   else if (command === "history") console.log(JSON.stringify({ ok: true, events: await new UserEventJournal(dataDir).list() }));
   else if (command === "protection") await withClient(async (client) => {
