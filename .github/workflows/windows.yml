@@ -22,7 +22,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node }}
-      - name: Build native Windows notification and read-only views
+      - name: Build native Windows settings, consent and notifications
         shell: powershell
         run: ./scripts/build-native-windows.ps1
       - name: Native Windows process and PowerShell recovery tests
@@ -41,6 +41,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: windows-ui-node-${{ matrix.node }}
-          path: build/windows/persistent-alert.png
+          path: |
+            build/windows/persistent-alert.png
+            build/windows/settings.png
+            build/windows/protection.png
           if-no-files-found: warn
           retention-days: 7

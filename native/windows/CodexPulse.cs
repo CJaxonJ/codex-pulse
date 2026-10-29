@@ -43,7 +43,11 @@ namespace CodexPulse {
                     } else {
                         using (BannerContext banner = new BannerContext(notice)) Application.Run(banner);
                     }
-                } else if (args.Length == 0 || (args.Length == 1 && (args[0] == "--history" || args[0] == "--preview"))) {
+                } else if (args.Length == 1 && args[0] == "--protection") {
+                    using (ProtectionWindow window = new ProtectionWindow()) Application.Run(window);
+                } else if (args.Length == 0 || (args.Length == 1 && args[0] == "--settings")) {
+                    using (SettingsWindow window = new SettingsWindow()) Application.Run(window);
+                } else if (args.Length == 1 && (args[0] == "--history" || args[0] == "--preview")) {
                     using (HistoryWindow window = new HistoryWindow(args.Length == 1 && args[0] == "--preview")) Application.Run(window);
                 } else { throw new ArgumentException(); }
                 return 0;
@@ -284,7 +288,7 @@ namespace CodexPulse {
                     if (!process.WaitForExit(15000)) { try { process.Kill(); } catch { } throw new IOException("本机数据暂未读到，请重试。"); }
                     Task.WaitAll(output, errors);
                     if (process.ExitCode != 0) throw new IOException("无法读取本机记录，请检查安装后重试。");
-                    Dictionary<string, object> result = Program.Json.DeserializeObject(output.Result) as Dictionary<string, object>;
+                    Dictionary<string, object> result = new JavaScriptSerializer { MaxJsonLength = 4 * 1024 * 1024 }.DeserializeObject(output.Result) as Dictionary<string, object>;
                     if (result == null) throw new IOException("本机记录格式异常，请重试。");
                     return result;
                 }

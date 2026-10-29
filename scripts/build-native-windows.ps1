@@ -25,7 +25,8 @@ try {
     $writer.Flush()
 } finally { $stream.Dispose() }
 $exe = Join-Path $OutputDirectory 'CodexPulse.exe'
-& $compiler /nologo /target:winexe /platform:anycpu /utf8output /codepage:65001 ("/out:" + $exe) ("/win32icon:" + $iconPath) /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll /reference:System.Core.dll (Join-Path $root 'native\windows\CodexPulse.cs')
+$sources = @(Get-ChildItem -LiteralPath (Join-Path $root 'native\windows') -Filter '*.cs' | Sort-Object Name | ForEach-Object { $_.FullName })
+& $compiler /nologo /target:winexe /platform:anycpu /utf8output /codepage:65001 ("/out:" + $exe) ("/win32icon:" + $iconPath) /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll /reference:System.Core.dll @sources
 if ($LASTEXITCODE -ne 0) { throw 'Codex Pulse native Windows compilation failed.' }
 [IO.File]::Copy((Join-Path $root 'native\windows\CodexPulse.exe.config'), ($exe + '.config'), $true)
 Write-Output $exe

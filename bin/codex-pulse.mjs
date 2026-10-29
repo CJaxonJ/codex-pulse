@@ -207,6 +207,7 @@ async function printActivity() {
       {
         ok: true,
         quota: {
+          checkedAt: Number.isFinite(state.quotaCheckedAt ?? state.fiveHour?.lastCheckedAt) ? (state.quotaCheckedAt ?? state.fiveHour.lastCheckedAt) : null,
           planType: state.lastSummary?.planType || null,
           fiveHour: state.lastSummary?.fiveHour || null,
           weekly: state.lastSummary?.weekly || null,
