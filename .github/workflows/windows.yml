@@ -24,11 +24,12 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: Native Windows process and PowerShell recovery tests
         run: node --test test/platform-runtime.test.mjs test/windows-hook.test.mjs test/protection-consent.test.mjs test/native-wakeup.test.mjs test/worktree-lock-process.test.mjs test/chat-continuity-full-chain.test.mjs
-      - name: Full cross-platform regression (no hosted model or credentials)
-        run: npm test
       - name: Install pinned official CLI for isolated protocol acceptance
         if: matrix.node == 22
         run: npm install --global @openai/codex@0.163.0-alpha.11.1
       - name: Real Codex Windows hook review protocol (isolated config, no model)
         if: matrix.node == 22
         run: node scripts/e2e-windows-codex-hooks.mjs
+      - name: Full cross-platform regression (no hosted model or credentials)
+        if: always()
+        run: npm test

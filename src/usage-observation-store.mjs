@@ -1,5 +1,6 @@
-import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { renameAtomic } from "./atomic-file.mjs";
 
 function safeId(value) {
   return String(value).replaceAll(/[^a-zA-Z0-9._-]/g, "_").slice(0, 220);
@@ -48,7 +49,7 @@ export class UsageObservationStore {
     const target = path.join(this.observationsDir, `${safeId(next.id)}.json`);
     const temporary = `${target}.${process.pid}.tmp`;
     await writeFile(temporary, `${JSON.stringify(next, null, 2)}\n`, "utf8");
-    await rename(temporary, target);
+    await renameAtomic(temporary, target);
     return next;
   }
 }

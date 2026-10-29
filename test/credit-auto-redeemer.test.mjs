@@ -108,8 +108,11 @@ test("same-instance and separate watchers cannot consume two cards; re-read full
   assert.equal(f.calls[0].params.creditId, "earlier");
   assert.equal((await f.make().poll()).status, "not_eligible");
   const metadata = path.join(f.dataDir, "credit-operations", `${binding}.json`);
-  assert.equal((await stat(metadata)).mode & 0o777, 0o600);
-  assert.equal((await stat(path.dirname(metadata))).mode & 0o777, 0o700);
+  // Windows protection is an installer ACL requirement, not POSIX mode bits.
+  if(process.platform!=="win32"){
+    assert.equal((await stat(metadata)).mode & 0o777, 0o600);
+    assert.equal((await stat(path.dirname(metadata))).mode & 0o777, 0o700);
+  }
   assert.doesNotMatch(await readFile(metadata, "utf8"), /personal@example|opaque-one|earlier/);
 });
 

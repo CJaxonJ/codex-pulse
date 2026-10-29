@@ -1,7 +1,8 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { WorktreeLockManager } from "./worktree-lock-manager.mjs";
+import { renameAtomic } from "./atomic-file.mjs";
 
 export const QUOTA_POLICIES = ["finish_current", "strict_reserve", "deadline"];
 export const TIBO_SOURCES = ["disabled", "auto", "x-api", "codex-reset"];
@@ -108,7 +109,7 @@ export class PulsePreferencesStore {
     await mkdir(path.dirname(this.filePath), { recursive: true });
     const temporary = `${this.filePath}.${process.pid}.${randomUUID()}.tmp`;
     await writeFile(temporary, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-    await rename(temporary, this.filePath);
+    await renameAtomic(temporary, this.filePath);
     return next;
   }
 }

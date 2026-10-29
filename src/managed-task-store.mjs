@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { renameAtomic } from "./atomic-file.mjs";
 
 export class ManagedTaskStore {
   constructor(dataDir) {
@@ -54,7 +55,7 @@ export class ManagedTaskStore {
     const target = path.join(this.tasksDir, `${next.id}.json`);
     const temporary = `${target}.${process.pid}.tmp`;
     await writeFile(temporary, `${JSON.stringify(next, null, 2)}\n`, "utf8");
-    await rename(temporary, target);
+    await renameAtomic(temporary, target);
     return next;
   }
 }

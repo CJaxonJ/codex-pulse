@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { renameAtomic } from "./atomic-file.mjs";
 
 function recordName(sessionId) {
   return `${createHash("sha256").update(String(sessionId)).digest("hex")}.json`;
@@ -48,7 +49,7 @@ export class ChatContinuityStore {
     const target = path.join(this.recordsDir, recordName(next.sessionId));
     const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
     await writeFile(temporary, `${JSON.stringify(next, null, 2)}\n`, "utf8");
-    await rename(temporary, target);
+    await renameAtomic(temporary, target);
     return next;
   }
 }

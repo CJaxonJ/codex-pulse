@@ -1,7 +1,8 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { isTiboPostEvent, tiboPostSource } from "./tibo-post-source.mjs";
+import { renameAtomic } from "./atomic-file.mjs";
 
 const DEFAULT_LIMIT = 50;
 
@@ -68,6 +69,6 @@ export class UserEventJournal {
     await mkdir(path.dirname(this.filePath), { recursive: true });
     const temporary = `${this.filePath}.${process.pid}.tmp`;
     await writeFile(temporary, `${JSON.stringify({ events }, null, 2)}\n`, "utf8");
-    await rename(temporary, this.filePath);
+    await renameAtomic(temporary, this.filePath);
   }
 }

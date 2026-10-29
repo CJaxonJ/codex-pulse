@@ -61,7 +61,7 @@ async function boundedScan(cwd, options, timeoutMs) {
     const result = await execFileAsync(process.execPath, [
       fileURLToPath(new URL("./workspace-snapshot-worker.mjs", import.meta.url)),
       cwd, JSON.stringify(options),
-    ], { timeout: timeoutMs, killSignal: "SIGKILL", maxBuffer: 2 * 1024 * 1024 });
+    ], { timeout: timeoutMs, killSignal: "SIGKILL", maxBuffer: 2 * 1024 * 1024, windowsHide: true });
     return JSON.parse(result.stdout);
   } catch (error) {
     return { value: null, failure: { type: "workspace_fingerprint_failed", failures: [{
@@ -99,6 +99,7 @@ async function git(cwd, args) {
     maxBuffer: 20 * 1024 * 1024,
     timeout: GIT_TIMEOUT_MS,
     killSignal: "SIGKILL",
+    windowsHide: true,
   });
   return stdout;
 }

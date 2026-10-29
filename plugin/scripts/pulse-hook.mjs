@@ -19,7 +19,16 @@ async function writeJsonAtomic(filePath, value) {
   await mkdir(path.dirname(filePath), { recursive: true });
   const temporary = `${filePath}.${process.pid}.tmp`;
   await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-  await rename(temporary, filePath);
+  // Kept standalone: the plugin must also fail safely without a runtime
+  // installed. Match the bounded Windows sharing-violation retry contract.
+  const delays=[10,20,40,80,160,200];
+  for(let attempt=0;;attempt++){
+    try{await rename(temporary,filePath);break;}
+    catch(error){
+      if(process.platform!=="win32" || !["EPERM","EACCES","EBUSY"].includes(error.code) || attempt===delays.length)throw error;
+      await new Promise(resolve=>setTimeout(resolve,delays[attempt]));
+    }
+  }
 }
 
 async function admitRecoveryWake(dataDir, input, now, continuityStore) {
