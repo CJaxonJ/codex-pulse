@@ -26,7 +26,7 @@ jobs:
         shell: powershell
         run: ./scripts/build-native-windows.ps1
       - name: Native Windows ownership, process and PowerShell recovery tests
-        run: node --test test/platform-runtime.test.mjs test/windows-owned-process.test.mjs test/windows-hook.test.mjs test/protection-consent.test.mjs test/native-wakeup.test.mjs test/worktree-lock-process.test.mjs test/chat-continuity-full-chain.test.mjs
+        run: node --test test/platform-runtime.test.mjs test/windows-owned-process.test.mjs test/windows-watcher-instance.test.mjs test/windows-hook.test.mjs test/protection-consent.test.mjs test/native-wakeup.test.mjs test/worktree-lock-process.test.mjs test/chat-continuity-full-chain.test.mjs
       - name: Install pinned official CLI for isolated protocol acceptance
         if: matrix.node == 22
         run: npm install --global @openai/codex@0.163.0-alpha.11.1

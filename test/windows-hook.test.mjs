@@ -56,7 +56,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     const args=shell==="cmd"?["/d","/s","/c",WINDOWS_HOOK_COMMAND]:["-NoProfile","-NonInteractive","-Command",WINDOWS_HOOK_COMMAND];
     const child=execFile(command,args,{env,cwd:workspace,windowsHide:true,windowsVerbatimArguments:shell==="cmd",maxBuffer:2*1024*1024,timeout:25000});
     child.stdin.end(JSON.stringify({session_id:"windows-thread",turn_id:"paused-turn",cwd:workspace,...event}));
-    const output=await new Promise((resolve,reject)=>{let stdout="",stderr="";child.stdout.on("data",b=>stdout+=b);child.stderr.on("data",b=>stderr+=b);child.on("error",reject);child.on("close",code=>code===0?resolve(stdout):reject(Error(`${code}: ${stderr}`)));});
+    const output=await new Promise((resolve,reject)=>{let stdout="",stderr="";child.stdout.on("data",b=>stdout+=b);child.stderr.on("data",b=>stderr+=b);child.on("error",reject);child.on("close",(code,signal)=>code===0?resolve(stdout):reject(Error(`isolated ${shell} Hook exit=${code} signal=${signal}; stderr=${stderr}; stdout=${stdout}`)));});
     try {return output.trim()?JSON.parse(output):null;}
     catch {throw Error(`${shell} hook returned non-JSON output: ${output.slice(0,160)}`);}
   };

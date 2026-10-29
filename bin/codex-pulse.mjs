@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { pulseDataDirectory } from "../src/platform-runtime.mjs";
 import { ensureWindowsPrivateDirectory } from "../src/private-directory.mjs";
+import { acquireWatcherInstance } from "../src/watcher-instance.mjs";
 
 import { AppServerClient } from "../src/app-server-client.mjs";
 import { ChatContinuityController } from "../src/chat-continuity-controller.mjs";
@@ -491,6 +492,16 @@ async function manageCreditPolicy() {
 
 async function watch() {
   await ensureWindowsPrivateDirectory(dataDir);
+  const release = process.platform === "win32" ? await acquireWatcherInstance(dataDir) : null;
+  try {
+    await watchOwned();
+    // The long-running watcher keeps its process-owned record until actual OS
+    // exit. Releasing when interval setup returns would admit a second watcher.
+    if (once) await release?.();
+  } catch (error) { await release?.(); throw error; }
+}
+
+async function watchOwned() {
   const client = new AppServerClient();
   const preferencesStore = new PulsePreferencesStore(dataDir);
   const tiboClient = new TiboResetClient({
@@ -720,7 +731,8 @@ async function watch() {
       });
     });
   });
-  await poll("startup");
+  try { await poll("startup"); }
+  catch (error) { stopped = true; client.stop(); throw error; }
   if (once) {
     stopped = true;
     client.stop();
@@ -777,5 +789,5 @@ try {
   }
 } catch (error) {
   console.error(JSON.stringify({ ok: false, error: error.message }, null, 2));
-  process.exitCode = 1;
+  process.exitCode = error.code === "PULSE_WATCHER_BUSY" ? 73 : 1;
 }

@@ -47,7 +47,7 @@ for (const ending of ["stdin-eof", "bridge-killed"]) test(`actual Windows Job cl
     await exit;
     await until(() => !alive(tree.pid) && !alive(tree.descendant));
     assert(alive(unrelated.pid), "An unrelated user process must never be killed");
-  } finally { client.stop(); unrelated.kill(); if (tree) { for (const pid of [tree.pid, tree.descendant]) if (alive(pid)) process.kill(pid); } }
+  } finally { client.stop(); unrelated.kill(); }
 });
 
 test("killing the actual owning Node process cleans its connection tree but preserves its persistent notification", windows, async () => {
@@ -80,7 +80,14 @@ test("killing the actual owning Node process cleans its connection tree but pres
     await until(() => !alive(proof.noticePid));
   } finally {
     if (owner.exitCode == null) owner.kill();
-    if (proof?.ok) for (const pid of [proof.tree.pid, proof.tree.descendant, proof.bridgePid, proof.noticePid]) if (alive(pid)) process.kill(pid);
+    // Never kill a recorded PID: Windows can reuse it for a concurrent test.
+    // The bridge Job handles its own tree; dismiss only our UUID-marked UI.
+    if (proof?.noticePid && alive(proof.noticePid)) {
+      try {
+        const session = uiSession(proof.noticePid), ui = await inspectWindowsUI(session);
+        if (ui.content.join("\n").includes(proof.noticeToken)) await inspectWindowsUI(session, { click: "知道了" });
+      } catch { /* A gone UI is not permission to terminate another process. */ }
+    }
   }
 });
 
@@ -99,5 +106,5 @@ test("an initialization timeout really terminates the Windows connection process
     assert(alive(tree.pid) && alive(tree.child));
     await rejected;
     await until(() => !alive(tree.pid) && !alive(tree.child));
-  } finally { client.stop(); if (tree) for (const pid of [tree.pid, tree.child]) if (alive(pid)) process.kill(pid); }
+  } finally { client.stop(); }
 });
