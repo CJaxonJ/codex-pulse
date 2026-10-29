@@ -78,3 +78,32 @@ test("actual native Windows history and plan views read isolated CLI records wit
     finally { if (child.exitCode == null) child.kill(); }
   }
 });
+
+test("hidden native GUI must not acknowledge that a persistent notice was shown", windows, async () => {
+  const child = spawn(app, ["--notify"], { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+  let output = "", errors = "";
+  child.stdout.on("data", b => output += b); child.stderr.on("data", b => errors += b);
+  const closed = once(child, "exit");
+  try {
+    child.stdin.end(JSON.stringify({ title: "【测试】隐藏窗口不得假报成功", persistent: true, sound: false }));
+    assert.equal((await closed)[0], 1);
+    assert.equal(output, "");
+    assert.match(errors, /interface failed: IOException/);
+  } finally { if (child.exitCode == null) child.kill(); }
+});
+
+test("ordinary Windows system notice acknowledges a request, never a visible banner, and releases its native process", windows, async () => {
+  let child, closed;
+  try {
+    const result = await sendWindowsNotification({ title: "【测试】普通额度提醒", body: "只验证本机系统通知请求，不代表真实额度。", persistent: false, sound: false }, {
+      env: { ...process.env, CODEX_PULSE_NOTIFIER_APP: app, CODEX_PULSE_DISABLE_NOTIFICATIONS: "0" },
+      spawn: (...args) => { child = spawn(...args); closed = once(child, "exit"); return child; },
+    });
+    assert.equal(result.deliveryStatus, "notification_request_accepted");
+    let timer;
+    try {
+      const end = await Promise.race([closed, new Promise((_, reject) => { timer = setTimeout(() => reject(Error("The native system notice did not release its process")), 25000); })]);
+      assert.equal(end[0], 0);
+    } finally { clearTimeout(timer); }
+  } finally { if (child && child.exitCode == null) child.kill(); }
+});
