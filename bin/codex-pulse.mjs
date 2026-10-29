@@ -20,8 +20,8 @@ import {
 import {
   notificationForEvent,
   applyNotificationPreferences,
-  sendMacNotification,
 } from "../src/macos-notifier.mjs";
+import { sendNotification } from "../src/notifier.mjs";
 import { TiboResetClient } from "../src/tibo-client.mjs";
 import {
   configureXBearerToken,
@@ -135,7 +135,10 @@ async function deliverUserEvent(
   }
   let deliveryStatus = delivery.enabled ? "notification_request_accepted" : "muted_by_preferences";
   try {
-    if (delivery.enabled) await sendMacNotification({ ...notification, eventId: journalEntry?.id });
+    if (delivery.enabled) {
+      const result = await sendNotification({ ...notification, eventId: journalEntry?.id });
+      if (result?.deliveryStatus) deliveryStatus = result.deliveryStatus;
+    }
   } catch (error) {
     deliveryStatus = "failed";
     log("notification delivery failed", {
@@ -735,6 +738,7 @@ async function watch() {
 try {
   if (command === "status") await printStatus();
   else if (command === "activity") await printActivity();
+  else if (command === "history") console.log(JSON.stringify({ ok: true, events: await new UserEventJournal(dataDir).list() }));
   else if (command === "protection") await withClient(async (client) => {
     const consent = new ProtectionConsent({client,dataDir});
     const action=args[1] || 'status';
