@@ -2,11 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { cp, mkdtemp, mkdir, writeFile, readFile, symlink } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, writeFile, readFile, symlink, realpath, readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { ensureWindowsPrivateDirectory } from "../src/private-directory.mjs";
+import { windowsUIFixture } from "../scripts/test-support/windows-ui-fixture.mjs";
 
 const windows = { skip: process.platform !== "win32", timeout: 90000 };
 const shell = async (target, command) => JSON.parse((await promisify(execFile)("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; " + command], { env: { ...process.env, PULSE_ACL_TARGET: target }, encoding: "utf8", windowsHide: true, timeout: 20000 })).stdout.replace(/^\uFEFF/, ""));
@@ -65,4 +66,28 @@ test("Windows ACL guard rejects broad roots and junctions before altering either
 
 test("Windows ACL setup is an explicit no-op on other platforms", { skip: process.platform === "win32" }, async () => {
   assert.deepEqual(await ensureWindowsPrivateDirectory(os.tmpdir()), { ok: true, applicable: false });
+});
+
+test("8.3 aliases cannot bypass native or ACL broad-directory guards; only an isolated child TEMP is used", windows, async context => {
+  const f = await windowsUIFixture({ installed: true });
+  const location = path.join(f.root, "isolated temporary area"), sentinel = path.join(location, "keep.txt");
+  await mkdir(location); await writeFile(sentinel, "keep this isolated directory unchanged");
+  const target = await realpath(location);
+  const shortScript = `$ErrorActionPreference='Stop';[Console]::OutputEncoding=New-Object Text.UTF8Encoding($false);
+Add-Type -TypeDefinition 'using System;using System.Text;using System.Runtime.InteropServices;public static class ShortPathFixture{[DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)]public static extern uint GetShortPathNameW(string p,StringBuilder b,uint n);}';
+$b=New-Object Text.StringBuilder(32768);$n=[ShortPathFixture]::GetShortPathNameW($env:PULSE_ACL_TARGET,$b,$b.Capacity);if($n -eq 0 -or $n -ge $b.Capacity){throw 'Could not inspect the actual short path'};@{path=$b.ToString()}|ConvertTo-Json -Compress`;
+  const alias = (await shell(target, shortScript)).path;
+  if (alias.toLowerCase() === target.toLowerCase()) { context.skip("This filesystem has no 8.3 alias for the isolated directory; alias-specific behavior cannot be exercised"); return; }
+  const before = await acl(target), env = { ...f.env, TEMP: alias, TMP: alias, CODEX_PULSE_DATA_DIR: target, PULSE_BOUNDARY_TARGET: target };
+  const module = pathToFileURL(path.resolve(import.meta.dirname, "../src/private-directory.mjs")).href;
+  await assert.rejects(promisify(execFile)(process.execPath, ["--input-type=module", "-e", `import {ensureWindowsPrivateDirectory} from ${JSON.stringify(module)};await ensureWindowsPrivateDirectory(process.env.PULSE_BOUNDARY_TARGET);`], {
+    env, encoding: "utf8", windowsHide: true, timeout: 45000,
+  }), error => /Refusing a broad data directory/.test(error.stderr || ""));
+  assert.equal((await acl(target)).sddl, before.sddl, "Refusal must precede any ACL mutation");
+  await assert.rejects(promisify(execFile)(path.join(f.appRoot, "CodexPulse.exe"), ["--background"], {
+    env, encoding: "utf8", windowsHide: true, timeout: 20000,
+  }), error => error.code === 1 && /IOException/.test(error.stderr || ""));
+  assert.deepEqual(await readdir(target), ["keep.txt"], "Native refusal must precede creating a background guard or worker");
+  assert.equal(await readFile(sentinel, "utf8"), "keep this isolated directory unchanged");
+  assert.equal((await acl(target)).sddl, before.sddl);
 });

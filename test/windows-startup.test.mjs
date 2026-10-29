@@ -44,6 +44,10 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   const health = async () => { try { return JSON.parse(await readFile(statePath, "utf8")); } catch (e) { if (e.code === "ENOENT") return {}; throw e; } };
   try {
     const enabled = await f.control("enable"); assert.equal(enabled.enabled, true);
+    const originalDataSpelling = f.env.CODEX_PULSE_DATA_DIR;
+    f.env.CODEX_PULSE_DATA_DIR = await realpath(f.dataDir);
+    assert.equal((await f.control("status")).taskName, enabled.taskName, "Long/short spellings of one directory must refer to the same startup task");
+    f.env.CODEX_PULSE_DATA_DIR = originalDataSpelling;
     const definition = await f.scheduler("inspect");
     assert.equal(definition.runLevel, 0); assert.equal(definition.logonType, 3); assert.equal(definition.trigger, 9);
     // Windows may expand an 8.3 TEMP prefix in the loaded executable's base
@@ -51,7 +55,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     // bad Unicode must still fail realpath rather than being normalized away.
     assert.equal(await realpath(definition.action), await realpath(f.executable));
     assert.equal(await realpath(definition.workdir), await realpath(f.appRoot));
-    assert.equal(definition.arguments, `--startup-background "${f.dataDir}"`);
+    assert.equal(definition.arguments, `--startup-background "${await realpath(f.dataDir)}"`);
     assert.equal(definition.battery, false); assert.equal(definition.network, false);
     assert.equal(definition.limit, "PT0S"); assert.equal(definition.restart, "PT1M"); assert.equal(definition.restartCount, 3); assert.equal(definition.multiple, 2);
     assert(!/<Password>/i.test(definition.xml));
