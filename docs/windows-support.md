@@ -71,7 +71,7 @@ Windows 原生通知、原帖历史和续跑计划界面已实现，并在 [Wind
 
 下一段仍按顺序做用户级后台、自启与 ACL，然后安装升级回滚及卸载。后台设计须区分 watcher／App Server 与独立提醒窗口，不能为了清理子进程而误杀用户 Codex 或使常驻提醒随 watcher 重启消失。
 
-## 私有目录接线（待 Windows 实测）
+## 私有目录接线与真实 Windows 验收
 
 Windows watcher 启动前新增真实 DACL 检查：只允许当前 Windows 用户和 SYSTEM，覆盖已有文件并让新文件继承；设置失败则不启动后台，不把 chmod 当成 Windows 权限保障。它不改变所有者、SACL 或系统策略，也不会请求提升权限。
 
@@ -82,3 +82,13 @@ Windows watcher 启动前新增真实 DACL 检查：只允许当前 Windows 用�
 [首轮 ACL 工作流 40837768452](https://github.com/CJaxonJ/codex-pulse/actions/runs/40837768452) 失败在测试前置条件：尚未调用产品权限实现时，隔离文件未观测到预期的 Everyone 规则。链接／过宽目录拒绝、已有设置及授权窗口测试通过。后续修正仅修改 DACL 的测试准备，启用 PowerShell 严格失败输出，并打印隔离 ACL 状态以定位；不能把拒绝测试通过当作正向权限设置已经成功。另将 reparse 检查改为直接读取文件属性，补失效 junction 作为祖先的测试。
 
 后续 `a063cd0` 的真实日志进一步证明：测试的 `Get-Acl` 无法加载 runner 环境中的 `Microsoft.PowerShell.Security`。因此更正首轮所谓的“拒绝测试通过”：当时准备与读取没有严格报错，空 ACL 对比和接受任意拒绝可能假通过，不能作为边界证据。产品和测试改用 .NET Framework 文件 ACL API，不依赖该 PowerShell 模块；测试严格报错，且必须匹配 linked／broad 等实际拒绝原因。新增从 data/app/src 安装拓扑执行的正向验收，不能只测源码目录。
+
+最终实现 `c3e4c8c` 在 [Windows 工作流 40838790423](https://github.com/CJaxonJ/codex-pulse/actions/runs/40838790423) 全部通过：Node 20、22 各 269 项通过、2 项非当前平台用例跳过；20 项关键进程测试也分别全部通过。实际官方 CLI 授权／升级前检查继续成功。ACL 的旧文件收紧、已有内容保留、新文件继承、从 data/app/src 执行、重复执行、普通／失效 junction 及祖先路径拒绝，均在原生 Windows 文件系统上通过，不是 platform mock。
+
+对应 [macOS 门禁 40838790457](https://github.com/CJaxonJ/codex-pulse/actions/runs/40838790457)通过；本机完整回归 281 项通过、13 项 Windows 专属测试跳过。公开内容检查 194 文件无匹配项，仍提示旧历史作者邮箱，不改写历史。
+
+### 当前可续接检查点
+
+- 已完成并验证：设置与两类独立授权窗口、owned modal 定位、Windows 启动脚本升级前校验、Windows watcher 启动前的私有 ACL 检查。保留 macOS 安装与信任，没有使用真实卡或调用模型。
+- 尚未完成：Windows 后台／自启和真实后台替换、安装／失败回滚／卸载与依赖打包、真实 Windows Desktop 的任务执行及物理睡眠恢复。当前没有 Windows 发布包，不能宣布支持 Windows 已交付。
+- 下一步：先实现最小用户级后台，验证单实例、崩溃后清理及重启、退出时不误杀用户 Codex，再接登录自启和安装事务。不要再重复已经通过的窗口排查，也不要把 CI 的隔离 RPC 当真实 Desktop 恢复证据。
