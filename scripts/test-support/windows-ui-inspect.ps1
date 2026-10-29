@@ -28,8 +28,6 @@ foreach ($element in $all) {
         $content += $pattern.DocumentRange.GetText(-1)
     } elseif ($element.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
         $content += $pattern.Current.Value
-    } elseif ($element.TryGetCurrentPattern([Windows.Automation.LegacyIAccessiblePattern]::Pattern, [ref]$pattern)) {
-        if ($pattern.Current.Value) { $content += $pattern.Current.Value }
     }
 }
 if ($Screenshot) {
