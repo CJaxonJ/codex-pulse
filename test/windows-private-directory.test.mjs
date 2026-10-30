@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { cp, mkdtemp, mkdir, writeFile, readFile, symlink, realpath, readdir } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, writeFile, readFile, symlink, realpath, readdir, rm, rename } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -13,6 +13,53 @@ const windows = { skip: process.platform !== "win32", timeout: 90000 };
 const shell = async (target, command) => JSON.parse((await promisify(execFile)("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; " + command], { env: { ...process.env, PULSE_ACL_TARGET: target }, encoding: "utf8", windowsHide: true, timeout: 20000 })).stdout.replace(/^\uFEFF/, ""));
 const acl = target => shell(target, "$directory=([IO.File]::GetAttributes($env:PULSE_ACL_TARGET) -band [IO.FileAttributes]::Directory) -ne 0; $a=if($directory){[IO.Directory]::GetAccessControl($env:PULSE_ACL_TARGET)}else{[IO.File]::GetAccessControl($env:PULSE_ACL_TARGET)}; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; @{protected=$a.AreAccessRulesProtected; sddl=$a.Sddl; expected=@($sid,'S-1-5-18'); rules=@($a.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]) | ForEach-Object {$_.IdentityReference.Value})} | ConvertTo-Json -Compress");
 const rejectedFor = reason => error => /无法确认/.test(error.message) && reason.test(error.cause?.stderr || "");
+
+for (const change of ["vanished-descendants", "late-junction", "missing-root"]) test(`actual Windows ACL scan handles ${change} without ignoring unsafe state`, windows, async () => {
+  const f = await windowsUIFixture({ installed: false });
+  const file = path.join(f.dataDir, "ephemeral.tmp"), directory = path.join(f.dataDir, "changing-lock"), checkpoint = path.join(f.dataDir, "checkpoint.json");
+  const outside = path.join(f.root, "outside");
+  await mkdir(directory); await writeFile(path.join(directory, "owner.json"), "temporary");
+  await writeFile(file, "temporary"); await writeFile(checkpoint, "preserve existing goal");
+  await mkdir(outside); await writeFile(path.join(outside, "keep.txt"), "external data");
+  const externalBefore = (await acl(outside)).sddl;
+  const marker = path.join(f.root, "acl-scan-complete"), release = path.join(f.root, "release-acl");
+  const script = path.join(f.appRoot, "src", "private-directory-windows.ps1"), source = await readFile(script, "utf8"), needle = "$phase = 'acl'";
+  assert.equal(source.split(needle).length, 2);
+  const literal = text => "'" + text.replaceAll("'", "''") + "'";
+  await writeFile(script, source.replace(needle, `${needle}
+[IO.File]::WriteAllText(${literal(marker)},'ready')
+$pause=[Diagnostics.Stopwatch]::StartNew()
+while(-not [IO.File]::Exists(${literal(release)})){if($pause.ElapsedMilliseconds -gt 18000){throw 'Isolated scan barrier expired'};Start-Sleep -Milliseconds 20}
+`));
+  const checking = f.cli(["background-prepare"]); checking.catch(() => {});
+  try {
+    const deadline = Date.now() + 15000;
+    while (true) {
+      try { await readFile(marker); break; } catch (error) { if (error.code !== "ENOENT") throw error; }
+      if (Date.now() > deadline) throw Error("Actual ACL scan did not reach the deterministic barrier");
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    if (change === "vanished-descendants") {
+      await rm(file); await rm(directory, { recursive: true });
+    } else if (change === "late-junction") {
+      await rename(directory, path.join(f.root, "retired-lock"));
+      await symlink(outside, directory, "junction");
+    } else await rm(f.dataDir, { recursive: true });
+    await writeFile(release, "continue");
+    if (change === "vanished-descendants") {
+      const result = await checking; assert.equal(result.ok, true); assert(result.vanished >= 2);
+      assert.equal(await readFile(checkpoint, "utf8"), "preserve existing goal");
+      for (const entry of [f.dataDir, checkpoint]) {
+        const actual = await acl(entry); assert.equal(actual.protected, true); assert.deepEqual(actual.rules.sort(), actual.expected.sort());
+      }
+    } else {
+      await assert.rejects(checking, error => /无法确认/.test(error.stderr || ""));
+      if (change === "missing-root") await assert.rejects(readdir(f.dataDir), { code: "ENOENT" });
+    }
+    assert.equal((await acl(outside)).sddl, externalBefore);
+    assert.equal(await readFile(path.join(outside, "keep.txt"), "utf8"), "external data");
+  } finally { await writeFile(release, "cleanup"); await checking.catch(() => {}); }
+});
 
 test("Windows data ACL removes broad existing access, protects existing files and future children, and is repeatable", windows, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "pulse 私有 ACL-"));

@@ -15,7 +15,7 @@ test("native stop during watcher owner publication finishes safely without an ow
   const f = await windowsUIFixture({ installed: true });
   await f.cli(["background-prepare"]);
   const modulePath = path.join(f.appRoot, "src", "worktree-lock-manager.mjs");
-  const original = await readFile(modulePath, "utf8"), needle = "await mkdir(lockDir);";
+  const original = await readFile(modulePath, "utf8"), needle = "await mkdirExclusive(lockDir);";
   assert.equal(original.split(needle).length, 2);
   const marker = path.join(f.root, "publishing-watcher.json");
   await writeFile(modulePath, original.replace(needle, `${needle}

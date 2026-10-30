@@ -9,6 +9,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
+import { mkdirExclusive } from "./atomic-file.mjs";
 import { currentWindowsProcessIdentity, readWindowsProcessIdentity } from "./windows-process-bridge.mjs";
 
 const INCOMPLETE_LOCK_GRACE_MS = 30_000;
@@ -71,7 +72,7 @@ export class WorktreeLockManager {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const token = randomUUID();
       try {
-        await mkdir(lockDir);
+        await mkdirExclusive(lockDir);
         const handle = {
           key,
           cwd: canonicalCwd,

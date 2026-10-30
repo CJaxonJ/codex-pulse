@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { renameAtomic, writeJsonSnapshotAtomic } from "../src/atomic-file.mjs";
+import { mkdirExclusive, renameAtomic, writeJsonSnapshotAtomic } from "../src/atomic-file.mjs";
 import { mkdtemp, mkdir, readdir, writeFile, readFile, rename } from "node:fs/promises";
 import { spawn, fork } from "node:child_process";
 import { once } from "node:events";
@@ -8,6 +8,18 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import os from "node:os";
 
+test("exclusive Windows lock mkdir retries delete-pending denial without claiming an existing lock", async () => {
+  const calls = [], waits = [];
+  await mkdirExclusive("exact-owned-lock", { platform: "win32", create: async directory => {
+    calls.push(directory); if (calls.length < 3) throw Object.assign(Error("delete pending"), { code: "EPERM" });
+  }, sleep: async ms => waits.push(ms) });
+  assert.deepEqual(calls, ["exact-owned-lock", "exact-owned-lock", "exact-owned-lock"]); assert.deepEqual(waits, [10, 20]);
+  for (const [platform, code, expectedCalls] of [["win32", "EACCES", 7], ["win32", "EEXIST", 1], ["win32", "ENOENT", 1], ["darwin", "EPERM", 1]]) {
+    let count = 0;
+    await assert.rejects(mkdirExclusive("lock", { platform, create: async () => { count++; throw Object.assign(Error(code), { code }); }, sleep: async () => {} }), { code });
+    assert.equal(count, expectedCalls);
+  }
+});
 test("Windows sharing violations retry the same paths with a bounded budget, without deleting the destination",async()=>{
   const calls=[],waits=[];
   await renameAtomic("prepared.tmp","current.json",{platform:"win32",move:async(...args)=>{

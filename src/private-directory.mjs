@@ -17,6 +17,8 @@ export async function ensureWindowsPrivateDirectory(directory) {
     return value;
   } catch (cause) {
     // Raw PowerShell errors can contain private local paths.
-    throw new Error("无法确认 Codex Pulse 数据目录的私有权限，后台尚未启动。未扩大权限，请检查目录位置或重新安装。", { cause });
+    const diagnostic = /PULSE_ACL_FAILURE:(boundary|scan|acl):([A-Za-z0-9]{1,80}):([A-F0-9]{8})/.exec(cause.stderr || "");
+    const detail = diagnostic ? `（${diagnostic[1]}:${diagnostic[2]}:${diagnostic[3]}）` : "";
+    throw new Error("无法确认 Codex Pulse 数据目录的私有权限，后台尚未启动。未扩大权限，请检查目录位置或重新安装。" + detail, { cause });
   }
 }

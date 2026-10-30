@@ -2,6 +2,20 @@ import { mkdir, open, rename, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 
+// A deleted directory can remain delete-pending until its final Windows
+// handle closes. Retry exclusive mkdir, never reuse an existing directory or
+// interpret a permanent permission denial as having acquired the lock.
+export async function mkdirExclusive(directory, { platform = process.platform, create = mkdir,
+  retryDelays = [10,20,40,80,160,200], sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try { return await create(directory); }
+    catch (error) {
+      if (platform !== "win32" || !["EPERM", "EACCES", "EBUSY"].includes(error.code) || attempt === retryDelays.length) throw error;
+      await sleep(retryDelays[attempt]);
+    }
+  }
+}
+
 // Antivirus/indexers can temporarily deny replacement on Windows. Keep the
 // original destination intact; retry the same prepared file, never unlink it.
 export async function renameAtomic(source,destination,{platform=process.platform,move=rename,

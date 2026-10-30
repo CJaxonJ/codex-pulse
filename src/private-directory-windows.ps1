@@ -1,6 +1,8 @@
 param([Parameter(Mandatory=$true)][string]$Directory)
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
+$phase = 'boundary'
+try {
 if ($Directory -notmatch '^[A-Za-z]:[\\/]') { throw 'A local absolute data directory is required.' }
 $fullTarget = [IO.Path]::GetFullPath($Directory)
 $target = $fullTarget.TrimEnd('\')
@@ -30,28 +32,45 @@ function Assert-NotLink([string]$path) {
     catch [IO.DirectoryNotFoundException] { return }
     if (($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Refusing a linked data directory or entry.' }
 }
+function Test-Vanished([string]$path) {
+    try { $null = [IO.File]::GetAttributes($path); return $false }
+    catch [IO.FileNotFoundException] { return $true }
+    catch [IO.DirectoryNotFoundException] { return $true }
+    # An access denial is NOT evidence that a file disappeared.
+}
 $cursor = $target
 while ($cursor) { Assert-NotLink $cursor; $cursor = Split-Path -Parent $cursor }
 # Inspect the full existing tree before any ACL mutation; do not use -Recurse,
 # whose junction traversal behavior differs between PowerShell versions.
 $entries = New-Object 'Collections.Generic.List[IO.FileSystemInfo]'
+$phase = 'scan'
 $pending = New-Object 'Collections.Generic.Queue[string]'
 if (Test-Path -LiteralPath $target) { $pending.Enqueue($target) }
 while ($pending.Count -gt 0) {
-    $path = $pending.Dequeue(); Assert-NotLink $path
-    $directoryInfo = Get-Item -LiteralPath $path -Force
-    if (-not $directoryInfo.PSIsContainer) { throw 'Data location must be a directory.' }
-    $entries.Add($directoryInfo)
-    foreach ($child in (Get-ChildItem -LiteralPath $path -Force)) {
-        Assert-NotLink $child.FullName
-        if ($child.PSIsContainer) { $pending.Enqueue($child.FullName) } else { $entries.Add($child) }
-        if ($entries.Count + $pending.Count -gt 20000) { throw 'Data tree is too large for a bounded ACL update.' }
+    $path = $pending.Dequeue()
+    try {
+        Assert-NotLink $path
+        if (([IO.File]::GetAttributes($path) -band [IO.FileAttributes]::Directory) -eq 0) { throw 'Data location must be a directory.' }
+        $directoryInfo = New-Object IO.DirectoryInfo($path)
+        $entries.Add($directoryInfo)
+        foreach ($child in $directoryInfo.GetFileSystemInfos()) {
+            Assert-NotLink $child.FullName
+            if ($child -is [IO.DirectoryInfo]) { $pending.Enqueue($child.FullName) } else { $entries.Add($child) }
+            if ($entries.Count + $pending.Count -gt 20000) { throw 'Data tree is too large for a bounded ACL update.' }
+        }
+    } catch {
+        if ($path -ine $target -and (Test-Vanished $path)) { continue }
+        throw
     }
 }
 if ($entries.Count -eq 0) { $entries.Add([IO.Directory]::CreateDirectory($target)) }
 $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
 $system = New-Object Security.Principal.SecurityIdentifier('S-1-5-18')
+$phase = 'acl'
+$secured = 0
+$vanished = 0
 foreach ($item in $entries) {
+    try {
     Assert-NotLink $item.FullName
     $isDirectory = $item -is [IO.DirectoryInfo]
     $security = if ($isDirectory) { New-Object Security.AccessControl.DirectorySecurity } else { New-Object Security.AccessControl.FileSecurity }
@@ -74,5 +93,18 @@ foreach ($item in $entries) {
         $valid = @($rules | Where-Object { $_.IdentityReference -eq $identity -and $_.AccessControlType -eq 'Allow' -and $_.FileSystemRights -eq [Security.AccessControl.FileSystemRights]::FullControl })
         if ($valid.Count -ne 1) { throw 'Private access rules were not persisted.' }
     }
+    $secured++
+    } catch {
+        # Live watcher snapshots/lock directories can be removed after the
+        # scan. Skip only confirmed missing descendants, never the root,
+        # existing files, reparse points, permission denials or failed readback.
+        if ($item.FullName -ine $target -and (Test-Vanished $item.FullName)) { $vanished++; continue }
+        throw
+    }
 }
-@{ok=$true; applicable=$true; entries=$entries.Count} | ConvertTo-Json -Compress
+@{ok=$true; applicable=$true; entries=$secured; vanished=$vanished} | ConvertTo-Json -Compress
+} catch {
+    $failure = $_.Exception.GetBaseException()
+    [Console]::Error.WriteLine('PULSE_ACL_FAILURE:' + $phase + ':' + $failure.GetType().Name + ':' + $failure.HResult.ToString('X8'))
+    throw
+}

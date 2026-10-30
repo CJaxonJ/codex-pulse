@@ -62,6 +62,20 @@ test("two CLI processes serialize settings merges without invoking Codex", async
   assert.equal(preferences.soundEnabled, false); assert.equal(preferences.lowQuotaPercent, 40);
 });
 
+test("Windows repeated real CLI contention preserves both settings and existing revocation", { skip: process.platform !== "win32", timeout: 30000 }, async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "pulse-settings-windows-contention-")), store = new PulsePreferencesStore(dir);
+  await store.set({ autoRedeem: { enabled: false } });
+  const run = patch => promisify(execFile)(process.execPath, [path.resolve("bin/codex-pulse.mjs"), "settings", "--update", JSON.stringify(patch)],
+    { env: { ...process.env, CODEX_PULSE_DATA_DIR: dir, CODEX_BINARY: "missing-must-not-call-codex.exe" }, windowsHide: true, timeout: 10000 });
+  for (let round = 0; round < 12; round++) {
+    const soundEnabled = round % 2 === 0, lowQuotaPercent = 30 + round;
+    await Promise.all([run({ soundEnabled }), run({ lowQuotaPercent })]);
+    const result = await store.get();
+    assert.equal(result.soundEnabled, soundEnabled); assert.equal(result.lowQuotaPercent, lowQuotaPercent);
+    assert.equal(result.autoRedeem.enabled, false);
+  }
+});
+
 test("damaged optional settings fall back to safe defaults", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "pulse-invalid-settings-"));
   const store = new PulsePreferencesStore(dir);

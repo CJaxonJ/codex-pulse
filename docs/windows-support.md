@@ -2,7 +2,17 @@
 
 状态：开发中，**尚未支持对外安装，不是已发布的 Windows 版**。目标是原生 Windows 上的完整额度监控、通知、用户本人保护授权、暂停与恢复、安装升级及卸载，不以 WSL 或只跑 CLI 代替。
 
-## 最新续接点（2026-10-30，安装入口与插件撤销待 Windows 验收）
+## 最新续接点（2026-10-30，真实安装入口通过，目录竞态修正待 Windows 验收）
+
+`561b394` 的 [Windows 门禁 40994549205](https://github.com/CJaxonJ/codex-pulse/actions/runs/40994549205) 已读回最终日志。Node 22 的真实安装入口通过首装、复装、安装前失败保持原状态、激活后撤销插件／系统任务／runtime；使用实际固定版官方 CLI 和 Task Scheduler，但账号 RPC 为隔离对端，不是 GUI 安装包、真实模型或物理睡眠验收。官方插件和授权协议步骤也通过。
+
+整轮仍失败：Node 20 关键组合 102 通过、1 失败、1 跳过，失败于事务开始前的私有目录权限检查；全量 319 通过、3 跳过。Node 22 关键组合 103 通过、1 跳过，全量 318 通过、1 失败、3 跳过，失败于两个实际设置进程争用锁目录时的 EPERM。权限检查的旧日志只有通用报错，不能断言其唯一根因。对应 [macOS 门禁 40994549167](https://github.com/CJaxonJ/codex-pulse/actions/runs/40994549167) 成功。
+
+本轮增加实际 Windows 确定性屏障测试：扫描后删除临时子文件／锁目录应安全通过；扫描后换成 junction、删除根目录仍拒绝，外部文件和 ACL 不变。仅跳过确认已消失的子条目，不忽略权限拒绝、链接、根目录或验证失败；报错增加不含私有路径的阶段／异常类型／错误码。另为 Windows 的独占 mkdir 增加短暂共享冲突的有界重试，EEXIST 继续走原归属校验，永久拒绝仍失败；新增 12 轮真实双 CLI 设置争用验证。依据：[Windows 删除目录在最后一个句柄关闭前可能仍处于待删除状态](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-removedirectoryw)、[.NET ACL 写入错误边界](https://learn.microsoft.com/en-us/dotnet/api/system.io.directoryinfo.setaccesscontrol?view=netframework-4.8.1)。这覆盖已观察风险，不用推测替代下一轮 Windows 日志。
+
+修改后本机完整回归 307 通过、43 个 Windows 专属跳过、0 失败。真实 Windows 新门禁尚待结果；卸载、可分发安装包及真实桌面恢复仍未完成。用户插入的 macOS 安装警告说明已单独保存在 `codex/macos-gatekeeper-install` 的 `8e073eb`，未混入 Windows 分支，也未改真实安装。
+
+### 此前的调查与验收记录
 
 `95860fb` 的 [Windows 门禁 40884196374](https://github.com/CJaxonJ/codex-pulse/actions/runs/40884196374) 已最终失败：Node 22 全部成功；Node 20 的关键组合失败在已有的 preparing-host 停止用例，串行全量成功。两组全量各 305 通过、2 跳过；新增的真实安装切换／失败回滚、原任务和上下文恢复、移动确认丢失两项原生测试在关键组合及全量中均通过。但这不是用户安装入口／完整卸载已完成。[对应 macOS 门禁 40884196335](https://github.com/CJaxonJ/codex-pulse/actions/runs/40884196335)成功。
 
