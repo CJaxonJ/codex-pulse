@@ -2,7 +2,7 @@
 
 状态：开发中，**尚未支持对外安装，不是已发布的 Windows 版**。目标是原生 Windows 上的完整额度监控、通知、用户本人保护授权、暂停与恢复、安装升级及卸载，不以 WSL 或只跑 CLI 代替。
 
-## 最新续接点（2026-10-30，启动中停止修正待 Windows 验收）
+## 最新续接点（2026-10-30，安装入口与插件撤销待 Windows 验收）
 
 `95860fb` 的 [Windows 门禁 40884196374](https://github.com/CJaxonJ/codex-pulse/actions/runs/40884196374) 已最终失败：Node 22 全部成功；Node 20 的关键组合失败在已有的 preparing-host 停止用例，串行全量成功。两组全量各 305 通过、2 跳过；新增的真实安装切换／失败回滚、原任务和上下文恢复、移动确认丢失两项原生测试在关键组合及全量中均通过。但这不是用户安装入口／完整卸载已完成。[对应 macOS 门禁 40884196335](https://github.com/CJaxonJ/codex-pulse/actions/runs/40884196335)成功。
 
@@ -11,6 +11,12 @@
 同时收紧 background-info：guard 被占用还须核对宿主创建时间、存活进程和当前 generation 事件，外部文件占用不能冒充需要恢复的运行中后台。提交后清理若遇新增文件或文件占用，保留备份／committed journal 并返回清理待处理，不将已验证上线的新 runtime 误报为安装失败。新增离线回归及真实文件占用场景；清理重试入口仍待接线。
 
 下一步读取本次修正的 Windows 最终日志，再接实际安装前置检查、官方插件接口的安装／失败撤销、安装入口和卸载。没有 Windows 发布包；真实 Desktop／模型和物理睡眠验收依然未完成。
+
+`485fed8` 的 [Windows 门禁 40991418150](https://github.com/CJaxonJ/codex-pulse/actions/runs/40991418150) 已读取完整日志：两组关键组合各 102 通过、1 失败、1 跳过；全量各 310 通过、1 失败、2 跳过。唯一失败是新增测试在停止后误读了 `data/worktree-locks`，实际 watcher 使用 `data/watcher-instance/worktree-locks`。此前的实际 stop 返回成功、宿主和 watcher 已退出断言都通过；旧 preparing-stop 用例也都通过。修正测试为停止前核实真实 marker 对应的空锁目录、停止后核实该目录消失及真实父目录为空，不放宽不存在／锁残留的判断。新一轮结果回读前仍不算整轮成功。
+
+新增插件操作通过官方 list/add/remove 及 marketplace 接口：兼容插件仅复用；本次新装失败仅撤销本操作、来源和内容均吻合的插件及市场；撤销失败保留 runtime，避免悬空 Hook。实际官方 CLI 的 macOS 隔离验收已覆盖首装／复用／撤销、添加确认丢失、用户原设置保留、不写 Hook 信任；不是 Windows 证明。Windows 工作流新增同一官方接口验收。另增加已解压捆绑包的安装代码入口：源包与运行环境检查、完整暂存、先读取订阅额度／预检插件再停止旧版本，接到真实事务及插件回滚。尚不是用户可下载的 GUI 安装包；入口、完整卸载和依赖发布仍需独立门禁。
+
+接口依据：[官方 CLI reference](https://learn.chatgpt.com/docs/cli/reference) 的 plugin list/add/remove、marketplace add/list/remove；未手写删除或覆盖 Codex config 与信任哈希。
 
 ## 必须完成的验收
 

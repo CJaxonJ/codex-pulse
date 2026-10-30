@@ -40,6 +40,12 @@ jobs:
       - name: Real Codex Windows hook review protocol (isolated config, no model)
         if: matrix.node == 22
         run: node scripts/e2e-windows-codex-hooks.mjs
+      - name: Official plugin installation and verified rollback (isolated config, no account)
+        if: matrix.node == 22
+        run: node scripts/e2e-plugin-operation.mjs
+      - name: Bundled Windows installer entry and actual plugin/task rollback
+        if: matrix.node == 22
+        run: node scripts/e2e-windows-installer.mjs
       - name: Full cross-platform regression (no hosted model or credentials)
         if: always()
         # Native UI files share one desktop. Serialize files; tests that prove

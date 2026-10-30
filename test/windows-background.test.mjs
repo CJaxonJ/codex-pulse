@@ -31,12 +31,14 @@ test("native stop during watcher owner publication finishes safely without an ow
       try { return JSON.parse(await readFile(marker, "utf8")); } catch { return null; }
     });
     assert(alive(pending.pid));
+    assert.deepEqual(await readdir(pending.lockDir), [], "The actual watcher lock must exist before its owner record is published");
     await assert.rejects(readFile(path.join(pending.lockDir, "owner.json")), { code: "ENOENT" });
     stop = f.start("--stop-background");
     assert.equal((await stop.closed)[0], 0, stop.diagnostic());
     assert.equal((await host.closed)[0], 0, host.diagnostic());
     assert.equal(alive(pending.pid), false);
-    assert.deepEqual(await readdir(path.join(f.dataDir, "worktree-locks")), []);
+    await assert.rejects(readdir(pending.lockDir), { code: "ENOENT" });
+    assert.deepEqual(await readdir(path.dirname(pending.lockDir)), []);
     await assert.rejects(readFile(path.join(f.dataDir, "state.json")), { code: "ENOENT" });
     assert.equal((await f.cli(["background-probe"])).watcherStopped, true);
   } finally {
