@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile, readdir, rename, cp } from "node:fs/promises";
+import { mkdir, readFile, writeFile, readdir, rename, cp, symlink } from "node:fs/promises";
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
@@ -40,6 +40,9 @@ test("native installation lease excludes background, CLI and another installer w
     // already implements installer orchestration or plugin/config rollback.
     await lease.move("app", failed); await lease.move(backup, "app");
     assert.equal(await payload(f, "app"), "old runtime"); assert.equal(await payload(f, failed), "new runtime");
+    await assert.rejects(lease.removeRetired("app"));
+    await assert.rejects(lease.removeRetired("../outside"));
+    await lease.removeRetired(failed); assert(!(await readdir(f.dataDir)).includes(failed));
     assert.equal(await readFile(path.join(f.dataDir, "user-checkpoint.txt"), "utf8"), "keep original goal and plan");
     assert.deepEqual(await f.queueLog(), []);
   } finally { await lease.release(); if (background?.child.exitCode == null) background.child.kill(); }
@@ -73,7 +76,7 @@ test("killing the actual lease helper forbids further moves and releases its OS 
   const backup = ownedName("backup"); await seed(f, "app", "preserve old runtime");
   const lease = await openWindowsInstallationLease(options(f));
   lease.child.kill(); await lease.closed;
-  await assert.rejects(lease.move("app", backup)); await assert.rejects(lease.release());
+  await assert.rejects(lease.move("app", backup)); await assert.rejects(lease.removeRetired(ownedName("failed"))); await assert.rejects(lease.release());
   assert.equal(await payload(f, "app"), "preserve old runtime");
   const next = await openWindowsInstallationLease(options(f));
   const outside = path.join(f.root, "outside"); await mkdir(outside); await writeFile(path.join(outside, "keep.txt"), "not product data");
@@ -85,6 +88,44 @@ test("killing the actual lease helper forbids further moves and releases its OS 
   assert.equal(await payload(f, "app"), "preserve old runtime");
   assert(!(await readdir(f.dataDir)).includes(backup));
   const recovered = await openWindowsInstallationLease(options(f)); await recovered.release();
+});
+
+test("actual native retired cleanup rejects a junction before any deletion and cannot delete the active app", windows, async () => {
+  const f = await windowsUIFixture(); await f.cli(["background-prepare"]);
+  const retired = ownedName("failed"), outside = path.join(f.root, "outside");
+  await seed(f, retired, "keep retired evidence"); await seed(f, "app", "keep active app");
+  await mkdir(outside); await writeFile(path.join(outside, "keep.txt"), "external file");
+  await symlink(outside, path.join(f.dataDir, retired, "junction"), "junction");
+  const lease = await openWindowsInstallationLease(options(f));
+  try {
+    await assert.rejects(lease.removeRetired(retired), /维护锁/);
+    assert.equal(await payload(f, retired), "keep retired evidence");
+    assert.equal(await readFile(path.join(outside, "keep.txt"), "utf8"), "external file");
+    assert.equal(await payload(f, "app"), "keep active app");
+    // Bypass JS validation to exercise the actual native rejection too.
+    lease.child.stdin.write(JSON.stringify({ id: 999, op: "remove-retired", name: "app" }) + "\n");
+    await lease.closed; await assert.rejects(lease.release());
+    assert.equal(await payload(f, "app"), "keep active app");
+  } finally { await lease.release().catch(() => {}); }
+});
+
+test("actual Windows open-file denial keeps retired data, then cleanup succeeds after that exact handle closes", windows, async () => {
+  const f = await windowsUIFixture(); await f.cli(["background-prepare"]);
+  const retired = ownedName("failed"); await seed(f, retired, "retired file still mapped");
+  const holder = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+    "$ErrorActionPreference='Stop';$f=[IO.File]::Open($env:PULSE_LOCK_FILE,'Open','Read','Read');try{[Console]::Out.WriteLine('held');[Console]::Out.Flush();[Console]::ReadLine()|Out-Null}finally{$f.Dispose()}"],
+  { env: { ...f.env, PULSE_LOCK_FILE: path.join(f.dataDir, retired, "payload.txt") }, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+  const closed = once(holder, "exit"); let ready = "", diagnostic = "";
+  holder.stdout.on("data", chunk => ready += chunk); holder.stderr.on("data", chunk => diagnostic += chunk);
+  let lease;
+  try {
+    await until(() => { if (holder.exitCode != null) throw Error(diagnostic); return ready.includes("held"); });
+    lease = await openWindowsInstallationLease(options(f));
+    await assert.rejects(lease.removeRetired(retired), /维护锁/);
+    assert.equal(await payload(f, retired), "retired file still mapped");
+    holder.stdin.end("release\n"); assert.equal((await closed)[0], 0, diagnostic);
+    await lease.removeRetired(retired); assert(!(await readdir(f.dataDir)).includes(retired));
+  } finally { if (holder.exitCode == null) { holder.kill(); await closed; } await lease?.release(); }
 });
 
 test("installation helper running inside the installed runtime refuses to move its own executable", windows, async () => {

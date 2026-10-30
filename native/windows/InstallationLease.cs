@@ -20,6 +20,15 @@ namespace CodexPulse {
             catch (FileNotFoundException) { } catch (DirectoryNotFoundException) { }
             return file;
         }
+        private static void InspectTree(string root) {
+            Queue<string> pending = new Queue<string>(); pending.Enqueue(root); int count = 0;
+            while (pending.Count > 0) {
+                string entry = pending.Dequeue();
+                FileAttributes attributes = File.GetAttributes(entry);
+                if ((attributes & FileAttributes.ReparsePoint) != 0 || ++count > 5000) throw new InvalidDataException();
+                if ((attributes & FileAttributes.Directory) != 0) foreach (string child in Directory.GetFileSystemEntries(entry)) pending.Enqueue(child);
+            }
+        }
         internal static int Run(bool installation) {
             string data = BackgroundContext.DataDirectory();
             if (installation) {
@@ -42,17 +51,26 @@ namespace CodexPulse {
                         if (!installation || line.Length > 8192) throw new InvalidDataException();
                         Dictionary<string, object> request = Program.Json.DeserializeObject(line) as Dictionary<string, object>;
                         object raw;
-                        if (request == null || !request.TryGetValue("id", out raw) || !(raw is int) || (int)raw <= lastId || request.Count != 4) throw new InvalidDataException();
+                        if (request == null || !request.TryGetValue("id", out raw) || !(raw is int) || (int)raw <= lastId) throw new InvalidDataException();
                         int id = (int)raw; lastId = id;
                         try {
-                            if (Program.StringValue(request, "op") != "move") throw new InvalidDataException();
-                            string source = RuntimePath(data, Program.StringValue(request, "from"));
-                            string target = RuntimePath(data, Program.StringValue(request, "to"));
                             BackgroundContext.AssertQuiescent(data);
                             // Mutate while THIS process holds the kernel lease.
                             // Never ask the Node owner to rename after an ack:
                             // it could continue after a killed lease helper.
-                            Directory.Move(source, target);
+                            string operation = Program.StringValue(request, "op");
+                            if (operation == "move" && request.Count == 4) {
+                                string source = RuntimePath(data, Program.StringValue(request, "from"));
+                                string target = RuntimePath(data, Program.StringValue(request, "to"));
+                                Directory.Move(source, target);
+                            } else if (operation == "remove-retired" && request.Count == 3) {
+                                string name = Program.StringValue(request, "name");
+                                if (!Regex.IsMatch(name, @"^app-failed-[a-f0-9]{32}$")) throw new InvalidDataException();
+                                string retired = RuntimePath(data, name); InspectTree(retired);
+                                // Only a pre-verified retired runtime. No root,
+                                // active app, checkpoint or arbitrary path.
+                                Directory.Delete(retired, true);
+                            } else throw new InvalidDataException();
                             Console.Out.WriteLine("{\"id\":" + id + ",\"ok\":true}");
                         } catch (Exception error) {
                             Console.Out.WriteLine(Program.Json.Serialize(new Dictionary<string, object> { { "id", id }, { "ok", false }, { "error", error.GetType().Name } }));

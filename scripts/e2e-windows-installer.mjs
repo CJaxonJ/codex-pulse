@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cp, readFile, writeFile, readdir } from "node:fs/promises";
+import { cp, readFile, writeFile, readdir, rm } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
@@ -33,13 +33,14 @@ async function fixture({ failAfterActivation = false } = {}) {
     assert.equal(source.split(needle).length, 2);
     await writeFile(serviceFile, source.replace(needle, needle + '\n    throw Error("Deliberate isolated failure after real activation");'));
   }
-  const run = async env => {
+  const runEntry = async (entry, env) => {
     try {
-      const result = await execute(path.join(f.appRoot, "runtime", "node.exe"), [path.join(f.appRoot, "scripts", "install-windows.mjs")],
+      const result = await execute(path.join(f.appRoot, "runtime", "node.exe"), [path.join(f.appRoot, "scripts", entry)],
         { env: env || f.env, encoding: "utf8", windowsHide: true, timeout: 180000, maxBuffer: 2 * 1024 ** 2 });
       return { code: 0, value: JSON.parse(result.stdout), stderr: result.stderr };
     } catch (error) { return { code: error.code, stdout: error.stdout, stderr: error.stderr }; }
   };
+  const run = env => runEntry("install-windows.mjs", env), uninstall = () => runEntry("uninstall-windows.mjs");
   const cli = async args => {
     assert.equal(args[0], "plugin");
     const call = ownedWindowsProcessInvocation(codexInvocation(official, args));
@@ -53,7 +54,7 @@ async function fixture({ failAfterActivation = false } = {}) {
     if ((await cli(["plugin", "list", "--json"])).installed.some(p => p.pluginId === pulsePluginId)) await cli(["plugin", "remove", pulsePluginId, "--json"]);
     if ((await cli(["plugin", "marketplace", "list", "--json"])).marketplaces.some(p => p.name === "codex-pulse-local")) await cli(["plugin", "marketplace", "remove", "codex-pulse-local", "--json"]);
   };
-  return { ...f, run, cli, service, cleanup };
+  return { ...f, run, uninstall, cli, service, cleanup };
 }
 
 async function verify(f, body) {
@@ -77,6 +78,7 @@ await verify(failed, async () => {
 
 const f = await fixture();
 await verify(f, async () => {
+  await writeFile(path.join(f.env.CODEX_HOME, "config.toml"), '# unrelated user setting\nmodel = "user-selected-model"\n');
   const installed = await f.run(); assert.equal(installed.code, 0, installed.stderr); assert.equal(installed.value.ok, true);
   const original = await f.service.capture(true);
   assert.deepEqual(original, { startup: { installed: true, enabled: true }, running: true });
@@ -91,7 +93,25 @@ await verify(f, async () => {
   assert.equal(await runtimeFingerprint(path.join(f.dataDir, "app")), hash);
   assert.equal(JSON.parse(await readFile(path.join(f.dataDir, "background-status.json"))).generation, generation, "Failed preflight must not restart the existing service");
   assert.deepEqual(await f.service.capture(true), original); assert.deepEqual(await f.queueLog(), []);
+  for (const name of ["checkpoint.json", "credit-ledger.json", "preferences-note.txt"]) await writeFile(path.join(f.dataDir, name), name + " preserved");
+  const userNote = path.join(f.dataDir, "marketplace", "user-note.txt"); await writeFile(userNote, "unknown user content");
+  const refused = await f.uninstall(); assert.notEqual(refused.code, 0);
+  assert.equal(await readFile(userNote, "utf8"), "unknown user content");
+  assert.equal(await runtimeFingerprint(path.join(f.dataDir, "app")), hash);
+  assert.equal(JSON.parse(await readFile(path.join(f.dataDir, "background-status.json"))).generation, generation, "Unsafe uninstall must fail before stopping the service");
+  assert(!(await readdir(f.dataDir)).includes("uninstallation-in-progress.json"));
+  await rm(userNote); // Only this isolated acceptance's own injected file.
+  const removed = await f.uninstall(); assert.equal(removed.code, 0, removed.stderr); assert.equal(removed.value.ok, true);
+  assert.deepEqual(await f.service.capture(false), { startup: { installed: false, enabled: false }, running: false });
+  const names = await readdir(f.dataDir);
+  for (const name of ["app", "marketplace", "startup-context.json", "windows-installation.json", "uninstallation-in-progress.json"]) assert(!names.includes(name), name + " was not removed");
+  assert(!names.some(name => name.startsWith("app-failed-") || name.startsWith("app-backup-")));
+  assert(!(await f.cli(["plugin", "list", "--json"])).installed.some(p => p.pluginId === pulsePluginId));
+  assert(!(await f.cli(["plugin", "marketplace", "list", "--json"])).marketplaces.some(p => p.name === "codex-pulse-local"));
+  for (const name of ["checkpoint.json", "credit-ledger.json", "preferences-note.txt"]) assert.equal(await readFile(path.join(f.dataDir, name), "utf8"), name + " preserved");
+  assert.match(await readFile(config, "utf8"), /user-selected-model/); assert.deepEqual(await f.queueLog(), []);
 });
 console.log(JSON.stringify({ ok: true, nativeWindowsInstallerEntry: true, realOfficialPluginCommands: true, realTaskScheduler: true,
-  freshInstallReinstallAndFailedPreflight: true, postActivationRollback: true, accountRPC: "isolated synthetic peer", modelCalls: 0, realResetCardsUsed: 0,
+  freshInstallReinstallAndFailedPreflight: true, postActivationRollback: true, uninstallAndPreserveHistory: true, unsafeUninstallRefusedBeforeStop: true,
+  accountRPC: "isolated synthetic peer", modelCalls: 0, realResetCardsUsed: 0,
   guiPackageOrPhysicalSleepVerified: false, productionInstallTouched: false }));

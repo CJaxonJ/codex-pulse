@@ -40,6 +40,15 @@ export class WindowsRuntimeService {
       await this.call(this.target(), ["--startup", "remove"]);
     }
   }
+  async removeStartup() {
+    await this.call(this.target(), ["--startup", "remove"]);
+    const current = await this.call(this.target(), ["--startup", "status"]);
+    if (current.installed || current.enabled) throw Error("自启任务未确认移除，未继续卸载运行程序。");
+  }
+  async verifyRemoved() {
+    const state = await this.capture(false);
+    if (state.running || state.startup.installed || state.startup.enabled) throw Error("卸载后的后台或自启状态未确认。");
+  }
   async health() {
     try { return JSON.parse(await readFile(path.join(this.dataDir, "background-status.json"), "utf8")); }
     catch (e) { if (e.code === "ENOENT") return {}; throw e; }

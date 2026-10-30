@@ -1,4 +1,4 @@
-import { cp, lstat, mkdir, readFile, realpath, rename, rm } from "node:fs/promises";
+import { cp, lstat, mkdir, readFile, realpath, rename, rm, readdir } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
@@ -23,9 +23,9 @@ async function samePath(a, b) {
   return process.platform === "win32" ? localSpelling(values[0]).toLowerCase() === localSpelling(values[1]).toLowerCase() : values[0] === values[1];
 }
 
-// Used inside the runtime transaction's existing install lock. Existing plugins
-// are never removed/re-added or re-trusted. Only this operation's fresh plugin
-// and exact local catalog may be undone, through official CLI commands.
+// Used inside the shared installation lock. Installation reuses compatible
+// plugins without rewriting trust; uninstall must separately prove ownership
+// against the verified installed runtime before using official removal APIs.
 export class WindowsPluginOperation {
   constructor({ sourceRoot, dataDir, env = process.env, runJson, check } = {}) {
     this.sourceRoot = sourceRoot; this.dataDir = dataDir;
@@ -89,6 +89,34 @@ export class WindowsPluginOperation {
     }
     if (plugin && (plugin.version !== this.version || plugin.source?.source !== "local"
         || !await samePath(plugin.source.path, path.join(this.root, "plugin")))) throw Error("插件来源已改变，未移除其他安装。");
+  }
+  async prepareRemoval() {
+    if (this.prepared) throw Error("插件操作不可重复准备。");
+    const current = await this.inventory();
+    if (current.plugins.some(p => p.pluginId !== pulsePluginId && p.marketplaceName === marketName)) throw Error("本地市场被其他插件使用，未继续卸载。");
+    if (!await exists(this.root)) {
+      if (current.plugin || current.catalog) throw Error("插件清单与私有安装目录不一致，未继续卸载。");
+      this.prepared = true; this.reused = false; return;
+    }
+    this.hash = await runtimeFingerprint(this.root);
+    // Compare against the already fingerprint-verified installed app, not an
+    // arbitrary download/version. Unknown extra files must never be deleted.
+    if (JSON.stringify((await readdir(this.root)).sort()) !== JSON.stringify([".agents", "plugin"])
+        || JSON.stringify(await readdir(path.join(this.root, ".agents"))) !== JSON.stringify(["plugins"])
+        || JSON.stringify(await readdir(path.join(this.root, ".agents", "plugins"))) !== JSON.stringify(["marketplace.json"])
+        || await runtimeFingerprint(path.join(this.root, "plugin")) !== await runtimeFingerprint(path.join(this.sourceRoot, "plugin"))
+        || await runtimeFingerprint(path.join(this.root, ".agents", "plugins", "marketplace.json")) !== await runtimeFingerprint(path.join(this.sourceRoot, ".agents", "plugins", "marketplace.json"))) {
+      throw Error("本地市场存在未知文件或与安装记录不符，已保留，未继续卸载。");
+    }
+    const manifest = JSON.parse(await readFile(path.join(this.root, "plugin", ".codex-plugin", "plugin.json")));
+    if (manifest.name !== "codex-pulse" || typeof manifest.version !== "string") throw Error("插件身份不正确。");
+    this.version = manifest.version; this.ownsDirectory = true;
+    await this.assertOwned(current);
+    this.prepared = true; this.reused = false;
+  }
+  async verifyRemoved() {
+    const current = await this.inventory();
+    if (current.plugin || current.catalog || current.plugins.some(p => p.marketplaceName === marketName) || await exists(this.root)) throw Error("插件或本地市场仍存在，未继续删除运行程序。");
   }
   async install() {
     if (!this.prepared || this.started) throw Error("插件操作状态不正确。");

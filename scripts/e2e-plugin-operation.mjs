@@ -43,10 +43,13 @@ try {
   } });
   await lost.prepare(); await assert.rejects(lost.install(), /Lost acknowledgement/); await lost.rollback();
   assert(!(await runJson(["plugin", "list", "--json"])).installed.some(p => p.pluginId === pulsePluginId));
+  const installed = new WindowsPluginOperation(options); await installed.prepare(); await installed.install();
+  const uninstaller = new WindowsPluginOperation(options); await uninstaller.prepareRemoval(); await uninstaller.rollback(); await uninstaller.verifyRemoved();
+  await assert.rejects(access(installed.root), { code: "ENOENT" });
   assert.match(await readFile(config, "utf8"), /user-selected-model/);
   assert(!calls.some(args => args.includes("hooks") || args.includes("--yes")));
   console.log(JSON.stringify({ ok: true, realOfficialCLI: true, platform: process.platform, freshInstallAndRollback: true,
-    reusedWithoutTrustChanges: true, lostAcknowledgementRecovered: true, accountOrModelUsed: false, productionConfigTouched: false }));
+    reusedWithoutTrustChanges: true, lostAcknowledgementRecovered: true, independentlyVerifiedUninstall: true, accountOrModelUsed: false, productionConfigTouched: false }));
 } catch (error) {
   if (process.platform === "win32") {
     const spellings = [root, await realpath(root)];

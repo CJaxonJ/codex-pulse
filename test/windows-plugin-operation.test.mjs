@@ -27,6 +27,30 @@ async function fixture({ reused = false } = {}) {
   const op = new WindowsPluginOperation({ sourceRoot, dataDir, runJson, check: async () => ({ ok: true, reusedExistingInstall: reused, pluginId: pulsePluginId }) });
   return { dataDir, sourceRoot, calls, state, op, mode: value => mode = value };
 }
+const removalFor = f => new WindowsPluginOperation({ sourceRoot: f.sourceRoot, dataDir: f.dataDir, runJson: f.op.runJson });
+test("uninstall independently proves the private catalog against the owned installed runtime before removal", async () => {
+  const f = await fixture(); await f.op.prepare(); await f.op.install();
+  const removal = removalFor(f); await removal.prepareRemoval(); await removal.rollback(); await removal.verifyRemoved();
+  assert.deepEqual(f.state.plugins, []); assert.deepEqual(f.state.catalogs, []);
+  assert(!f.calls.some(args => args.includes("hooks") || args.includes("--yes")));
+});
+test("uninstall refuses extra private-market files, modified plugin code or another registered source", async () => {
+  for (const change of ["extra", "plugin", "source", "other-plugin"]) {
+    const f = await fixture(); await f.op.prepare(); await f.op.install();
+    if (change === "extra") await writeFile(path.join(f.op.root, "user-note"), "keep");
+    if (change === "plugin") await writeFile(path.join(f.op.root, "plugin", "user-note"), "keep");
+    if (change === "source") f.state.plugins[0].source.path = f.sourceRoot;
+    if (change === "other-plugin") f.state.plugins.push({ pluginId: "other@codex-pulse-local", marketplaceName: "codex-pulse-local" });
+    const count = f.calls.length; await assert.rejects(removalFor(f).prepareRemoval());
+    assert(!f.calls.slice(count).some(args => args.includes("remove")));
+    assert.equal(f.state.plugins[0].pluginId, pulsePluginId); await access(f.op.root);
+  }
+});
+test("an absent plugin is rechecked, not assumed absent from an earlier preflight", async () => {
+  const f = await fixture(), removal = removalFor(f); await removal.prepareRemoval();
+  f.state.plugins.push({ pluginId: pulsePluginId });
+  await removal.rollback(); await assert.rejects(removal.verifyRemoved(), /仍存在/);
+});
 test("fresh plugin rollback removes only owned official definitions and preserves unrelated data", async () => {
   const f = await fixture(); await writeFile(path.join(f.dataDir, "checkpoint"), "keep");
   await f.op.prepare(); await f.op.install(); await f.op.rollback();

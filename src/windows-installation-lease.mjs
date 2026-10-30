@@ -60,22 +60,29 @@ export async function openWindowsInstallationLease({ gate = false, binary = nati
       if (result.error || result.signal || result.code !== 0) throw error();
     } finally { clearTimeout(deadline); lines.close(); }
   };
+  const request = fields => {
+    if (gate || released || closedResult || pending) return Promise.reject(error());
+    return new Promise((resolve, reject) => {
+      const id = ++sequence;
+      const timer = setTimeout(() => { if (pending?.id === id) { pending = null; child.kill(); reject(error()); } }, 20000);
+      pending = { id, resolve, reject, timer };
+      child.stdin.write(JSON.stringify({ id, ...fields }) + "\n", failure => {
+        if (failure && pending?.id === id) { clearTimeout(timer); pending = null; reject(error()); }
+      });
+    });
+  };
   return {
     // Actual handle exposed for the isolated death test; never used to kill a
     // PID read from disk. Runtime mutations occur only inside this child.
     child, closed, release,
     move(from, to) {
-      if (gate || released || closedResult || pending) return Promise.reject(error());
       const valid = name => name === "app" || /^app-(?:install|backup|failed)-[a-f0-9]{32}$/.test(name);
       if (!valid(from) || !valid(to)) return Promise.reject(Error("Invalid owned runtime name"));
-      return new Promise((resolve, reject) => {
-        const id = ++sequence;
-        const timer = setTimeout(() => { if (pending?.id === id) { pending = null; child.kill(); reject(error()); } }, 20000);
-        pending = { id, resolve, reject, timer };
-        child.stdin.write(JSON.stringify({ id, op: "move", from, to }) + "\n", failure => {
-          if (failure && pending?.id === id) { clearTimeout(timer); pending = null; reject(error()); }
-        });
-      });
+      return request({ op: "move", from, to });
+    },
+    removeRetired(name) {
+      if (!/^app-failed-[a-f0-9]{32}$/.test(name)) return Promise.reject(Error("Invalid retired runtime name"));
+      return request({ op: "remove-retired", name });
     },
   };
 }

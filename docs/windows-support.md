@@ -12,7 +12,13 @@
 
 修改后本机完整回归 307 通过、43 个 Windows 专属跳过、0 失败。真实 Windows 新门禁尚待结果；卸载、可分发安装包及真实桌面恢复仍未完成。用户插入的 macOS 安装警告说明已单独保存在 `codex/macos-gatekeeper-install` 的 `8e073eb`，未混入 Windows 分支，也未改真实安装。
 
+`56e379f` 的 [Windows 门禁 40996570624](https://github.com/CJaxonJ/codex-pulse/actions/runs/40996570624) 最终失败，已读取 Node 20／22 完整日志：两组关键组合各 104 通过、3 失败、1 跳过，全量各 321 通过、3 失败、3 跳过。此前实际安装回滚和双 CLI 设置争用（含 12 轮）均通过；唯一剩余的三个失败均为新增屏障测试未到达 marker，非已证明的产品 ACL 拒绝。检查发现测试把中文临时路径嵌入无 BOM 的 PowerShell 脚本；按 [官方编码说明](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_character_encoding)，Windows PowerShell 会按旧 ANSI 解释这类文件。改为 ASCII 脚本加 Unicode 环境变量，并显式断言脚本字符集；提前退出现在直接暴露实际错误，不再等通用超时。仍需下一轮真实结果验证，不能只据推理宣称根因已排除。
+
 ### 此前的调查与验收记录
+
+卸载代码入口正在补齐：先对照已验证的 runtime 核实本地市场内容和来源，未知文件／外部来源在停止后台前拒绝；停用后台、正式移除并回读插件、移除当前用户自启任务后，才通过原生维护锁退役／清理精确的运行目录。不会删除整个 dataDir、Codex 配置／信任、任务计划、偏好、额度和用卡账本，也不根据历史 PID 杀进程。操作中断或未确认清理保留 journal，安装器也拒绝覆盖该记录；失败修复和最终 GUI 入口仍是独立待办。
+
+新增本机文件系统事务回归覆盖拒绝停机、插件／自启移除失败、运行文件／上下文变化、移动确认丢失及删除拒绝；实际固定版官方 CLI 的独立卸载验证已在隔离 CODEX_HOME 下通过，无账号或模型调用。完整本机回归 315 通过、45 个 Windows 专属跳过。新增原生测试及安装 E2E 将验证 Windows 的实际退役删除、文件占用、junction 拒绝、首装至卸载保留历史链路；这些尚未由新 Windows 门禁证明，不表示完整 Windows 卸载已经验收。
 
 `95860fb` 的 [Windows 门禁 40884196374](https://github.com/CJaxonJ/codex-pulse/actions/runs/40884196374) 已最终失败：Node 22 全部成功；Node 20 的关键组合失败在已有的 preparing-host 停止用例，串行全量成功。两组全量各 305 通过、2 跳过；新增的真实安装切换／失败回滚、原任务和上下文恢复、移动确认丢失两项原生测试在关键组合及全量中均通过。但这不是用户安装入口／完整卸载已完成。[对应 macOS 门禁 40884196335](https://github.com/CJaxonJ/codex-pulse/actions/runs/40884196335)成功。
 

@@ -52,7 +52,8 @@ export async function replaceWindowsRuntime({ dataDir, stagedName, service, pref
   const marker = path.join(dataDir, markerName), context = path.join(dataDir, "startup-context.json");
   let original, hadOld, oldHash, newHash, oldMarker, oldContext, lease, switchStarted = false, sideEffectsStarted = false, movedNew = false;
   try {
-    if (await exists(journal) || (await readdir(dataDir)).some(name => /^app-backup-[a-f0-9]{32}$/.test(name))) throw Error("发现上次未处理的安装记录或备份，已保留现场，未覆盖安装。");
+    if (await exists(journal) || await exists(path.join(dataDir, "uninstallation-in-progress.json"))
+        || (await readdir(dataDir)).some(name => /^app-backup-[a-f0-9]{32}$/.test(name))) throw Error("发现上次未处理的安装记录或备份，已保留现场，未覆盖安装。");
     await preflight(); // Complete auth/plugin/package checks and staging before disabling anything.
     const stageStat = await lstat(staged);
     if (!stageStat.isDirectory() || stageStat.isSymbolicLink()) throw Error("暂存目录不正确。");

@@ -25,17 +25,23 @@ for (const change of ["vanished-descendants", "late-junction", "missing-root"]) 
   const marker = path.join(f.root, "acl-scan-complete"), release = path.join(f.root, "release-acl");
   const script = path.join(f.appRoot, "src", "private-directory-windows.ps1"), source = await readFile(script, "utf8"), needle = "$phase = 'acl'";
   assert.equal(source.split(needle).length, 2);
-  const literal = text => "'" + text.replaceAll("'", "''") + "'";
+  // Windows PowerShell 5.1 reads BOM-less scripts as ANSI. Keep the fixture
+  // script ASCII too; pass the real Chinese paths through Unicode environment.
+  f.env.PULSE_TEST_ACL_MARKER = marker; f.env.PULSE_TEST_ACL_RELEASE = release;
   await writeFile(script, source.replace(needle, `${needle}
-[IO.File]::WriteAllText(${literal(marker)},'ready')
+[IO.File]::WriteAllText($env:PULSE_TEST_ACL_MARKER,'ready')
 $pause=[Diagnostics.Stopwatch]::StartNew()
-while(-not [IO.File]::Exists(${literal(release)})){if($pause.ElapsedMilliseconds -gt 18000){throw 'Isolated scan barrier expired'};Start-Sleep -Milliseconds 20}
+while(-not [IO.File]::Exists($env:PULSE_TEST_ACL_RELEASE)){if($pause.ElapsedMilliseconds -gt 18000){throw 'Isolated scan barrier expired'};Start-Sleep -Milliseconds 20}
 `));
-  const checking = f.cli(["background-prepare"]); checking.catch(() => {});
+  assert.doesNotMatch(await readFile(script, "utf8"), /[^\x00-\x7F]/);
+  let completed;
+  const checking = f.cli(["background-prepare"]);
+  checking.then(value => { completed = { value }; }, error => { completed = { error }; });
   try {
     const deadline = Date.now() + 15000;
     while (true) {
       try { await readFile(marker); break; } catch (error) { if (error.code !== "ENOENT") throw error; }
+      if (completed) throw new Error("ACL process exited before the barrier: " + (completed.error?.stderr || JSON.stringify(completed.value)), { cause: completed.error });
       if (Date.now() > deadline) throw Error("Actual ACL scan did not reach the deterministic barrier");
       await new Promise(resolve => setTimeout(resolve, 50));
     }

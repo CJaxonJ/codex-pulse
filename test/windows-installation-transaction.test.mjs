@@ -101,10 +101,11 @@ test("an acknowledgement lost after the old-directory move is resolved from real
 });
 
 test("unknown backups, interrupted journals and changed/unowned runtime fail before quiescing", async () => {
-  for (const condition of ["backup", "journal", "changed", "unowned"]) {
+  for (const condition of ["backup", "journal", "uninstall-journal", "changed", "unowned"]) {
     const f = await fixture();
     if (condition === "backup") await mkdir(path.join(f.dataDir, "app-backup-" + "a".repeat(32)));
     if (condition === "journal") await writeFile(path.join(f.dataDir, "installation-in-progress.json"), "preserve interrupted state");
+    if (condition === "uninstall-journal") await writeFile(path.join(f.dataDir, "uninstallation-in-progress.json"), "preserve interrupted removal");
     if (condition === "changed") await writeFile(path.join(f.app, "user-added.txt"), "do not delete my work");
     if (condition === "unowned") await writeFile(path.join(f.dataDir, "windows-installation.json"), '{}');
     await assert.rejects(replaceWindowsRuntime(f.options)); assert(!f.events.includes("stop")); await historyIntact(f);
