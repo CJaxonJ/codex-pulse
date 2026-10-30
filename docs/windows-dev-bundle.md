@@ -4,7 +4,7 @@
 
 包含 Node 22 x64、原生 Windows 组件、产品源文件、产品及 Node 许可证和逐文件完整性清单。解压后保留完整目录，不要单独移动 exe。
 
-尚缺双击安装界面、安装后快捷入口和中断清理修复。验收通过这些项目后才提供面向普通用户的安装包和操作说明。
+尚缺双击安装界面、安装后快捷入口和中断清理修复；活跃托管任务在升级／卸载停机时的保护也未验收。不要用于正在执行真实托管任务的安装。验收通过这些项目后才提供面向普通用户的安装包和操作说明。
 
 开发验收必须使用独立的 CODEX_HOME 和 CODEX_PULSE_DATA_DIR。安装代码入口为 `runtime\node.exe scripts\install-windows.mjs`；卸载为 `runtime\node.exe scripts\uninstall-windows.mjs`。不能从已安装的 app 目录替换或删除自身运行时。
 

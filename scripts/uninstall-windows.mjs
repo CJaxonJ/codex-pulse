@@ -23,6 +23,6 @@ export async function uninstallWindows({ sourceRoot = path.resolve(import.meta.d
 if (process.argv[1] && await realpath(process.argv[1]) === await realpath(fileURLToPath(import.meta.url))) {
   try {
     console.log(JSON.stringify({ ...await uninstallWindows(),
-      note: "已卸载运行程序、自启和本产品插件；任务计划、额度历史、偏好与用卡记录已保留。现有 Codex 会话可在方便时重开，不会替你中断任务。" }));
+      note: "已停止 Codex Pulse 后台并卸载运行程序、自启和本产品插件；任务计划、额度历史、偏好与用卡记录已保留。现有 Codex 会话可在方便时重开以卸载 Hook。" }));
   } catch (error) { console.error(JSON.stringify({ ok: false, error: error.message })); process.exitCode = 1; }
 }

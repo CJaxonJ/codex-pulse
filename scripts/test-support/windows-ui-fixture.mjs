@@ -12,7 +12,6 @@ export async function windowsUIFixture({ root, dataDir, env = {}, installed = fa
   root ||= await mkdtemp(path.join(os.tmpdir(), "pulse 设置 中文-"));
   dataDir ||= path.join(root, "数据");
   const appRoot = installed ? path.join(dataDir, "app") : path.join(root, "app 空格"), home = path.join(root, "codex");
-  await mkdir(path.join(appRoot, "runtime"), { recursive: true });
   await mkdir(dataDir, { recursive: true }); await mkdir(home, { recursive: true });
   if (sourceBundle) {
     if (!path.isAbsolute(sourceBundle)) throw Error("An absolute isolated bundle source is required");
@@ -20,6 +19,7 @@ export async function windowsUIFixture({ root, dataDir, env = {}, installed = fa
     // executable which an earlier fixture command might still have mapped.
     await cp(sourceBundle, appRoot, { recursive: true, force: false, errorOnExist: true });
   } else {
+    await mkdir(path.join(appRoot, "runtime"), { recursive: true });
     for (const entry of ["bin", "src", "package.json"]) await cp(path.join(project, entry), path.join(appRoot, entry), { recursive: true });
     await cp(process.execPath, path.join(appRoot, "runtime/node.exe"));
     for (const entry of ["CodexPulse.exe", "CodexPulse.exe.config"]) await cp(path.join(project, "build/windows", entry), path.join(appRoot, entry));
