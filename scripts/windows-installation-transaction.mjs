@@ -128,10 +128,12 @@ export async function replaceWindowsRuntime({ dataDir, stagedName, service, pref
     // leave the committed journal as evidence instead of deleting other files.
     let cleanupPending = false;
     if (hadOld) {
-      if (await runtimeFingerprint(path.join(dataDir, backup)) !== oldHash) throw Error("安装已验证，但旧备份发生变化，已保留安装记录。");
-      try { await rm(path.join(dataDir, backup), { recursive: true }); } catch { cleanupPending = true; }
+      try {
+        if (await runtimeFingerprint(path.join(dataDir, backup)) !== oldHash) cleanupPending = true;
+        else await rm(path.join(dataDir, backup), { recursive: true });
+      } catch { cleanupPending = true; }
     }
-    if (!cleanupPending) await rm(journal);
+    if (!cleanupPending) { try { await rm(journal); } catch { cleanupPending = true; } }
     return { ok: true, version: manifest.version, cleanupPending, transactionId: id };
   } finally {
     try { await lease?.release(); } finally { await release(); }

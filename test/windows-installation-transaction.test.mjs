@@ -110,3 +110,17 @@ test("unknown backups, interrupted journals and changed/unowned runtime fail bef
     await assert.rejects(replaceWindowsRuntime(f.options)); assert(!f.events.includes("stop")); await historyIntact(f);
   }
 });
+
+test("a validated active version remains successful with a cleanup warning when a backup contains new user data", async () => {
+  const f = await fixture(); let backup;
+  f.service.verify = async () => {
+    backup = (await readdir(f.dataDir)).find(name => name.startsWith("app-backup-"));
+    await writeFile(path.join(f.dataDir, backup, "keep-user-file.txt"), "new work must never be erased");
+  };
+  const result = await replaceWindowsRuntime(f.options);
+  assert.equal(result.ok, true); assert.equal(result.cleanupPending, true);
+  assert.equal(await version(f.app), "0.9.22");
+  assert.equal(await readFile(path.join(f.dataDir, backup, "keep-user-file.txt"), "utf8"), "new work must never be erased");
+  assert.equal(JSON.parse(await readFile(path.join(f.dataDir, "installation-in-progress.json"))).phase, "committed");
+  assert(!f.events.includes("restore")); await historyIntact(f);
+});

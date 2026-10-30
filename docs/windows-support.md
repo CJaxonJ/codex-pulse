@@ -2,6 +2,16 @@
 
 状态：开发中，**尚未支持对外安装，不是已发布的 Windows 版**。目标是原生 Windows 上的完整额度监控、通知、用户本人保护授权、暂停与恢复、安装升级及卸载，不以 WSL 或只跑 CLI 代替。
 
+## 最新续接点（2026-10-30，启动中停止修正待 Windows 验收）
+
+`95860fb` 的 [Windows 门禁 40884196374](https://github.com/CJaxonJ/codex-pulse/actions/runs/40884196374) 已最终失败：Node 22 全部成功；Node 20 的关键组合失败在已有的 preparing-host 停止用例，串行全量成功。两组全量各 305 通过、2 跳过；新增的真实安装切换／失败回滚、原任务和上下文恢复、移动确认丢失两项原生测试在关键组合及全量中均通过。但这不是用户安装入口／完整卸载已完成。[对应 macOS 门禁 40884196335](https://github.com/CJaxonJ/codex-pulse/actions/runs/40884196335)成功。
+
+旧失败日志只有 Bridge 的通用 IOException，不能证明唯一根因。进一步审查发现硬杀可能发生在 watcher 已 mkdir、未写 owner.json 的窗口；新增确定性测试停在此处，再通过真实 native stop 请求退出。原生宿主改用其私有 stdin 请求安全停止，Node 在完整发布／释放归属记录前只记下停止请求；超时才允许对原 ChildProcess 句柄强制停止，未知状态仍阻止替换。宿主死亡的管道 EOF 使用同一路径；普通 CLI stdin 不受影响。这些修正和新增 Windows 回归仍需新门禁证明，不能用 macOS 跳过替代。
+
+同时收紧 background-info：guard 被占用还须核对宿主创建时间、存活进程和当前 generation 事件，外部文件占用不能冒充需要恢复的运行中后台。提交后清理若遇新增文件或文件占用，保留备份／committed journal 并返回清理待处理，不将已验证上线的新 runtime 误报为安装失败。新增离线回归及真实文件占用场景；清理重试入口仍待接线。
+
+下一步读取本次修正的 Windows 最终日志，再接实际安装前置检查、官方插件接口的安装／失败撤销、安装入口和卸载。没有 Windows 发布包；真实 Desktop／模型和物理睡眠验收依然未完成。
+
 ## 必须完成的验收
 
 - [x] Windows 原生运行层：Codex exe/npm 启动、中文／空格路径、本地数据目录、进程退出错误。

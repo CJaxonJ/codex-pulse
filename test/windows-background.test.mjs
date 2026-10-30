@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile, unlink } from "node:fs/promises";
+import { mkdir, readFile, writeFile, unlink, readdir } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { windowsUIFixture } from "../scripts/test-support/windows-ui-fixture.mjs";
@@ -11,6 +11,38 @@ async function until(check) {
   const deadline = Date.now() + 20000;
   while (true) { const value = await check(); if (value) return value; if (Date.now() > deadline) throw Error("Native background state was not observed"); await new Promise(r => setTimeout(r, 100)); }
 }
+test("native stop during watcher owner publication finishes safely without an ownerless lock", windows, async () => {
+  const f = await windowsUIFixture({ installed: true });
+  await f.cli(["background-prepare"]);
+  const modulePath = path.join(f.appRoot, "src", "worktree-lock-manager.mjs");
+  const original = await readFile(modulePath, "utf8"), needle = "await mkdir(lockDir);";
+  assert.equal(original.split(needle).length, 2);
+  const marker = path.join(f.root, "publishing-watcher.json");
+  await writeFile(modulePath, original.replace(needle, `${needle}
+        if (process.argv[2] === "watch") {
+          const continuePublication = new Promise(resolve => process.stdin.once("data", resolve));
+          await writeFile(${JSON.stringify(marker)}, JSON.stringify({ pid: process.pid, lockDir }));
+          await continuePublication;
+        }`));
+  const host = f.start("--background"); let stop;
+  try {
+    const pending = await until(async () => {
+      if (host.child.exitCode != null) throw Error(host.diagnostic());
+      try { return JSON.parse(await readFile(marker, "utf8")); } catch { return null; }
+    });
+    assert(alive(pending.pid));
+    await assert.rejects(readFile(path.join(pending.lockDir, "owner.json")), { code: "ENOENT" });
+    stop = f.start("--stop-background");
+    assert.equal((await stop.closed)[0], 0, stop.diagnostic());
+    assert.equal((await host.closed)[0], 0, host.diagnostic());
+    assert.equal(alive(pending.pid), false);
+    assert.deepEqual(await readdir(path.join(f.dataDir, "worktree-locks")), []);
+    await assert.rejects(readFile(path.join(f.dataDir, "state.json")), { code: "ENOENT" });
+    assert.equal((await f.cli(["background-probe"])).watcherStopped, true);
+  } finally {
+    for (const session of [host, stop]) if (session && session.child.exitCode == null) session.child.kill();
+  }
+});
 test("installed native Windows background is single-instance, restarts a crashed connection, and stops only its own watcher", windows, async () => {
   const f = await windowsUIFixture({ installed: true });
   const peer = path.join(f.root, "Codex CLI"), entry = path.join(peer, "node_modules/@openai/codex/bin");

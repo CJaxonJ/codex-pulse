@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { pulseDataDirectory, resolveCodexExecutable } from "../src/platform-runtime.mjs";
 import { ensureWindowsPrivateDirectory } from "../src/private-directory.mjs";
 import { acquireWatcherInstance } from "../src/watcher-instance.mjs";
+import { hostedWatcherStop } from "../src/hosted-watcher-stop.mjs";
 import { writeJsonSnapshotAtomic } from "../src/atomic-file.mjs";
 import { currentWindowsProcessIdentity } from "../src/windows-process-bridge.mjs";
 
@@ -65,6 +66,7 @@ const packageManifest = JSON.parse(
   await readFile(path.resolve(import.meta.dirname, "..", "package.json"), "utf8"),
 );
 const command = args[0] || "status";
+const hostedStop = hostedWatcherStop({ enabled: command === "watch" && process.env.CODEX_PULSE_HOSTED_WATCHER === "1" });
 const once = args.includes("--once");
 const pollSeconds = Number(process.env.CODEX_PULSE_POLL_SECONDS || 60);
 const dataDir = pulseDataDirectory();
@@ -493,13 +495,15 @@ async function manageCreditPolicy() {
 }
 
 async function watch() {
+  if (hostedStop.requested) { hostedStop.close(); return; }
   const release = process.platform === "win32" ? await acquireWatcherInstance(dataDir, { prepare: () => ensureWindowsPrivateDirectory(dataDir) }) : null;
   try {
+    if (hostedStop.requested) { await release?.(); hostedStop.close(); return; }
     await watchOwned();
     // The long-running watcher keeps its process-owned record until actual OS
     // exit. Releasing when interval setup returns would admit a second watcher.
-    if (once) await release?.();
-  } catch (error) { await release?.(); throw error; }
+    if (once) { await release?.(); hostedStop.close(); }
+  } catch (error) { hostedStop.close(); await release?.(); throw error; }
 }
 
 async function watchOwned() {
@@ -552,6 +556,18 @@ async function watchOwned() {
   let polling = false;
   let stopped = false;
   let lastTiboPollAt = 0;
+  let timer = null;
+  const shutdown = () => {
+    stopped = true;
+    clearInterval(timer);
+    client.stop();
+    process.exit(0);
+  };
+  // The watcher record and maintenance gate are now fully published/released.
+  // Native stop or a dead supervisor may safely terminate this owned process.
+  hostedStop.ready(shutdown);
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
 
   async function poll(reason = "timer") {
     if (polling || stopped) return;
@@ -740,15 +756,7 @@ async function watchOwned() {
     return;
   }
 
-  const timer = setInterval(() => void poll("timer"), pollSeconds * 1000);
-  const shutdown = () => {
-    stopped = true;
-    clearInterval(timer);
-    client.stop();
-    process.exit(0);
-  };
-  process.on("SIGTERM", shutdown);
-  process.on("SIGINT", shutdown);
+  timer = setInterval(() => void poll("timer"), pollSeconds * 1000);
   log("watcher started", { pollSeconds, statePath });
 }
 

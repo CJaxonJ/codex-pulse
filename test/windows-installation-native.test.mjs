@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { cp, writeFile, readFile, readdir, lstat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { windowsRecoveryBackgroundFixture } from "../scripts/test-support/windows-recovery-background-fixture.mjs";
 import { replaceWindowsRuntime, runtimeFingerprint } from "../scripts/windows-installation-transaction.mjs";
 import { WindowsRuntimeService } from "../scripts/windows-runtime-service.mjs";
@@ -92,4 +94,26 @@ test("real Windows transaction recovers a move whose acknowledgement was lost wh
     assert.deepEqual(await f.queueLog(), []);
   } catch (error) { failure = error; throw error; }
   finally { try { await f.cleanup(); } catch (cleanupError) { throw failure ? new AggregateError([failure, cleanupError], "Native transaction and cleanup failed") : cleanupError; } }
+});
+
+test("an unrelated actual file holder cannot be captured as a running host to restart during installation", windows, async () => {
+  const f = await setup();
+  await writeFile(path.join(f.dataDir, "background-status.json"), JSON.stringify({ generation: randomUUID(), state: "stopped", supervisorPid: process.pid, supervisorCreationTime: "0" }));
+  const script = `$ErrorActionPreference='Stop';$f=[IO.File]::Open($env:PULSE_GUARD_FILE,'OpenOrCreate','ReadWrite',[IO.FileShare]::None);try{[Console]::WriteLine('locked');[Console]::Out.Flush();$null=[Console]::ReadLine()}finally{$f.Dispose()}`;
+  const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
+    env: { ...f.env, PULSE_GUARD_FILE: path.join(f.dataDir, "background.guard") }, windowsHide: true, stdio: ["pipe", "pipe", "pipe"],
+  });
+  const closed = once(child, "exit"); let output = ""; child.stdout.on("data", b => output += b); child.stdin.on("error", () => {});
+  try {
+    const deadline = Date.now() + 15000;
+    while (!output.includes("locked")) { if (child.exitCode != null || Date.now() > deadline) throw Error("The actual guard holder never became ready"); await new Promise(r => setTimeout(r, 50)); }
+    await assert.rejects(f.install(await f.stage("0.9.21")), /--background-info/);
+    const names = await readdir(f.dataDir); assert(!names.includes("app")); assert(!names.includes("installation-in-progress.json"));
+    assert.equal(child.exitCode, null, "Status inspection must not kill an unrelated holder");
+  } finally {
+    child.stdin.end("release\n");
+    const timer = setTimeout(() => { if (child.exitCode == null) child.kill(); }, 5000);
+    try { await closed; } finally { clearTimeout(timer); }
+    await f.cleanup();
+  }
 });

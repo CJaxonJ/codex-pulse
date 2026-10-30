@@ -24,6 +24,10 @@ namespace CodexPulse {
         private bool started, stopping;
         private volatile bool ready;
         private string state;
+        private readonly string supervisorCreation = CurrentCreation();
+        private static string CurrentCreation() {
+            using (Process self = Process.GetCurrentProcess()) return self.StartTime.ToFileTimeUtc().ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
 
         internal static string DataDirectory() {
             string directory = Environment.GetEnvironmentVariable("CODEX_PULSE_DATA_DIR");
@@ -78,6 +82,21 @@ namespace CodexPulse {
             string data = DataDirectory();
             bool running = !GuardFree(data);
             if (!running) ConfirmWatcherStopped(data);
+            else {
+                // A file-sharing denial can be an indexer/reader, not our
+                // running host. Never capture that as a state to restart.
+                string file = Path.Combine(data, "background-status.json");
+                if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0 || new FileInfo(file).Length > 8192) throw new IOException();
+                Dictionary<string, object> status = Program.Json.DeserializeObject(File.ReadAllText(file, Encoding.UTF8)) as Dictionary<string, object>;
+                string generation = Program.StringValue(status, "generation"), creation = Program.StringValue(status, "supervisorCreationTime"); Guid parsed;
+                object rawPid;
+                if (status == null || !Guid.TryParse(generation, out parsed) || creation.Length == 0 || Program.StringValue(status, "state") == "stopped"
+                    || !status.TryGetValue("supervisorPid", out rawPid) || !(rawPid is int)) throw new IOException();
+                using (Process owner = Process.GetProcessById((int)rawPid)) {
+                    if (owner.HasExited || owner.StartTime.ToFileTimeUtc().ToString(System.Globalization.CultureInfo.InvariantCulture) != creation) throw new IOException();
+                }
+                using (EventWaitHandle signal = EventWaitHandle.OpenExisting(SignalName(data, generation))) { }
+            }
             Console.Out.WriteLine(Program.Json.Serialize(new Dictionary<string, object> { { "ok", true }, { "running", running } }));
             return 0;
         }
@@ -153,6 +172,7 @@ namespace CodexPulse {
             state = next;
             Dictionary<string, object> value = new Dictionary<string, object> {
                 {"generation", generation}, {"supervisorPid", Process.GetCurrentProcess().Id},
+                {"supervisorCreationTime", supervisorCreation},
                 {"watcherPid", worker == null || worker.HasExited ? (object)null : worker.Id},
                 {"state", state}, {"restarts", restarts}, {"lastExitCode", exit},
                 {"checkedAt", DateTimeOffset.UtcNow.ToUnixTimeSeconds()}
@@ -170,9 +190,10 @@ namespace CodexPulse {
             try {
                 ProcessStartInfo start = new ProcessStartInfo(Path.Combine(root, "runtime", "node.exe"), Bridge.Quote(Path.Combine(root, "bin", "codex-pulse.mjs")) + " watch") {
                     UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = root,
-                    RedirectStandardOutput = true, RedirectStandardError = true,
+                    RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
                     StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
                 };
+                start.EnvironmentVariables["CODEX_PULSE_HOSTED_WATCHER"] = "1";
                 worker = new Process { StartInfo = start };
                 worker.OutputDataReceived += delegate(object sender, DataReceivedEventArgs args) { Log(args.Data); if (Object.ReferenceEquals(sender, worker) && args.Data != null && args.Data.Contains("] watcher started ")) ready = true; };
                 worker.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs args) { Log(args.Data); };
@@ -192,8 +213,14 @@ namespace CodexPulse {
         private bool StopWorker() {
             if (worker == null) return true;
             if (!worker.HasExited) {
-                try { worker.Kill(); } catch { if (!worker.HasExited) return false; }
-                if (!worker.WaitForExit(5000)) return false;
+                // Let a starting watcher finish publishing ownership before it
+                // exits. Only this Process handle, never a persisted PID, may
+                // be killed if graceful shutdown does not finish in time.
+                try { worker.StandardInput.WriteLine("codex-pulse-stop"); worker.StandardInput.Flush(); worker.StandardInput.Close(); } catch { }
+                if (!worker.WaitForExit(5000)) {
+                    try { worker.Kill(); } catch { if (!worker.HasExited) return false; }
+                    if (!worker.WaitForExit(5000)) return false;
+                }
             }
             worker.Dispose(); worker = null; return true;
         }
