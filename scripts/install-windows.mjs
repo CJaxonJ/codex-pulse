@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-import { cp, mkdir, lstat } from "node:fs/promises";
+import { cp, mkdir, lstat, realpath } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { pulseDataDirectory, resolveCodexExecutable } from "../src/platform-runtime.mjs";
 import { ensureWindowsPrivateDirectory } from "../src/private-directory.mjs";
 import { ownedWindowsProcessInvocation } from "../src/windows-process-bridge.mjs";
@@ -56,7 +56,10 @@ export async function installWindows({ sourceRoot = path.resolve(import.meta.dir
   });
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+// Node resolves the module to its real path; argv can still use an 8.3 alias
+// or directory link. A lexical URL comparison would silently skip Setup.
+const isEntry = process.argv[1] && await realpath(process.argv[1]) === await realpath(fileURLToPath(import.meta.url));
+if (isEntry) {
   try {
     const result = await installWindows();
     console.log(JSON.stringify({ ...result, hookTrustRequired: true,

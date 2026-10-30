@@ -51,10 +51,21 @@ test("a resolved catalog snapshot is not confused with its registered local sour
   f.state.catalogs[0].root = path.join(f.dataDir, "official-resolved-snapshot");
   await f.op.rollback(); assert.deepEqual(f.state.plugins, []); assert.deepEqual(f.state.catalogs, []);
 });
+test("legacy name/root catalog is accepted only at the exact owned local directory", async () => {
+  const f = await fixture(); await f.op.prepare(); await f.op.install();
+  delete f.state.catalogs[0].marketplaceSource;
+  await f.op.rollback(); assert.deepEqual(f.state.plugins, []);
+  const other = await fixture(); await other.op.prepare(); await other.op.install();
+  delete other.state.catalogs[0].marketplaceSource; other.state.catalogs[0].root = other.sourceRoot;
+  await assert.rejects(other.op.rollback(), /市场来源已改变/);
+  assert.equal(other.state.plugins.length, 1);
+});
 test("Windows local verbatim source is equivalent but UNC metadata cannot redirect cleanup", { skip: process.platform !== "win32" }, async () => {
   const f = await fixture(); await f.op.prepare(); await f.op.install();
   f.state.catalogs[0].marketplaceSource.source = "\\\\?\\" + await realpath(f.op.root);
   f.state.plugins[0].source.path = "\\\\?\\" + await realpath(path.join(f.op.root, "plugin"));
+  await f.op.assertOwned(await f.op.inventory());
+  f.state.catalogs[0].marketplaceSource.source = (await realpath(f.op.root)).replaceAll("\\", "/");
   await f.op.rollback(); assert.deepEqual(f.state.plugins, []);
   const other = await fixture(); await other.op.prepare(); await other.op.install();
   other.state.catalogs[0].marketplaceSource.source = "\\\\unrelated.invalid\\share";

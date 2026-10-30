@@ -18,7 +18,7 @@ async function samePath(a, b) {
   // Catalog metadata is not authority to touch a network share or probe an
   // unrelated drive. Our owned source is always on this local data volume.
   if (process.platform === "win32" && (!/^[a-z]:[\\/]/i.test(a) || !/^[a-z]:[\\/]/i.test(b)
-      || path.parse(a).root.toLowerCase() !== path.parse(b).root.toLowerCase())) return false;
+      || a.slice(0, 2).toLowerCase() !== b.slice(0, 2).toLowerCase())) return false;
   const values = await Promise.all([realpath(a), realpath(b)]);
   return process.platform === "win32" ? localSpelling(values[0]).toLowerCase() === localSpelling(values[1]).toLowerCase() : values[0] === values[1];
 }
@@ -78,10 +78,15 @@ export class WindowsPluginOperation {
   async assertOwned({ plugin, catalog, plugins }) {
     if (plugins.some(p => p.pluginId !== pulsePluginId && p.marketplaceName === marketName)) throw Error("本地市场被其他插件使用，未清理。");
     if (!this.ownsDirectory || await runtimeFingerprint(this.root) !== this.hash) throw Error("市场文件归属或内容已改变，已保留现场。");
-    // `root` is Codex's resolved working/catalog snapshot, not necessarily the
-    // configured source. Only compare the official source; never delete `root`.
-    if (catalog && (catalog.marketplaceSource?.sourceType !== "local"
-        || !await samePath(catalog.marketplaceSource.source, this.root))) throw Error("市场来源已改变，未移除外部配置。");
+    // Modern `root` can be a resolved snapshot. The pinned legacy CLI emits
+    // only name/root; accept that exact missing-field schema only when its
+    // actual local directory is the one we created. Never delete `root`.
+    if (catalog) {
+      const sourceMatches = Object.hasOwn(catalog, "marketplaceSource")
+        ? catalog.marketplaceSource?.sourceType === "local" && await samePath(catalog.marketplaceSource.source, this.root)
+        : Object.keys(catalog).every(key => ["name", "root"].includes(key)) && await samePath(catalog.root, this.root);
+      if (!sourceMatches) throw Error("市场来源已改变，未移除外部配置。");
+    }
     if (plugin && (plugin.version !== this.version || plugin.source?.source !== "local"
         || !await samePath(plugin.source.path, path.join(this.root, "plugin")))) throw Error("插件来源已改变，未移除其他安装。");
   }
