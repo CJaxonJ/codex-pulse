@@ -7,9 +7,11 @@ import { openWindowsInstallationLease } from "../src/windows-installation-lease.
 import { WindowsRuntimeService } from "./windows-runtime-service.mjs";
 import { WindowsPluginOperation } from "./windows-plugin-operation.mjs";
 import { removeWindowsInstallation } from "./windows-uninstallation-transaction.mjs";
+import { verifyWindowsBundle } from "./windows-bundle-manifest.mjs";
 
 export async function uninstallWindows({ sourceRoot = path.resolve(import.meta.dirname, ".."), env = process.env } = {}) {
   if (process.platform !== "win32") throw Error("此卸载入口需要原生 Windows。");
+  await verifyWindowsBundle(sourceRoot);
   const dataDir = pulseDataDirectory({ env }), sourceBinary = path.join(sourceRoot, "CodexPulse.exe");
   const childEnv = { ...env, CODEX_BINARY: resolveCodexExecutable({ env }), CODEX_PULSE_DATA_DIR: dataDir };
   const service = new WindowsRuntimeService({ dataDir, sourceBinary, env: childEnv });

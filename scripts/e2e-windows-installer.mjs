@@ -1,24 +1,31 @@
 import assert from "node:assert/strict";
-import { cp, readFile, writeFile, readdir, rm } from "node:fs/promises";
+import { readFile, writeFile, readdir, rm, mkdtemp } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
+import os from "node:os";
 import { windowsRecoveryBackgroundFixture } from "./test-support/windows-recovery-background-fixture.mjs";
 import { codexInvocation, resolveCodexExecutable } from "../src/platform-runtime.mjs";
 import { ownedWindowsProcessInvocation } from "../src/windows-process-bridge.mjs";
 import { WindowsRuntimeService } from "./windows-runtime-service.mjs";
 import { runtimeFingerprint } from "./windows-installation-transaction.mjs";
 import { pulsePluginId } from "./windows-plugin-operation.mjs";
+import { writeWindowsBundleManifest } from "./windows-bundle-manifest.mjs";
+import { packageWindows } from "./package-windows.mjs";
 
 if (process.platform !== "win32") throw Error("This acceptance requires real Windows");
-const execute = promisify(execFile), project = path.resolve(import.meta.dirname, "..");
+const execute = promisify(execFile);
 const official = resolveCodexExecutable();
 const versionCall = codexInvocation(official, ["--version"]);
 assert.match((await execute(versionCall.file, versionCall.args, { encoding: "utf8", timeout: 15000 })).stdout, /0\.163\.0-alpha\.11\.1/);
+const packaged = await packageWindows(), extracted = await mkdtemp(path.join(os.tmpdir(), "pulse 包 验收-"));
+await execute("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+  "$ErrorActionPreference='Stop';Add-Type -AssemblyName System.IO.Compression.FileSystem;[IO.Compression.ZipFile]::ExtractToDirectory($env:PULSE_ZIP_OUTPUT,$env:PULSE_ZIP_EXTRACT)"],
+{ env: { ...process.env, PULSE_ZIP_OUTPUT: packaged.archive, PULSE_ZIP_EXTRACT: extracted }, windowsHide: true, encoding: "utf8", timeout: 90000 });
+const sourceBundle = path.join(extracted, path.basename(packaged.archive, ".zip"));
 
 async function fixture({ failAfterActivation = false } = {}) {
-  const f = await windowsRecoveryBackgroundFixture({ installed: false, nativeRateReads: true });
-  for (const name of ["scripts", "plugin", ".agents"]) await cp(path.join(project, name), path.join(f.appRoot, name), { recursive: true });
+  const f = await windowsRecoveryBackgroundFixture({ installed: false, nativeRateReads: true, sourceBundle });
   // Account/RPC is isolated and synthetic. Plugin commands use the actual
   // pinned official CLI and this fixture's separate CODEX_HOME, without auth.
   const peer = path.join(path.dirname(f.env.CODEX_BINARY), "node_modules", "@openai", "codex", "bin", "codex.js");
@@ -32,6 +39,9 @@ async function fixture({ failAfterActivation = false } = {}) {
     const source = await readFile(serviceFile, "utf8"), needle = "async verify(original, fresh) {";
     assert.equal(source.split(needle).length, 2);
     await writeFile(serviceFile, source.replace(needle, needle + '\n    throw Error("Deliberate isolated failure after real activation");'));
+    // This is an explicitly fault-injected derivative of the verified bundle.
+    // The normal install/uninstall below uses unchanged extracted ZIP bytes.
+    await writeWindowsBundleManifest(f.appRoot, { appVersion: JSON.parse(await readFile(path.join(f.appRoot, "package.json"))).version, nodeVersion: process.version });
   }
   const runEntry = async (entry, env) => {
     try {
@@ -93,6 +103,13 @@ await verify(f, async () => {
   assert.equal(await runtimeFingerprint(path.join(f.dataDir, "app")), hash);
   assert.equal(JSON.parse(await readFile(path.join(f.dataDir, "background-status.json"))).generation, generation, "Failed preflight must not restart the existing service");
   assert.deepEqual(await f.service.capture(true), original); assert.deepEqual(await f.queueLog(), []);
+  const sourceEntry = path.join(f.appRoot, "bin", "codex-pulse.mjs"), sourceBytes = await readFile(sourceEntry);
+  try {
+    await writeFile(sourceEntry, "throw Error('Corrupted isolated package must not execute');");
+    const corrupt = await f.run(); assert.notEqual(corrupt.code, 0); assert.match(corrupt.stderr, /内容与清单不一致/);
+    assert.equal(await runtimeFingerprint(path.join(f.dataDir, "app")), hash);
+    assert.equal(JSON.parse(await readFile(path.join(f.dataDir, "background-status.json"))).generation, generation, "Corrupt bundle must not stop the old service");
+  } finally { await writeFile(sourceEntry, sourceBytes); }
   for (const name of ["checkpoint.json", "credit-ledger.json", "preferences-note.txt"]) await writeFile(path.join(f.dataDir, name), name + " preserved");
   const userNote = path.join(f.dataDir, "marketplace", "user-note.txt"); await writeFile(userNote, "unknown user content");
   const refused = await f.uninstall(); assert.notEqual(refused.code, 0);
@@ -113,5 +130,6 @@ await verify(f, async () => {
 });
 console.log(JSON.stringify({ ok: true, nativeWindowsInstallerEntry: true, realOfficialPluginCommands: true, realTaskScheduler: true,
   freshInstallReinstallAndFailedPreflight: true, postActivationRollback: true, uninstallAndPreserveHistory: true, unsafeUninstallRefusedBeforeStop: true,
+  verifiedZipEntryAndBundledNode: true, corruptBundleRejectedBeforeStop: true, nodeLicensePreserved: true, archiveSHA256: packaged.checksum,
   accountRPC: "isolated synthetic peer", modelCalls: 0, realResetCardsUsed: 0,
   guiPackageOrPhysicalSleepVerified: false, productionInstallTouched: false }));

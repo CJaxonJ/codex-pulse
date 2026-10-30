@@ -145,7 +145,7 @@ for (const transient of [true, false]) test(`actual native directory move ${tran
   // rename until closed, rather than hoping an indexer happens to interfere.
   const script = `$ErrorActionPreference='Stop';
 Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public static class DirectoryHolder{[DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)]public static extern IntPtr CreateFileW(string p,uint a,uint s,IntPtr z,uint c,uint f,IntPtr t);[DllImport("kernel32.dll")]public static extern bool CloseHandle(IntPtr h);}';
-$h=[DirectoryHolder]::CreateFileW($env:PULSE_HELD_DIRECTORY,128,3,[IntPtr]::Zero,3,33554432,[IntPtr]::Zero);
+$h=[DirectoryHolder]::CreateFileW($env:PULSE_HELD_DIRECTORY,1,3,[IntPtr]::Zero,3,33554432,[IntPtr]::Zero);
 if($h -eq [IntPtr](-1)){throw (New-Object ComponentModel.Win32Exception([Runtime.InteropServices.Marshal]::GetLastWin32Error()))};
 try{[Console]::Out.WriteLine('held');[Console]::Out.Flush();[Console]::ReadLine()|Out-Null}finally{[DirectoryHolder]::CloseHandle($h)|Out-Null}`;
   const holder = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {

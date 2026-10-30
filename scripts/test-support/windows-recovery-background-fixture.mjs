@@ -7,8 +7,8 @@ import { ChatContinuityStore } from "../../src/chat-continuity-store.mjs";
 import { WINDOWS_HOOK_COMMAND } from "../../src/protection-consent.mjs";
 
 const project = path.resolve(import.meta.dirname, "../..");
-export async function windowsRecoveryBackgroundFixture({ gatePause = false, installed = true, nativeRateReads = false } = {}) {
-  const f = await windowsUIFixture({ installed });
+export async function windowsRecoveryBackgroundFixture({ gatePause = false, installed = true, nativeRateReads = false, sourceBundle } = {}) {
+  const f = await windowsUIFixture({ installed, sourceBundle });
   const workspace = path.join(f.root, "工作 项目"), plugin = path.join(f.root, "plugin 空格");
   await mkdir(workspace); await cp(path.join(project, "plugin"), plugin, { recursive: true });
   await writeFile(path.join(workspace, "existing.txt"), "preserve the user's existing work");

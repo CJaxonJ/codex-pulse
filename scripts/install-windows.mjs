@@ -12,6 +12,7 @@ import { assertInstallerOutsideRuntime, openWindowsInstallationLease } from "../
 import { replaceWindowsRuntime, runtimeFingerprint } from "./windows-installation-transaction.mjs";
 import { WindowsRuntimeService } from "./windows-runtime-service.mjs";
 import { WindowsPluginOperation } from "./windows-plugin-operation.mjs";
+import { verifyWindowsBundle } from "./windows-bundle-manifest.mjs";
 
 const execute = promisify(execFile);
 // This is the installation entry for an already-extracted, bundled package.
@@ -20,9 +21,11 @@ const execute = promisify(execFile);
 export async function installWindows({ sourceRoot = path.resolve(import.meta.dirname, ".."), env = process.env, startAtLogin = true } = {}) {
   if (process.platform !== "win32") throw Error("此安装入口需要原生 Windows。");
   if (Number(process.versions.node.split(".")[0]) < 20 || !path.isAbsolute(sourceRoot)) throw Error("安装包运行环境不完整。");
+  await verifyWindowsBundle(sourceRoot);
   const dataDir = pulseDataDirectory({ env }), sourceBinary = path.join(sourceRoot, "CodexPulse.exe");
   // Validate the package before creating/stopping anything in an old install.
-  const entries = ["bin", "src", "scripts", "plugin", ".agents/plugins/marketplace.json", "package.json", "CodexPulse.exe", "CodexPulse.exe.config", "runtime/node.exe"];
+  const entries = ["bin", "src", "scripts", "plugin", ".agents/plugins/marketplace.json", "package.json", "CodexPulse.exe", "CodexPulse.exe.config", "runtime/node.exe",
+    "licenses", "LICENSE", "README.md", "PRIVACY.md", "SECURITY.md", "bundle-manifest.json"];
   for (const name of entries) await runtimeFingerprint(path.join(sourceRoot, name));
   for (const name of ["CodexPulse.exe", "CodexPulse.exe.config", "runtime/node.exe", "scripts/install-plugin.mjs"]) {
     if (!(await lstat(path.join(sourceRoot, name))).isFile()) throw Error("安装包缺少必要文件。");
@@ -37,6 +40,7 @@ export async function installWindows({ sourceRoot = path.resolve(import.meta.dir
     const target = path.join(staged, name); await mkdir(path.dirname(target), { recursive: true });
     await cp(path.join(sourceRoot, name), target, { recursive: true, errorOnExist: true, force: false });
   }
+  await verifyWindowsBundle(staged);
   const plugin = new WindowsPluginOperation({ sourceRoot, dataDir, env: childEnv });
   const service = new WindowsRuntimeService({ dataDir, sourceBinary, env: childEnv, startAtLogin });
   return replaceWindowsRuntime({ dataDir, stagedName, service,

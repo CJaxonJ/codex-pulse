@@ -51,6 +51,16 @@ jobs:
         # Native UI files share one desktop. Serialize files; tests that prove
         # concurrent ownership still start multiple real processes themselves.
         run: npm test -- --test-concurrency=1
+      - name: Preserve validated internal Windows bundle (not a public release)
+        if: success() && matrix.node == 22
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-x64-dev-bundle
+          path: |
+            dist/windows-*/*.zip
+            dist/windows-*/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 7
       - name: Preserve native UI screenshot from this isolated test run
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
