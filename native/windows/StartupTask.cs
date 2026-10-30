@@ -113,6 +113,15 @@ namespace CodexPulse {
             Environment.SetEnvironmentVariable("CODEX_PULSE_APP_ROOT", Root);
         }
         internal static int Control(string command) {
+            // A settings window must not recreate startup/context after an
+            // uninstall verified absence but before it removes the runtime.
+            // Status is read-only; start is fenced by BackgroundContext.Run
+            // itself and must not hold this gate while scheduling that host.
+            if (command == "status" || command == "start") return ControlCore(command);
+            if (command != "configure" && command != "enable" && command != "disable" && command != "remove") throw new ArgumentException();
+            using (FileStream maintenance = InstallationLease.Acquire(BackgroundContext.DataDirectory())) return ControlCore(command);
+        }
+        private static int ControlCore(string command) {
             if (command == "configure") {
                 string contextData = BackgroundContext.DataDirectory();
                 Environment.SetEnvironmentVariable("CODEX_PULSE_APP_ROOT", Root);

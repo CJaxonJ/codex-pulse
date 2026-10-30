@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 
 namespace CodexPulse {
     internal static class InstallationLease {
@@ -27,6 +28,21 @@ namespace CodexPulse {
                 FileAttributes attributes = File.GetAttributes(entry);
                 if ((attributes & FileAttributes.ReparsePoint) != 0 || ++count > 5000) throw new InvalidDataException();
                 if ((attributes & FileAttributes.Directory) != 0) foreach (string child in Directory.GetFileSystemEntries(entry)) pending.Enqueue(child);
+            }
+        }
+        private static void MoveRuntime(string data, string from, string to) {
+            int[] delays = { 20, 40, 80, 160, 320, 500 };
+            for (int attempt = 0; ; attempt++) {
+                try { Directory.Move(RuntimePath(data, from), RuntimePath(data, to)); return; }
+                catch (Exception error) {
+                    int code = error.HResult & 0xffff;
+                    if (!(error is IOException || error is UnauthorizedAccessException) || (code != 5 && code != 32 && code != 33) || attempt >= delays.Length) throw;
+                    // A bounded retry of the SAME exclusive move. Never
+                    // delete a destination, kill an unrelated file holder or
+                    // treat a permanent permission denial as success.
+                    Console.Error.WriteLine("PULSE_DIRECTORY_RETRY:" + code); Console.Error.Flush();
+                    Thread.Sleep(delays[attempt]);
+                }
             }
         }
         internal static int Run(bool installation) {
@@ -60,9 +76,7 @@ namespace CodexPulse {
                             // it could continue after a killed lease helper.
                             string operation = Program.StringValue(request, "op");
                             if (operation == "move" && request.Count == 4) {
-                                string source = RuntimePath(data, Program.StringValue(request, "from"));
-                                string target = RuntimePath(data, Program.StringValue(request, "to"));
-                                Directory.Move(source, target);
+                                MoveRuntime(data, Program.StringValue(request, "from"), Program.StringValue(request, "to"));
                             } else if (operation == "remove-retired" && request.Count == 3) {
                                 string name = Program.StringValue(request, "name");
                                 if (!Regex.IsMatch(name, @"^app-failed-[a-f0-9]{32}$")) throw new InvalidDataException();

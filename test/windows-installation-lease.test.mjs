@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile, readdir, rename, cp, symlink } from "node:fs/promises";
+import { mkdir, readFile, writeFile, readdir, cp, symlink } from "node:fs/promises";
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
@@ -31,6 +31,16 @@ test("native installation lease excludes background, CLI and another installer w
   const lease = await openWindowsInstallationLease(options(f)); let background;
   try {
     await assert.rejects(openWindowsInstallationLease(options(f)), /维护锁/);
+    for (const command of ["configure", "enable", "disable", "remove"]) {
+      await assert.rejects(promisify(execFile)(path.join(f.appRoot, "CodexPulse.exe"), ["--startup", command], {
+        env: f.env, encoding: "utf8", windowsHide: true, timeout: 20000,
+      }), error => error.code === 1 && /IOException/.test(error.stderr || ""), "A concurrent settings process cannot mutate startup under maintenance: " + command);
+    }
+    const startup = JSON.parse((await promisify(execFile)(path.join(f.appRoot, "CodexPulse.exe"), ["--startup", "status"], {
+      env: f.env, encoding: "utf8", windowsHide: true, timeout: 20000,
+    })).stdout);
+    assert.equal(startup.installed, false);
+    assert(!(await readdir(f.dataDir)).includes("startup-context.json"));
     background = f.start("--background"); assert.notEqual((await background.closed)[0], 0);
     await assert.rejects(f.cli(["watch", "--once"]), error => /维护锁/.test(error.stderr || ""), "A direct CLI must stop before ACL preparation or model connection");
     await assert.rejects(lease.move("../outside", backup));
@@ -128,6 +138,45 @@ test("actual Windows open-file denial keeps retired data, then cleanup succeeds 
   } finally { if (holder.exitCode == null) { holder.kill(); await closed; } await lease?.release(); }
 });
 
+for (const transient of [true, false]) test(`actual native directory move ${transient ? "recovers from" : "bounds"} a held Windows directory handle`, windows, async () => {
+  const f = await windowsUIFixture(); await f.cli(["background-prepare"]);
+  const retired = ownedName("failed"); await seed(f, "app", "owned move payload");
+  // Deliberately omit FILE_SHARE_DELETE. This actual OS handle denies the
+  // rename until closed, rather than hoping an indexer happens to interfere.
+  const script = `$ErrorActionPreference='Stop';
+Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public static class DirectoryHolder{[DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)]public static extern IntPtr CreateFileW(string p,uint a,uint s,IntPtr z,uint c,uint f,IntPtr t);[DllImport("kernel32.dll")]public static extern bool CloseHandle(IntPtr h);}';
+$h=[DirectoryHolder]::CreateFileW($env:PULSE_HELD_DIRECTORY,128,3,[IntPtr]::Zero,3,33554432,[IntPtr]::Zero);
+if($h -eq [IntPtr](-1)){throw (New-Object ComponentModel.Win32Exception([Runtime.InteropServices.Marshal]::GetLastWin32Error()))};
+try{[Console]::Out.WriteLine('held');[Console]::Out.Flush();[Console]::ReadLine()|Out-Null}finally{[DirectoryHolder]::CloseHandle($h)|Out-Null}`;
+  const holder = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+    env: { ...f.env, PULSE_HELD_DIRECTORY: path.join(f.dataDir, "app") }, windowsHide: true, stdio: ["pipe", "pipe", "pipe"],
+  });
+  const closed = once(holder, "exit"); let ready = "", diagnostic = "", retries = "", released = false, lease;
+  holder.stdout.on("data", value => ready += value); holder.stderr.on("data", value => diagnostic += value);
+  const releaseHandle = () => { if (!released) { released = true; holder.stdin.end("release\n"); } };
+  try {
+    await until(() => { if (holder.exitCode != null) throw Error(diagnostic); return ready.includes("held"); });
+    lease = await openWindowsInstallationLease(options(f));
+    lease.child.stderr.on("data", value => {
+      retries += value;
+      if (transient && retries.includes("PULSE_DIRECTORY_RETRY:")) releaseHandle();
+    });
+    if (transient) await lease.move("app", retired);
+    else {
+      await assert.rejects(lease.move("app", retired), /维护锁/);
+      assert.equal(await payload(f, "app"), "owned move payload");
+      assert(!(await readdir(f.dataDir)).includes(retired));
+    }
+    assert.match(retries, /PULSE_DIRECTORY_RETRY:(?:5|32|33)/, "An actual denied move must have reached the bounded retry");
+    releaseHandle(); assert.equal((await closed)[0], 0, diagnostic);
+    if (!transient) await lease.move("app", retired);
+    assert.equal(await payload(f, retired), "owned move payload");
+  } finally {
+    if (holder.exitCode == null) { holder.kill(); await closed; }
+    await lease?.release();
+  }
+});
+
 test("installation helper running inside the installed runtime refuses to move its own executable", windows, async () => {
   const f = await windowsUIFixture({ installed: true }); await f.cli(["background-prepare"]);
   await assert.rejects(openWindowsInstallationLease(options(f)), /维护锁/);
@@ -137,7 +186,9 @@ test("installation helper running inside the installed runtime refuses to move i
 test("neither a staged native helper nor the actual bundled Node running from staging may replace itself", windows, async () => {
   const f = await windowsUIFixture({ installed: true }); await f.cli(["background-prepare"]);
   const staged = ownedName("install"), stage = path.join(f.dataDir, staged);
-  await rename(f.appRoot, stage);
+  // This case tests actual execution from staging, not directory rename. Build
+  // staging directly so an unrelated transient move cannot mask that check.
+  await cp(f.appRoot, stage, { recursive: true, force: false, errorOnExist: true });
   await assert.rejects(openWindowsInstallationLease({ binary: path.join(stage, "CodexPulse.exe"), env: f.env }), /维护锁/);
   const outside = path.join(f.root, "outside-installer"); await mkdir(outside);
   for (const name of ["CodexPulse.exe", "CodexPulse.exe.config"]) await cp(path.join(stage, name), path.join(outside, name));
