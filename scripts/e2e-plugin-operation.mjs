@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, writeFile, access } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, access, realpath } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import os from "node:os";
 import path from "node:path";
 import { codexInvocation, resolveCodexExecutable } from "../src/platform-runtime.mjs";
+import { ownedWindowsProcessInvocation } from "../src/windows-process-bridge.mjs";
 import { WindowsPluginOperation, pulsePluginId } from "./windows-plugin-operation.mjs";
 
 const sourceRoot = path.resolve(import.meta.dirname, "..");
@@ -17,8 +18,8 @@ const env = { ...process.env, CODEX_HOME: home, CODEX_BINARY: resolveCodexExecut
 const calls = [];
 const runJson = async args => {
   assert.equal(args[0], "plugin", "This acceptance must not contact an account or start a model"); calls.push(args);
-  const call = codexInvocation(env.CODEX_BINARY, args);
-  return JSON.parse((await promisify(execFile)(call.file, call.args, { env, encoding: "utf8", timeout: 90000, windowsHide: true })).stdout);
+  const call = ownedWindowsProcessInvocation(codexInvocation(env.CODEX_BINARY, args));
+  return JSON.parse((await promisify(execFile)(call.file, call.args, { env, cwd: dataDir, encoding: "utf8", timeout: 90000, windowsHide: true })).stdout);
 };
 const options = { sourceRoot, dataDir, env, runJson };
 const first = new WindowsPluginOperation(options);
@@ -47,6 +48,13 @@ try {
   console.log(JSON.stringify({ ok: true, realOfficialCLI: true, platform: process.platform, freshInstallAndRollback: true,
     reusedWithoutTrustChanges: true, lostAcknowledgementRecovered: true, accountOrModelUsed: false, productionConfigTouched: false }));
 } catch (error) {
+  if (process.platform === "win32") {
+    const spellings = [root, await realpath(root)];
+    const redact = value => typeof value === "string" ? spellings.reduce((text, prefix) => text.replaceAll(prefix, "<isolated-fixture>"), value)
+      : Array.isArray(value) ? value.map(redact) : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).map(([key, child]) => [key, redact(child)])) : value;
+    try { console.error(JSON.stringify({ isolatedOfficialInventory: redact(await first.inventory()) })); }
+    catch { console.error("Official inventory unavailable; no cleanup guessed."); }
+  }
   console.error("Isolated official plugin acceptance failed; evidence preserved at " + root);
   throw error;
 }

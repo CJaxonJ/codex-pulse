@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import path from "node:path";
 import { windowsRecoveryBackgroundFixture } from "./test-support/windows-recovery-background-fixture.mjs";
 import { codexInvocation, resolveCodexExecutable } from "../src/platform-runtime.mjs";
+import { ownedWindowsProcessInvocation } from "../src/windows-process-bridge.mjs";
 import { WindowsRuntimeService } from "./windows-runtime-service.mjs";
 import { runtimeFingerprint } from "./windows-installation-transaction.mjs";
 import { pulsePluginId } from "./windows-plugin-operation.mjs";
@@ -41,8 +42,8 @@ async function fixture({ failAfterActivation = false } = {}) {
   };
   const cli = async args => {
     assert.equal(args[0], "plugin");
-    const call = codexInvocation(official, args);
-    return JSON.parse((await execute(call.file, call.args, { env: f.env, encoding: "utf8", windowsHide: true, timeout: 30000 })).stdout);
+    const call = ownedWindowsProcessInvocation(codexInvocation(official, args));
+    return JSON.parse((await execute(call.file, call.args, { env: f.env, cwd: f.dataDir, encoding: "utf8", windowsHide: true, timeout: 30000 })).stdout);
   };
   const service = new WindowsRuntimeService({ dataDir: f.dataDir, sourceBinary: path.join(f.appRoot, "CodexPulse.exe"), env: f.env });
   const cleanup = async () => {

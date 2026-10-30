@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, cp, readFile, writeFile, access } from "node:fs/promises";
+import { mkdtemp, mkdir, cp, readFile, writeFile, access, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { WindowsPluginOperation, pulsePluginId } from "../scripts/windows-plugin-operation.mjs";
@@ -45,6 +45,21 @@ test("an add acknowledgement lost after installation is recovered by checking ac
   await assert.rejects(f.op.install(), /Acknowledgement/);
   f.mode("remove-ack-lost"); await f.op.rollback();
   assert.deepEqual(f.state.plugins, []); assert.deepEqual(f.state.catalogs, []);
+});
+test("a resolved catalog snapshot is not confused with its registered local source", async () => {
+  const f = await fixture(); await f.op.prepare(); await f.op.install();
+  f.state.catalogs[0].root = path.join(f.dataDir, "official-resolved-snapshot");
+  await f.op.rollback(); assert.deepEqual(f.state.plugins, []); assert.deepEqual(f.state.catalogs, []);
+});
+test("Windows local verbatim source is equivalent but UNC metadata cannot redirect cleanup", { skip: process.platform !== "win32" }, async () => {
+  const f = await fixture(); await f.op.prepare(); await f.op.install();
+  f.state.catalogs[0].marketplaceSource.source = "\\\\?\\" + await realpath(f.op.root);
+  f.state.plugins[0].source.path = "\\\\?\\" + await realpath(path.join(f.op.root, "plugin"));
+  await f.op.rollback(); assert.deepEqual(f.state.plugins, []);
+  const other = await fixture(); await other.op.prepare(); await other.op.install();
+  other.state.catalogs[0].marketplaceSource.source = "\\\\unrelated.invalid\\share";
+  await assert.rejects(other.op.rollback(), /市场来源已改变/);
+  assert.equal(other.state.plugins.length, 1); await access(other.op.root);
 });
 test("failed plugin removal leaves its catalog/runtime dependency in place", async () => {
   const f = await fixture(); await f.op.prepare(); await f.op.install(); f.mode("remove-denied");

@@ -4,16 +4,23 @@ import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { codexInvocation, resolveCodexExecutable } from "../src/platform-runtime.mjs";
+import { ownedWindowsProcessInvocation } from "../src/windows-process-bridge.mjs";
 import { runtimeFingerprint } from "./windows-installation-transaction.mjs";
 
 const execute = promisify(execFile);
 export const pulsePluginId = "codex-pulse@codex-pulse-local";
 const marketName = "codex-pulse-local";
 const exists = async file => { try { await lstat(file); return true; } catch (e) { if (e.code === "ENOENT") return false; throw e; } };
+const localSpelling = value => process.platform === "win32" && /^\\\\\?\\[a-z]:\\/i.test(value) ? value.slice(4) : value;
 async function samePath(a, b) {
+  a = typeof a === "string" ? localSpelling(a) : a; b = typeof b === "string" ? localSpelling(b) : b;
   if (typeof a !== "string" || typeof b !== "string" || !path.isAbsolute(a) || !path.isAbsolute(b)) return false;
+  // Catalog metadata is not authority to touch a network share or probe an
+  // unrelated drive. Our owned source is always on this local data volume.
+  if (process.platform === "win32" && (!/^[a-z]:[\\/]/i.test(a) || !/^[a-z]:[\\/]/i.test(b)
+      || path.parse(a).root.toLowerCase() !== path.parse(b).root.toLowerCase())) return false;
   const values = await Promise.all([realpath(a), realpath(b)]);
-  return process.platform === "win32" ? values[0].toLowerCase() === values[1].toLowerCase() : values[0] === values[1];
+  return process.platform === "win32" ? localSpelling(values[0]).toLowerCase() === localSpelling(values[1]).toLowerCase() : values[0] === values[1];
 }
 
 // Used inside the runtime transaction's existing install lock. Existing plugins
@@ -25,13 +32,17 @@ export class WindowsPluginOperation {
     this.env = { ...env, CODEX_PULSE_DATA_DIR: dataDir };
     this.root = path.join(dataDir, "marketplace");
     this.staged = path.join(dataDir, "marketplace-install-" + randomUUID().replaceAll("-", ""));
+    // Do not let the folder from which Setup was opened implicitly select a
+    // project marketplace. All subprocesses use this private installation scope.
     this.runJson = runJson || (async args => {
-      const call = codexInvocation(resolveCodexExecutable({ env: this.env }), args);
-      return JSON.parse((await execute(call.file, call.args, { env: this.env, encoding: "utf8", timeout: 90000, windowsHide: true, maxBuffer: 10 * 1024 ** 2 })).stdout);
+      const call = ownedWindowsProcessInvocation(codexInvocation(resolveCodexExecutable({ env: this.env }), args));
+      return JSON.parse((await execute(call.file, call.args, { env: this.env, cwd: dataDir, encoding: "utf8", timeout: 90000, windowsHide: true, maxBuffer: 10 * 1024 ** 2 })).stdout);
     });
-    this.check = check || (async () => JSON.parse((await execute(process.execPath,
-      [path.join(sourceRoot, "scripts", "install-plugin.mjs"), "--check"],
-      { env: this.env, encoding: "utf8", timeout: 90000, windowsHide: true, maxBuffer: 1024 ** 2 })).stdout));
+    this.check = check || (async () => {
+      const call = ownedWindowsProcessInvocation({ file: process.execPath, args: [path.join(sourceRoot, "scripts", "install-plugin.mjs"), "--check"] });
+      return JSON.parse((await execute(call.file, call.args,
+        { env: this.env, cwd: dataDir, encoding: "utf8", timeout: 90000, windowsHide: true, maxBuffer: 1024 ** 2 })).stdout);
+    });
   }
   async inventory() {
     const plugins = (await this.runJson(["plugin", "list", "--json"])).installed;
@@ -67,7 +78,9 @@ export class WindowsPluginOperation {
   async assertOwned({ plugin, catalog, plugins }) {
     if (plugins.some(p => p.pluginId !== pulsePluginId && p.marketplaceName === marketName)) throw Error("本地市场被其他插件使用，未清理。");
     if (!this.ownsDirectory || await runtimeFingerprint(this.root) !== this.hash) throw Error("市场文件归属或内容已改变，已保留现场。");
-    if (catalog && (!await samePath(catalog.root, this.root) || catalog.marketplaceSource?.sourceType !== "local"
+    // `root` is Codex's resolved working/catalog snapshot, not necessarily the
+    // configured source. Only compare the official source; never delete `root`.
+    if (catalog && (catalog.marketplaceSource?.sourceType !== "local"
         || !await samePath(catalog.marketplaceSource.source, this.root))) throw Error("市场来源已改变，未移除外部配置。");
     if (plugin && (plugin.version !== this.version || plugin.source?.source !== "local"
         || !await samePath(plugin.source.path, path.join(this.root, "plugin")))) throw Error("插件来源已改变，未移除其他安装。");

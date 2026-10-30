@@ -8,8 +8,8 @@ using System.Threading.Tasks;
 using Microsoft.Win32.SafeHandles;
 
 namespace CodexPulse {
-    // Only an App Server process tree belongs to this Job. Watchers, notification
-    // windows and the user's existing Desktop/CLI are deliberately outside it.
+    // Only one requested App Server/helper process tree belongs to this Job.
+    // Watchers, notifications and the user's existing Desktop/CLI are outside it.
     internal sealed class OwnedProcess : IDisposable {
         [StructLayout(LayoutKind.Sequential)] private struct SecurityAttributes { public int Size; public IntPtr Descriptor; public int Inherit; }
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] private struct StartupInfo {

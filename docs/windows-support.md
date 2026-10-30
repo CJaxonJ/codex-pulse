@@ -18,6 +18,10 @@
 
 接口依据：[官方 CLI reference](https://learn.chatgpt.com/docs/cli/reference) 的 plugin list/add/remove、marketplace add/list/remove；未手写删除或覆盖 Codex config 与信任哈希。
 
+`6adf77a` 的 [Windows 门禁 40992384829](https://github.com/CJaxonJ/codex-pulse/actions/runs/40992384829) 两组关键组合均 103 通过、1 跳过，全量均 316 通过、2 跳过；启动中停止修复及真实锁目录断言已通过。官方 CLI 的授权门禁成功，但新增官方插件验收失败于市场来源核对，导致安装入口整链路验收尚未执行，整轮仍失败。不能把全量测试成功当成新增入口成功。
+
+后续核对只使用官方 marketplaceSource 注册来源，不将 root 工作目录／缓存快照当原始来源；本机数据卷上的 `\\?\C:\…` 拼写允许规范化，UNC／其他磁盘拒绝；删除目标仍仅为本操作创建且内容指纹吻合的私有目录。增加来源快照／verbatim 回归与失败时的隔离清单脱敏诊断，待 Windows 读回才能确认兼容结果。所有安装短命令与预检改经现有原生 Job 归属边界；超时杀的是实际句柄，子孙进程不能继续改配置。CLI 工作目录固定在私有 dataDir，不从用户打开安装包的项目目录发现临时市场。macOS 实际官方命令验收继续通过，未动真实账号或授权。
+
 ## 必须完成的验收
 
 - [x] Windows 原生运行层：Codex exe/npm 启动、中文／空格路径、本地数据目录、进程退出错误。

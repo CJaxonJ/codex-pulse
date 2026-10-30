@@ -7,6 +7,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { pulseDataDirectory, resolveCodexExecutable } from "../src/platform-runtime.mjs";
 import { ensureWindowsPrivateDirectory } from "../src/private-directory.mjs";
+import { ownedWindowsProcessInvocation } from "../src/windows-process-bridge.mjs";
 import { assertInstallerOutsideRuntime, openWindowsInstallationLease } from "../src/windows-installation-lease.mjs";
 import { replaceWindowsRuntime, runtimeFingerprint } from "./windows-installation-transaction.mjs";
 import { WindowsRuntimeService } from "./windows-runtime-service.mjs";
@@ -43,8 +44,9 @@ export async function installWindows({ sourceRoot = path.resolve(import.meta.dir
     preflight: async () => {
       // Read fresh account quota through the existing owned App Server bridge;
       // no auth file parsing, token copying, model calls or automatic login.
-      const output = await execute(path.join(sourceRoot, "runtime", "node.exe"), [path.join(sourceRoot, "bin", "codex-pulse.mjs"), "status"],
-        { env: childEnv, encoding: "utf8", timeout: 30000, windowsHide: true, maxBuffer: 1024 ** 2 });
+      const call = ownedWindowsProcessInvocation({ file: path.join(sourceRoot, "runtime", "node.exe"), args: [path.join(sourceRoot, "bin", "codex-pulse.mjs"), "status"] });
+      const output = await execute(call.file, call.args,
+        { env: childEnv, cwd: dataDir, encoding: "utf8", timeout: 30000, windowsHide: true, maxBuffer: 1024 ** 2 });
       const result = JSON.parse(output.stdout);
       if (result.ok !== true || ![result.summary?.fiveHour, result.summary?.weekly].some(window => Number.isFinite(window?.remainingPercent)
           && window.remainingPercent >= 0 && window.remainingPercent <= 100)) throw Error("尚未读取到 Codex 订阅额度。请先登录支持额度读取的 Codex 账号；现有安装未停止。");
