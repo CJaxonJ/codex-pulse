@@ -26,7 +26,7 @@ export async function windowsUIFixture({ root, dataDir, env = {}, installed = fa
   }
   const childEnv = { ...process.env, CODEX_HOME: home, CODEX_BINARY: "missing-isolated-codex.exe", ...env, CODEX_PULSE_DATA_DIR: dataDir, CODEX_PULSE_APP_ROOT: "" };
   const start = mode => {
-    const child = spawn(path.join(appRoot, "CodexPulse.exe"), [mode], { env: childEnv, windowsHide: false, stdio: ["ignore", "ignore", "pipe"] });
+    const child = spawn(path.join(appRoot, "CodexPulse.exe"), mode ? [mode] : [], { env: childEnv, windowsHide: false, stdio: ["ignore", "ignore", "pipe"] });
     const closed = once(child, "exit"); let diagnostic = ""; child.stderr.on("data", b => diagnostic += b);
     return { child, closed, diagnostic: () => diagnostic };
   };
@@ -34,19 +34,20 @@ export async function windowsUIFixture({ root, dataDir, env = {}, installed = fa
   return { root, dataDir, appRoot, env: childEnv, start, cli };
 }
 
-export async function inspectWindowsUI(session, { title, click, screenshot, tab } = {}) {
+export async function inspectWindowsUI(session, { title, click, screenshot, tab, closeWindow } = {}) {
   const args = ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(project, "scripts/test-support/windows-ui-inspect.ps1"), "-TargetProcess", String(session.child.pid)];
   if (title) args.push("-WindowTitle", title);
   if (click) args.push("-Click", click);
   if (screenshot) args.push("-Screenshot", screenshot);
   if (tab != null) args.push("-SelectTabIndex", String(tab));
+  if (closeWindow) args.push("-CloseWindow");
   try {
     return JSON.parse((await execute("powershell.exe", args, { encoding: "utf8", windowsHide: true, timeout: 20000 })).stdout.replace(/^\uFEFF/, ""));
   } catch (error) { throw Error(error.message + " " + session.diagnostic()); }
 }
 
 export async function waitForWindowsUI(session, predicate, options = {}) {
-  const deadline = Date.now() + 30000;
+  const deadline = Date.now() + (options.timeoutMs ?? 30000);
   let last;
   do {
     if (session.child.exitCode != null) throw Error("Native UI exited: " + session.diagnostic());

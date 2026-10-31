@@ -70,5 +70,6 @@ jobs:
             build/windows/persistent-alert.png
             build/windows/settings.png
             build/windows/protection.png
+            build/windows/setup.png
           if-no-files-found: warn
           retention-days: 7

@@ -29,6 +29,13 @@ namespace CodexPulse {
                 if (args.Length == 1 && args[0] == "--background-info") return BackgroundContext.Inspect();
                 if (args.Length >= 2 && args[0] == "--app-server-bridge") return OwnedProcess.BridgeServer(args[1], args.Skip(2).ToArray());
                 if (args.Length == 2 && args[0] == "--startup") return StartupTask.Control(args[1]);
+                if (args.Length == 2 && args[0] == "--shortcut") {
+                    if (args[1] == "create") SetupShortcut.Create();
+                    else if (args[1] == "remove") SetupShortcut.Remove();
+                    else if (args[1] == "remove-if-uninstalled") SetupShortcut.RemoveIfUninstalled();
+                    else throw new ArgumentException();
+                    Console.Out.WriteLine("{\"ok\":true}"); return 0;
+                }
                 if (args.Length == 2 && args[0] == "--startup-background") StartupTask.LoadContext(args[1]);
                 Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
                 Application.EnableVisualStyles();
@@ -53,6 +60,8 @@ namespace CodexPulse {
                     }
                 } else if (args.Length == 1 && args[0] == "--protection") {
                     using (ProtectionWindow window = new ProtectionWindow()) Application.Run(window);
+                } else if (args.Length == 1 && args[0] == "--setup" || args.Length == 0 && SetupWindow.IsSourcePackage()) {
+                    using (SetupWindow window = new SetupWindow()) Application.Run(window);
                 } else if (args.Length == 0 || (args.Length == 1 && args[0] == "--settings")) {
                     using (SettingsWindow window = new SettingsWindow()) Application.Run(window);
                 } else if (args.Length == 1 && (args[0] == "--history" || args[0] == "--preview")) {

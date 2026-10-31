@@ -4,7 +4,9 @@
 
 包含 Node 22 x64、原生 Windows 组件、产品源文件、产品及 Node 许可证和逐文件完整性清单。解压后保留完整目录，不要单独移动 exe。
 
-尚缺双击安装界面、安装后快捷入口和中断清理修复；活跃托管任务在升级／卸载停机时的保护也未验收。不要用于正在执行真实托管任务的安装。验收通过这些项目后才提供面向普通用户的安装包和操作说明。
+双击安装界面、安装后快捷入口、卸载入口和中断恢复已接入，正在真实 Windows 验收；不要将源码功能存在当成安装体验已经通过。活跃／未知任务会拒绝升级或卸载。尚未验收真实账号的桌面工作及物理睡眠，不用于正在执行真实托管任务的安装。
+
+解压后双击 **CodexPulse.exe**：安装、查看进行中状态、重试失败和再次确认卸载都在同一原生窗口完成。安装后可打开设置，亲自审查保护授权；不会代替授信。卸载时再次打开原解压目录中的程序。简明流程见仓库 [Windows 使用步骤](https://github.com/CJaxonJ/codex-pulse/blob/codex/windows-support/docs/windows-quickstart.md)。
 
 开发验收必须使用独立的 CODEX_HOME 和 CODEX_PULSE_DATA_DIR。安装代码入口为 `runtime\node.exe scripts\install-windows.mjs`；卸载为 `runtime\node.exe scripts\uninstall-windows.mjs`。不能从已安装的 app 目录替换或删除自身运行时。
 

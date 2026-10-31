@@ -19,10 +19,12 @@ export async function uninstallWindows({ sourceRoot = path.resolve(import.meta.d
   const recovered = await recoverWindowsMaintenance({ dataDir, service,
     pluginFor: root => new WindowsPluginOperation({ sourceRoot: root, dataDir, env: childEnv }),
     acquireLease: () => openWindowsInstallationLease({ binary: sourceBinary, env: childEnv }) });
-  if (recovered.operation === "uninstall") return { ok: true, ...recovered };
   const plugin = new WindowsPluginOperation({ sourceRoot: path.join(dataDir, "app"), dataDir, env: childEnv });
-  return removeWindowsInstallation({ dataDir, service, plugin,
+  const result = recovered.operation === "uninstall" ? { ok: true, ...recovered } : await removeWindowsInstallation({ dataDir, service, plugin,
     acquireLease: () => openWindowsInstallationLease({ binary: sourceBinary, env: childEnv }) });
+  let shortcutsRemoved = false;
+  try { await service.call(sourceBinary, ["--shortcut", "remove-if-uninstalled"]); shortcutsRemoved = true; } catch { /* Preserve changed, foreign or newly reinstalled shortcuts. */ }
+  return { ...result, shortcutsRemoved };
 }
 
 if (process.argv[1] && await realpath(process.argv[1]) === await realpath(fileURLToPath(import.meta.url))) {

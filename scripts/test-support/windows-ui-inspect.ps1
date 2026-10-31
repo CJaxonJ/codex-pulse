@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][int]$TargetProcess, [string]$WindowTitle, [string]$Click, [string]$Screenshot, [int]$SelectTabIndex = -1)
+param([Parameter(Mandatory=$true)][int]$TargetProcess, [string]$WindowTitle, [string]$Click, [string]$Screenshot, [int]$SelectTabIndex = -1, [switch]$CloseWindow)
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
 Add-Type -AssemblyName UIAutomationClient
@@ -51,6 +51,7 @@ do {
     Start-Sleep -Milliseconds 100
 } while ([DateTime]::UtcNow -lt $deadline)
 if ($null -eq $native) { throw ('No native application window was found. Own-process HWNDs: ' + (ConvertTo-Json -InputObject @($ownWindows) -Compress)) }
+if ($CloseWindow) { [void][PulseNativeButton]::PostMessage([IntPtr]$native.handle, 0x10, [UIntPtr]::Zero, [IntPtr]::Zero) }
 $window = [Windows.Automation.AutomationElement]::FromHandle([IntPtr]$native.handle)
 if ($window.Current.ProcessId -ne $TargetProcess) { throw 'UIA window belongs to another process.' }
 $all = $window.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)

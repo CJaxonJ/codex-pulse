@@ -12,7 +12,16 @@ namespace CodexPulse {
     // elevated run level, shell action, or modifications to unrelated tasks.
     internal static class StartupTask {
         private const string Source = "https://github.com/CJaxonJ/codex-pulse#windows-startup/v1";
-        private static string Root { get { return Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory).TrimEnd('\\'); } }
+        private static string inspectionRoot;
+        private static string Root { get { return inspectionRoot ?? Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory).TrimEnd('\\'); } }
+        private static bool AtRoot(string value, string name) {
+            string expected = name == null ? Root : Path.Combine(Root, name);
+            if (String.Equals(value, expected, StringComparison.OrdinalIgnoreCase)) return true;
+            // Read-only source inspection may compare the two known spellings
+            // of this data directory. Never resolve a task-provided path.
+            string raw = Path.Combine(BackgroundContext.DataDirectory(), "app");
+            return inspectionRoot != null && String.Equals(value, name == null ? raw : Path.Combine(raw, name), StringComparison.OrdinalIgnoreCase);
+        }
         private static string Sid { get { return WindowsIdentity.GetCurrent().User.Value; } }
         private static string ActionArguments(string data) { return "--startup-background " + Bridge.Quote(data); }
         private static string TaskName(string data) {
@@ -39,9 +48,9 @@ namespace CodexPulse {
             if ((string)d.RegistrationInfo.Source != Source || !SameUser((string)d.Principal.UserId)
                 || (int)d.Principal.LogonType != 3 || (int)d.Principal.RunLevel != 0
                 || (int)d.Actions.Count != 1 || (int)d.Actions.Item(1).Type != 0
-                || !String.Equals((string)d.Actions.Item(1).Path, Path.Combine(Root, "CodexPulse.exe"), StringComparison.OrdinalIgnoreCase)
+                || !AtRoot((string)d.Actions.Item(1).Path, "CodexPulse.exe")
                 || (string)d.Actions.Item(1).Arguments != ActionArguments(data)
-                || !String.Equals((string)d.Actions.Item(1).WorkingDirectory, Root, StringComparison.OrdinalIgnoreCase)
+                || !AtRoot((string)d.Actions.Item(1).WorkingDirectory, null)
                 || (int)d.Triggers.Count != 1 || (int)d.Triggers.Item(1).Type != 9 || !SameUser((string)d.Triggers.Item(1).UserId))
                 throw new InvalidDataException("An existing startup task does not belong to this installation.");
         }
@@ -113,6 +122,10 @@ namespace CodexPulse {
             Environment.SetEnvironmentVariable("CODEX_PULSE_APP_ROOT", Root);
         }
         internal static int Control(string command) {
+            if (command == "installed-status") {
+                inspectionRoot = WindowsPaths.InstalledApp;
+                try { return ControlCore("status"); } finally { inspectionRoot = null; }
+            }
             // A settings window must not recreate startup/context after an
             // uninstall verified absence but before it removes the runtime.
             // Status is read-only; start is fenced by BackgroundContext.Run
@@ -199,7 +212,9 @@ namespace CodexPulse {
         }
         private static void Print(string name, dynamic task) {
             Console.Out.WriteLine(Program.Json.Serialize(new Dictionary<string, object> { { "ok", true }, { "installed", task != null },
-                { "enabled", task != null && (bool)task.Enabled }, { "taskName", name }, { "interactiveUserOnly", true }, { "runLevel", 0 } }));
+                { "enabled", task != null && (bool)task.Enabled }, { "runningInstances", task == null ? 0 : (int)task.GetInstances(0).Count },
+                { "taskState", task == null ? 0 : (int)task.State },
+                { "taskName", name }, { "interactiveUserOnly", true }, { "runLevel", 0 } }));
         }
     }
 }

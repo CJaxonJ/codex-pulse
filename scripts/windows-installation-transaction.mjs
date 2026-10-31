@@ -128,7 +128,7 @@ export async function replaceWindowsRuntime({ dataDir, stagedName, service, pref
       } catch (rollbackError) {
         throw new Error("安装失败且无法安全确认完整回滚，已保留运行目录、备份和安装记录，请勿删除。", { cause: new AggregateError([cause, rollbackError]) });
       }
-      throw new Error("安装未成功，原运行目录和启动状态已恢复；失败版本已保留供检查。", { cause });
+      throw Object.assign(new Error("安装未成功，原运行目录和启动状态已恢复；失败版本已保留供检查。", { cause }), { code: "PULSE_INSTALL_ROLLED_BACK", phase: record.phase });
     }
     // Delete only the exact backup whose contents were verified against the
     // original ownership marker. A still-open old notice can prevent deletion;

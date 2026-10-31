@@ -13,6 +13,7 @@ import { pulsePluginId } from "./windows-plugin-operation.mjs";
 import { writeWindowsBundleManifest } from "./windows-bundle-manifest.mjs";
 import { packageWindows } from "./package-windows.mjs";
 import { ManagedTaskStore } from "../src/managed-task-store.mjs";
+import { inspectWindowsUI, waitForWindowsUI } from "./test-support/windows-ui-fixture.mjs";
 
 if (process.platform !== "win32") throw Error("This acceptance requires real Windows");
 const execute = promisify(execFile);
@@ -78,6 +79,31 @@ async function verify(f, body) {
   finally { try { await f.cleanup(); } catch (cleanup) { throw primary ? new AggregateError([primary, cleanup], "Installer acceptance and cleanup failed") : cleanup; } }
 }
 
+async function setupUI(f, { uninstall = false } = {}) {
+  const session = f.start(), title = "Codex Pulse · 安装";
+  const button = (ui, name) => ui.buttons.some(b => b.name === name && b.enabled && !b.offscreen);
+  try {
+    await waitForWindowsUI(session, ui => button(ui, uninstall ? "卸载" : "安装"), { title });
+    if (uninstall) {
+      await inspectWindowsUI(session, { title, click: "卸载" });
+      await waitForWindowsUI(session, ui => button(ui, "确认卸载"), { title });
+      await inspectWindowsUI(session, { title, click: "确认卸载" });
+    } else await inspectWindowsUI(session, { title, click: "安装" });
+    const state = await waitForWindowsUI(session, ui => button(ui, uninstall ? "重新安装" : "打开设置") || button(ui, uninstall ? "重试卸载" : "重试安装"), { title, timeoutMs: 180000 });
+    assert(button(state, uninstall ? "重新安装" : "打开设置"), state.content.join("\n"));
+    assert.doesNotMatch(state.content.join("\n"), /node\.exe|install-windows\.mjs|powershell/i);
+    return state;
+  } finally {
+    if (session.child.exitCode == null) {
+      await waitForWindowsUI(session, ui => button(ui, "关闭") || button(ui, "返回"), { title, timeoutMs: 180000 });
+      // A failed uninstall retains its inline confirmation; Back then Close.
+      let state = await inspectWindowsUI(session, { title });
+      if (button(state, "返回")) await inspectWindowsUI(session, { title, click: "返回" });
+      await inspectWindowsUI(session, { title, click: "关闭" }); await session.closed;
+    }
+  }
+}
+
 // Kill only a ChildProcess created by this test, after real activation. The
 // next unmodified entry must recover disk state and official plugin effects;
 // a thrown callback inside the original process is not a crash-recovery proof.
@@ -133,7 +159,8 @@ await verify(failed, async () => {
 const f = await fixture();
 await verify(f, async () => {
   await writeFile(path.join(f.env.CODEX_HOME, "config.toml"), '# unrelated user setting\nmodel = "user-selected-model"\n');
-  const installed = await f.run(); assert.equal(installed.code, 0, installed.stderr); assert.equal(installed.value.ok, true);
+  await setupUI(f);
+  const shortcut = path.join(f.dataDir, "shortcuts", "Codex Pulse.lnk"); assert((await readFile(shortcut)).length > 100);
   const original = await f.service.capture(true);
   assert.deepEqual(original, { startup: { installed: true, enabled: true }, running: true });
   const config = path.join(f.env.CODEX_HOME, "config.toml"), before = await readFile(config, "utf8");
@@ -171,7 +198,8 @@ await verify(f, async () => {
   assert((await readdir(f.dataDir)).includes("uninstallation-in-progress.json"));
   assert.equal(await runtimeFingerprint(path.join(f.dataDir, "app")), hash);
   await writeFile(serviceFile, serviceSource); await writeWindowsBundleManifest(f.appRoot, { appVersion, nodeVersion: process.version });
-  const removed = await f.uninstall(); assert.equal(removed.code, 0, removed.stderr); assert.equal(removed.value.ok, true); assert.equal(removed.value.repaired, true);
+  await setupUI(f, { uninstall: true });
+  await assert.rejects(readFile(shortcut), { code: "ENOENT" });
   assert.deepEqual(await f.service.capture(false), { startup: { installed: false, enabled: false }, running: false });
   const names = await readdir(f.dataDir);
   for (const name of ["app", "marketplace", "startup-context.json", "windows-installation.json", "uninstallation-in-progress.json"]) assert(!names.includes(name), name + " was not removed");
@@ -186,5 +214,6 @@ console.log(JSON.stringify({ ok: true, nativeWindowsInstallerEntry: true, realOf
   verifiedZipEntryAndBundledNode: true, corruptBundleRejectedBeforeStop: true, nodeLicensePreserved: true, archiveSHA256: packaged.checksum,
   maintenanceBlocksQueuedActivation: true,
   killedInstallerRecoveredByNextEntry: true, interruptedUninstallResumed: true,
+  nativeSetupInstallAndUninstall: true, ownedShortcutCreatedAndRemoved: true,
   accountRPC: "isolated synthetic peer", modelCalls: 0, realResetCardsUsed: 0,
   guiPackageOrPhysicalSleepVerified: false, productionInstallTouched: false }));

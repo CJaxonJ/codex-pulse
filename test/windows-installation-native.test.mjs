@@ -11,11 +11,21 @@ import { WindowsRuntimeService } from "../scripts/windows-runtime-service.mjs";
 import { openWindowsInstallationLease } from "../src/windows-installation-lease.mjs";
 
 const windows = { skip: process.platform !== "win32", timeout: 240000 };
+function details(error) {
+  const result = [];
+  while (error && result.length < 6) { result.push({ name: error.name, code: error.code, phase: error.phase, operation: error.operation, message: String(error.message).slice(0, 1200) }); error = error.cause; }
+  return JSON.stringify(result);
+}
 async function setup() {
   const f = await windowsRecoveryBackgroundFixture({ installed: false, nativeRateReads: true });
   await f.cli(["background-prepare"]);
   const sourceBinary = path.join(f.appRoot, "CodexPulse.exe"), service = new WindowsRuntimeService({ dataDir: f.dataDir, sourceBinary, env: f.env, startAtLogin: false });
-  const lease = () => openWindowsInstallationLease({ binary: sourceBinary, env: f.env });
+  const lease = async () => {
+    const status = await service.call(sourceBinary, ["--startup", "installed-status"]);
+    assert.equal(status.runningInstances, 0, "A replacement must wait for scheduler instance retirement as well as process exit");
+    assert(status.installed ? [1, 2].includes(status.taskState) : status.taskState === 0);
+    return openWindowsInstallationLease({ binary: sourceBinary, env: f.env });
+  };
   const stage = async version => {
     const stagedName = "app-install-" + randomUUID().replaceAll("-", "");
     const directory = path.join(f.dataDir, stagedName); await cp(f.appRoot, directory, { recursive: true });
@@ -57,9 +67,7 @@ test("real Windows installation transaction restores actual old runtime, context
     f.service.verify = async (...args) => { await verify(...args); assert.equal(await version(f.target), "0.9.22"); validatedNew = true; throw Error("deliberate failure after actual new host/task validation"); };
     let upgradeFailure;
     await assert.rejects(f.install(await f.stage("0.9.22")), error => { upgradeFailure = error; return /原运行目录和启动状态已恢复/.test(error.message); });
-    const causes = []; let cause = upgradeFailure;
-    while (cause && causes.length < 6) { causes.push({ name: cause.name, code: cause.code, message: String(cause.message).slice(0, 1200) }); cause = cause.cause; }
-    assert(validatedNew, "The failure must occur after the real new version was activated, not before switching: " + JSON.stringify(causes));
+    assert(validatedNew, "The failure must occur after the real new version was activated, not before switching: " + details(upgradeFailure));
     assert.equal(await runtimeFingerprint(f.target), oldHash); assert.equal(await version(f.target), "0.9.21");
     assert.deepEqual(await readFile(path.join(f.dataDir, "windows-installation.json")), oldMarker);
     assert.deepEqual(await readFile(path.join(f.dataDir, "startup-context.json")), oldContext);
@@ -71,7 +79,9 @@ test("real Windows installation transaction restores actual old runtime, context
     assert.deepEqual(await f.queueLog(), []);
     // Also prove a subsequent ordinary upgrade succeeds after the rollback.
     f.service.verify = verify;
-    const upgraded = await f.install(await f.stage("0.9.22"));
+    let upgraded;
+    try { upgraded = await f.install(await f.stage("0.9.22")); }
+    catch (error) { assert.fail("Subsequent normal upgrade failed: " + details(error)); }
     assert.equal(upgraded.ok, true); assert.equal(upgraded.cleanupPending, false); assert.equal(await version(f.target), "0.9.22");
     assert.deepEqual(await f.service.capture(true), original);
   } catch (error) { failure = error; throw error; }

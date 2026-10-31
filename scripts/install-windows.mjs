@@ -47,7 +47,7 @@ export async function installWindows({ sourceRoot = path.resolve(import.meta.dir
   }
   await verifyWindowsBundle(staged);
   const plugin = new WindowsPluginOperation({ sourceRoot, dataDir, env: childEnv });
-  return replaceWindowsRuntime({ dataDir, stagedName, service,
+  const result = await replaceWindowsRuntime({ dataDir, stagedName, service,
     acquireLease: () => openWindowsInstallationLease({ binary: sourceBinary, env: childEnv }),
     preflight: async () => {
       // Read fresh account quota through the existing owned App Server bridge;
@@ -63,6 +63,9 @@ export async function installWindows({ sourceRoot = path.resolve(import.meta.dir
     installSideEffects: () => plugin.install(), rollbackSideEffects: () => plugin.rollback(),
     captureSideEffects: () => plugin.rollbackSnapshot(),
   });
+  let shortcutCreated = false;
+  try { await service.call(sourceBinary, ["--shortcut", "create"]); shortcutCreated = true; } catch { /* A foreign shortcut must not undo a healthy installation. */ }
+  return { ...result, shortcutCreated };
 }
 
 // Node resolves the module to its real path; argv can still use an 8.3 alias
@@ -70,7 +73,8 @@ export async function installWindows({ sourceRoot = path.resolve(import.meta.dir
 const isEntry = process.argv[1] && await realpath(process.argv[1]) === await realpath(fileURLToPath(import.meta.url));
 if (isEntry) {
   try {
-    const result = await installWindows();
+    if (process.argv.slice(2).some(arg => arg !== "--no-start-at-login")) throw Error("安装选项不正确。");
+    const result = await installWindows({ startAtLogin: !process.argv.includes("--no-start-at-login") });
     console.log(JSON.stringify({ ...result, hookTrustRequired: true,
       note: "监控已安装。请在 Codex Pulse 的保护授权窗口亲自确认；不会替你授信、重启 Codex 或使用重置卡。" }));
   } catch (error) { console.error(JSON.stringify({ ok: false, error: error.message })); process.exitCode = 1; }

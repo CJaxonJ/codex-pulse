@@ -24,7 +24,7 @@ export class WindowsRuntimeService {
   }
   async call(binary, args) {
     try { return JSON.parse((await execute(binary, args, { env: this.env, encoding: "utf8", windowsHide: true, timeout: 45000 })).stdout.replace(/^\uFEFF/, "")); }
-    catch (cause) { throw new Error("Windows 服务操作未确认：" + args[0] + (args[0] === "--startup" ? "/" + args[1] : ""), { cause }); }
+    catch (cause) { throw Object.assign(new Error("Windows 服务操作未确认：" + args[0] + (args[0] === "--startup" ? "/" + args[1] : ""), { cause }), { operation: args[0] === "--startup" ? "startup/" + args[1] : args[0] }); }
   }
   async capture(hadOld) {
     const binary = hadOld ? this.target() : this.sourceBinary;
@@ -44,6 +44,22 @@ export class WindowsRuntimeService {
       if (startup.installed) await this.call(binary, ["--startup", "disable"]);
     }
     await this.call(binary, ["--stop-background"]);
+    if (hasTarget) await this.waitForSchedulerIdle();
+  }
+  async waitForSchedulerIdle({ timeoutMs = 15000, now = Date.now, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
+    const deadline = now() + timeoutMs;
+    do {
+      // A stopped process is not proof the scheduler released its instance.
+      // IgnoreNew can otherwise silently discard the replacement start.
+      // Query using the NEW source component, including for older runtimes.
+      const state = await this.call(this.sourceBinary, ["--startup", "installed-status"]);
+      if (typeof state.installed !== "boolean" || !Number.isSafeInteger(state.runningInstances) || state.runningInstances < 0
+          || ![0, 1, 2, 3, 4].includes(state.taskState) || state.installed && state.taskState === 0
+          || !state.installed && (state.runningInstances !== 0 || state.taskState !== 0)) throw Error("自启实例状态未知，未继续切换运行目录。");
+      if (state.runningInstances === 0 && (!state.installed || [1, 2].includes(state.taskState))) return;
+      await sleep(200);
+    } while (now() < deadline);
+    throw Object.assign(new Error("自启实例尚未退出，未继续切换运行目录。"), { code: "PULSE_STARTUP_STILL_RUNNING" });
   }
   async undoActivation(original) {
     const startup = await this.call(this.target(), ["--startup", "status"]);
@@ -85,7 +101,7 @@ export class WindowsRuntimeService {
           && (await this.call(this.target(), ["--background-info"])).running) return;
       await new Promise(resolve => setTimeout(resolve, 200));
     } while (Date.now() < deadline);
-    throw Error("新后台未确认就绪，安装验证失败。");
+    throw Object.assign(new Error("新后台未确认就绪，安装验证失败。"), { code: "PULSE_RUNTIME_NOT_READY" });
   }
   async activate(original, fresh) {
     await this.call(this.target(), ["--startup", "configure"]);
