@@ -8,6 +8,7 @@ import { windowsUIFixture, inspectWindowsUI, waitForWindowsUI } from "./test-sup
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { codexInvocation } from "../src/platform-runtime.mjs";
+import { randomUUID } from "node:crypto";
 
 if(process.platform!=="win32")throw Error("This acceptance requires native Windows, not a platform mock");
 const project=path.resolve(import.meta.dirname,"..");
@@ -15,6 +16,11 @@ const versionCall=codexInvocation(resolveCodexBinary(),["--version"]);
 const actualCodexVersion=(await promisify(execFile)(versionCall.file,versionCall.args,{encoding:"utf8",timeout:15000,windowsHide:true})).stdout.trim().split(/\s+/).at(-1);
 assert.equal(actualCodexVersion,"0.163.0-alpha.11.1","Acceptance must use the actually pinned official CLI, not another installation found first");
 const fixture=await protectionFixture(project);
+// Parse the exact production argument shape, but terminate in help before any
+// enqueue. Hidden flags need not appear in help text. No real thread is used.
+const queueHelp=codexInvocation(resolveCodexBinary(),["queue","--thread",randomUUID(),"--message","Codex Pulse isolated parser probe","--help"]);
+const queueUsage=(await promisify(execFile)(queueHelp.file,queueHelp.args,{env:{...process.env,CODEX_HOME:fixture.home},encoding:"utf8",timeout:15000,windowsHide:true})).stdout;
+assert.match(queueUsage,/usage:/i,"Official Windows CLI must parse the queued-message flags without enqueueing");
 const originalHome=process.env.CODEX_HOME;
 process.env.CODEX_HOME=fixture.home;
 const client=new AppServerClient();

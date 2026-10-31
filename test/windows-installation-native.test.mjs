@@ -23,7 +23,7 @@ async function setup() {
   const lease = async () => {
     const status = await service.call(sourceBinary, ["--startup", "installed-status"]);
     assert.equal(status.runningInstances, 0, "A replacement must wait for scheduler instance retirement as well as process exit");
-    assert(status.installed ? [1, 2].includes(status.taskState) : status.taskState === 0);
+    assert(status.installed ? [1, 3].includes(status.taskState) : status.taskState === 0);
     return openWindowsInstallationLease({ binary: sourceBinary, env: f.env });
   };
   const stage = async version => {

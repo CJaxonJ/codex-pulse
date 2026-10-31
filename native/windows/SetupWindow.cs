@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -47,7 +49,7 @@ namespace CodexPulse {
                 primary.Text = "确认卸载"; primary.AccessibleName = primary.Text; close.Text = "返回"; close.AccessibleName = close.Text;
                 remove.Visible = false; login.Visible = false;
             });
-            remove.Visible = File.Exists(Path.Combine(BackgroundContext.DataDirectory(), "windows-installation.json"));
+            remove.Visible = HasRemovalEntry();
             if (remove.Visible) { heading.Text = "管理 Codex Pulse"; primary.Text = "更新或修复"; primary.AccessibleName = primary.Text; login.Visible = false; }
             actions.Controls.Add(primary); actions.Controls.Add(close); actions.Controls.Add(remove);
             layout.Controls.Add(heading, 0, 0); layout.Controls.Add(description, 0, 1); layout.Controls.Add(login, 0, 2);
@@ -55,10 +57,14 @@ namespace CodexPulse {
             Controls.Add(layout); CancelButton = close;
             FormClosing += delegate(object sender, FormClosingEventArgs args) { if (busy) args.Cancel = true; };
         }
+        private static bool HasRemovalEntry() {
+            string data = BackgroundContext.DataDirectory();
+            return File.Exists(Path.Combine(data, "windows-installation.json")) || File.Exists(Path.Combine(data, "uninstallation-in-progress.json"));
+        }
         private void Reset() {
             confirmRemoval = false; heading.Text = completed ? "Codex Pulse 已安装" : "安装 Codex Pulse";
             description.Text = "额度提醒、重置消息和任务进度保护。\n安装到当前用户目录，无需管理员权限。";
-            remove.Visible = File.Exists(Path.Combine(BackgroundContext.DataDirectory(), "windows-installation.json"));
+            remove.Visible = HasRemovalEntry();
             primary.Text = completed ? "打开设置" : remove.Visible ? "更新或修复" : "安装"; primary.AccessibleName = primary.Text; close.Text = "关闭"; close.AccessibleName = close.Text;
             login.Visible = !completed && !remove.Visible;
         }
@@ -123,6 +129,7 @@ namespace CodexPulse {
 
     internal static class SetupShortcut {
         private const string Description = "https://github.com/CJaxonJ/codex-pulse#start-menu/v1";
+        internal static string Stage = "none";
         private static string App { get { return WindowsPaths.InstalledApp; } }
         private static string Folder {
             get {
@@ -134,7 +141,7 @@ namespace CodexPulse {
             }
         }
         private static string FileName { get { return Path.Combine(Folder, "Codex Pulse.lnk"); } }
-        private static dynamic Link(bool create) {
+        private static IShellLinkW Link(bool create) {
             if (!System.Text.RegularExpressions.Regex.IsMatch(Folder, @"^[A-Za-z]:[\\/]")) throw new IOException();
             for (string cursor = Folder; !String.IsNullOrEmpty(cursor); cursor = Path.GetDirectoryName(cursor)) {
                 try { if ((File.GetAttributes(cursor) & FileAttributes.ReparsePoint) != 0) throw new IOException(); }
@@ -147,28 +154,61 @@ namespace CodexPulse {
             } catch (DirectoryNotFoundException) { } catch (FileNotFoundException) { }
             if (!exists && !create) return null;
             if (!Directory.Exists(Folder)) Directory.CreateDirectory(Folder);
-            dynamic shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell", true));
-            dynamic link = shell.CreateShortcut(FileName);
-            if (exists && ((string)link.Description != Description || (string)link.Arguments != "--settings"
-                || !String.Equals((string)link.TargetPath, Path.Combine(App, "CodexPulse.exe"), StringComparison.OrdinalIgnoreCase)
-                || !String.Equals((string)link.WorkingDirectory, App, StringComparison.OrdinalIgnoreCase))) throw new IOException();
-            return link;
+            Stage = "create-shell-link";
+            IShellLinkW link = (IShellLinkW)new ShellLinkObject();
+            try {
+                if (exists) {
+                    if (new FileInfo(FileName).Length > 1024 * 1024) throw new IOException();
+                    Stage = "load-owned-link"; ((IPersistFile)link).Load(FileName, 0);
+                    StringBuilder description = new StringBuilder(512), arguments = new StringBuilder(1024), target = new StringBuilder(260), directory = new StringBuilder(260);
+                    link.GetDescription(description, description.Capacity); link.GetArguments(arguments, arguments.Capacity);
+                    link.GetPath(target, target.Capacity, IntPtr.Zero, 4); // SLGP_RAWPATH; never Resolve a foreign target.
+                    link.GetWorkingDirectory(directory, directory.Capacity);
+                    if (description.ToString() != Description || arguments.ToString() != "--settings"
+                        || !String.Equals(target.ToString(), Path.Combine(App, "CodexPulse.exe"), StringComparison.OrdinalIgnoreCase)
+                        || !String.Equals(directory.ToString(), App, StringComparison.OrdinalIgnoreCase)) throw new IOException();
+                }
+                return link;
+            } catch { Marshal.FinalReleaseComObject(link); throw; }
         }
         internal static void Create() {
             if ((File.GetAttributes(App) & FileAttributes.ReparsePoint) != 0) throw new IOException();
-            if (!File.Exists(Path.Combine(App, "CodexPulse.exe")) || !File.Exists(Path.Combine(BackgroundContext.DataDirectory(), "windows-installation.json"))) throw new IOException();
-            dynamic link = Link(true); link.TargetPath = Path.Combine(App, "CodexPulse.exe"); link.Arguments = "--settings";
-            link.WorkingDirectory = App; link.Description = Description; link.IconLocation = Path.Combine(App, "CodexPulse.exe") + ",0"; link.Save();
+            foreach (string entry in new[] { Path.Combine(App, "CodexPulse.exe"), Path.Combine(BackgroundContext.DataDirectory(), "windows-installation.json") }) {
+                if ((File.GetAttributes(entry) & (FileAttributes.ReparsePoint | FileAttributes.Directory)) != 0) throw new IOException();
+            }
+            using (FileStream guard = Guard()) {
+                IShellLinkW link = Link(true);
+                try {
+                    Stage = "set-target"; link.SetPath(Path.Combine(App, "CodexPulse.exe"));
+                    Stage = "set-arguments"; link.SetArguments("--settings");
+                    Stage = "set-directory"; link.SetWorkingDirectory(App);
+                    Stage = "set-description"; link.SetDescription(Description);
+                    Stage = "set-icon"; link.SetIconLocation(Path.Combine(App, "CodexPulse.exe"), 0);
+                    Stage = "save-link"; ((IPersistFile)link).Save(FileName, true);
+                } finally { Marshal.FinalReleaseComObject(link); }
+            }
         }
-        internal static void Remove() { if (Link(false) != null) File.Delete(FileName); }
+        private static FileStream Guard() {
+            string file = Path.Combine(BackgroundContext.DataDirectory(), "shortcut.guard");
+            try { if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0) throw new IOException(); }
+            catch (FileNotFoundException) { } catch (DirectoryNotFoundException) { }
+            return File.Open(file, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        }
+        private static void RemoveCore() {
+            IShellLinkW link = Link(false);
+            if (link != null) { Marshal.FinalReleaseComObject(link); Stage = "remove-owned-link"; File.Delete(FileName); }
+        }
+        internal static void Remove() { using (FileStream guard = Guard()) RemoveCore(); }
         internal static void RemoveIfUninstalled() {
             // A subsequent installer may have committed while the old
             // uninstaller was finishing. Never erase its new shortcut.
-            foreach (string entry in new[] { App, Path.Combine(BackgroundContext.DataDirectory(), "windows-installation.json") }) {
-                try { File.GetAttributes(entry); throw new IOException(); }
-                catch (DirectoryNotFoundException) { } catch (FileNotFoundException) { }
+            using (FileStream guard = Guard()) {
+                foreach (string entry in new[] { App, Path.Combine(BackgroundContext.DataDirectory(), "windows-installation.json") }) {
+                    try { File.GetAttributes(entry); throw new IOException(); }
+                    catch (DirectoryNotFoundException) { } catch (FileNotFoundException) { }
+                }
+                RemoveCore();
             }
-            Remove();
         }
     }
 }

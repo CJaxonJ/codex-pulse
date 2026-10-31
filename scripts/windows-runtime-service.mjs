@@ -56,7 +56,8 @@ export class WindowsRuntimeService {
       if (typeof state.installed !== "boolean" || !Number.isSafeInteger(state.runningInstances) || state.runningInstances < 0
           || ![0, 1, 2, 3, 4].includes(state.taskState) || state.installed && state.taskState === 0
           || !state.installed && (state.runningInstances !== 0 || state.taskState !== 0)) throw Error("自启实例状态未知，未继续切换运行目录。");
-      if (state.runningInstances === 0 && (!state.installed || [1, 2].includes(state.taskState))) return;
+      // TASK_STATE_DISABLED=1, READY=3. QUEUED=2 is NOT stopped.
+      if (state.runningInstances === 0 && (!state.installed || [1, 3].includes(state.taskState))) return;
       await sleep(200);
     } while (now() < deadline);
     throw Object.assign(new Error("自启实例尚未退出，未继续切换运行目录。"), { code: "PULSE_STARTUP_STILL_RUNNING" });

@@ -24,9 +24,14 @@ test("missing, malformed, denied and still-running scheduler states never author
   await assert.rejects(denied.waitForSchedulerIdle(), { code: "EACCES" });
 });
 test("zero visible instances cannot authorize switching while the scheduler is still queued or running", async () => {
-  for (const taskState of [undefined, 0, 3, 4, 5]) {
+  for (const taskState of [undefined, 0, 2, 4, 5]) {
     const service = Object.create(WindowsRuntimeService.prototype); let now = 0;
     service.call = async () => ({ installed: true, runningInstances: 0, taskState });
     await assert.rejects(service.waitForSchedulerIdle({ timeoutMs: 400, now: () => now, sleep: async ms => { now += ms; } }));
   }
+});
+test("documented Ready state permits switching only with zero instances", async () => {
+  const service = Object.create(WindowsRuntimeService.prototype);
+  service.call = async () => ({ installed: true, runningInstances: 0, taskState: 3 });
+  await service.waitForSchedulerIdle();
 });

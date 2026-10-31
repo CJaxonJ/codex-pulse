@@ -68,3 +68,17 @@ test("native shortcuts are profile-scoped, tolerate long/short path spellings, a
   await assert.rejects(call("create")); await assert.rejects(call("remove"));
   assert.deepEqual(await readFile(file), original);
 });
+test("a final interrupted uninstall still offers removal even after its installation marker disappeared", windows, async () => {
+  const f = await windowsUIFixture();
+  const journal = path.join(f.dataDir, "uninstallation-in-progress.json"), bytes = '{"phase":"cleaning_context"}';
+  await writeFile(journal, bytes);
+  const session = f.start("--setup");
+  try {
+    await waitForWindowsUI(session, ui => button(ui, "卸载")?.enabled, { title });
+    await inspectWindowsUI(session, { title, click: "卸载" });
+    await waitForWindowsUI(session, ui => button(ui, "确认卸载")?.enabled, { title });
+    await inspectWindowsUI(session, { title, click: "返回" });
+    assert.equal(await readFile(journal, "utf8"), bytes, "Entering/backing out of confirmation must not repair or remove anything");
+    await inspectWindowsUI(session, { title, click: "关闭" }); await session.closed;
+  } finally { if (session.child.exitCode == null) session.child.kill(); }
+});
