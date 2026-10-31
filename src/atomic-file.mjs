@@ -1,6 +1,22 @@
-import { mkdir, open, rename, rm } from "node:fs/promises";
+import { mkdir, open, rename, rm, readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+
+// Readers can see an actual sharing denial while a Windows snapshot is being
+// replaced. Only retry I/O contention; never hide malformed JSON as absence.
+export async function readJsonSnapshot(file, { optional = false, platform = process.platform, read = readFile,
+  retryDelays = [10,20,40,80,160,200], sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    let text;
+    try { text = await read(file, "utf8"); }
+    catch (error) {
+      if (optional && error.code === "ENOENT") return null;
+      if (platform !== "win32" || !["EPERM", "EACCES", "EBUSY"].includes(error.code) || attempt >= retryDelays.length) throw error;
+      await sleep(retryDelays[attempt]); continue;
+    }
+    return JSON.parse(text);
+  }
+}
 
 // A deleted directory can remain delete-pending until its final Windows
 // handle closes. Retry exclusive mkdir, never reuse an existing directory or

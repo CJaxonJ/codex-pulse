@@ -2,6 +2,8 @@ import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { RuntimeMaintenanceGuard, assertMaintenanceRuntimeProtocol } from "../src/runtime-maintenance-guard.mjs";
+import { readJsonSnapshot } from "../src/atomic-file.mjs";
 
 const execute = promisify(execFile);
 export class WindowsRuntimeService {
@@ -10,6 +12,16 @@ export class WindowsRuntimeService {
     this.dataDir = dataDir; this.sourceBinary = sourceBinary; this.env = { ...env, CODEX_PULSE_DATA_DIR: dataDir }; this.startAtLogin = startAtLogin;
   }
   target() { return path.join(this.dataDir, "app", "CodexPulse.exe"); }
+  async reserveStop(hadOld) {
+    const reservation = await new RuntimeMaintenanceGuard(this.dataDir).reserveMaintenance();
+    try {
+      if (hadOld) {
+        const original = await this.capture(true);
+        await assertMaintenanceRuntimeProtocol(path.join(this.dataDir, "app"), { running: original.running, health: await this.health() });
+      }
+      return reservation;
+    } catch (error) { await reservation.release(); throw error; }
+  }
   async call(binary, args) {
     try { return JSON.parse((await execute(binary, args, { env: this.env, encoding: "utf8", windowsHide: true, timeout: 45000 })).stdout.replace(/^\uFEFF/, "")); }
     catch (cause) { throw new Error("Windows 服务操作未确认：" + args[0] + (args[0] === "--startup" ? "/" + args[1] : ""), { cause }); }
@@ -50,12 +62,10 @@ export class WindowsRuntimeService {
     if (state.running || state.startup.installed || state.startup.enabled) throw Error("卸载后的后台或自启状态未确认。");
   }
   async health() {
-    try { return JSON.parse(await readFile(path.join(this.dataDir, "background-status.json"), "utf8")); }
-    catch (e) { if (e.code === "ENOENT") return {}; throw e; }
+    return await readJsonSnapshot(path.join(this.dataDir, "background-status.json"), { optional: true }) || {};
   }
   async quota() {
-    try { return JSON.parse(await readFile(path.join(this.dataDir, "state.json"), "utf8")); }
-    catch (e) { if (e.code === "ENOENT") return {}; throw e; }
+    return await readJsonSnapshot(path.join(this.dataDir, "state.json"), { optional: true }) || {};
   }
   async start(enabled, hasContext = true, requireQuota = true) {
     const before = await this.health();

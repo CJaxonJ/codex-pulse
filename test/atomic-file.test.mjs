@@ -1,12 +1,27 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirExclusive, renameAtomic, writeJsonSnapshotAtomic } from "../src/atomic-file.mjs";
+import { mkdirExclusive, renameAtomic, writeJsonSnapshotAtomic, readJsonSnapshot } from "../src/atomic-file.mjs";
 import { mkdtemp, mkdir, readdir, writeFile, readFile, rename } from "node:fs/promises";
 import { spawn, fork } from "node:child_process";
 import { once } from "node:events";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import os from "node:os";
+
+test("snapshot reads retry actual contention codes without hiding unknown, malformed or permanently denied data", async () => {
+  let attempts = 0;
+  assert.deepEqual(await readJsonSnapshot("snapshot", { platform: "win32", sleep: async () => {}, read: async () => {
+    if (++attempts < 3) throw Object.assign(Error("busy"), { code: "EBUSY" }); return '{"ready":true}';
+  } }), { ready: true });
+  assert.equal(attempts, 3);
+  for (const [platform, code, count] of [["win32", "EACCES", 7], ["darwin", "EBUSY", 1], ["win32", "EINVAL", 1], ["win32", "ENOENT", 1]]) {
+    let calls = 0;
+    await assert.rejects(readJsonSnapshot("snapshot", { platform, sleep: async () => {}, read: async () => { calls++; throw Object.assign(Error(code), { code }); } }), { code });
+    assert.equal(calls, count);
+  }
+  assert.equal(await readJsonSnapshot("missing", { optional: true, read: async () => { throw Object.assign(Error("missing"), { code: "ENOENT" }); } }), null);
+  await assert.rejects(readJsonSnapshot("damaged", { optional: true, read: async () => "{" }), SyntaxError);
+});
 
 test("exclusive Windows lock mkdir retries delete-pending denial without claiming an existing lock", async () => {
   const calls = [], waits = [];

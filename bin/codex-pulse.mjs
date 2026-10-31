@@ -8,6 +8,7 @@ import { pulseDataDirectory, resolveCodexExecutable } from "../src/platform-runt
 import { ensureWindowsPrivateDirectory } from "../src/private-directory.mjs";
 import { acquireWatcherInstance } from "../src/watcher-instance.mjs";
 import { hostedWatcherStop } from "../src/hosted-watcher-stop.mjs";
+import { RuntimeMaintenanceGuard } from "../src/runtime-maintenance-guard.mjs";
 import { writeJsonSnapshotAtomic } from "../src/atomic-file.mjs";
 import { currentWindowsProcessIdentity } from "../src/windows-process-bridge.mjs";
 
@@ -507,6 +508,7 @@ async function watch() {
 }
 
 async function watchOwned() {
+  const operationGuard = process.platform === "win32" ? new RuntimeMaintenanceGuard(dataDir) : null;
   const client = new AppServerClient();
   const preferencesStore = new PulsePreferencesStore(dataDir);
   const tiboClient = new TiboResetClient({
@@ -560,8 +562,10 @@ async function watchOwned() {
   const shutdown = () => {
     stopped = true;
     clearInterval(timer);
-    client.stop();
-    process.exit(0);
+    const finish = () => { client.stop(); process.exit(0); };
+    // Do not exit in the operation gate's mkdir -> owner.json gap either.
+    if (operationGuard) void operationGuard.waitForOwnershipPublication().then(finish, finish);
+    else finish();
   };
   // The watcher record and maintenance gate are now fully published/released.
   // Native stop or a dead supervisor may safely terminate this owned process.
@@ -588,37 +592,45 @@ async function watchOwned() {
       state = { ...state, fiveHour: evaluated.state,
         resetCredits: creditEvaluation.state, lastSummary: summary, quotaCheckedAt: now, quotaSampleId: randomUUID() };
       await saveState(state);
-      try {
-        await managedController.reconcile(summary, { now });
-      } catch (error) {
-        log("managed task reconciliation failed", { error: error.message });
-      }
-      try {
-        await continuityController.reconcile(summary, { now });
-      } catch (error) {
-        log("ordinary chat continuity reconciliation failed", { error: error.message });
-      }
-      // Existing protection/recovery always runs first. A slow card/account RPC
-      // must not delay publishing 9% or interrupting a quota-draining task.
-      // Test quota fixtures are never allowed to reach real consume RPCs.
-      if (!process.env.CODEX_PULSE_TEST_QUOTA_SUMMARY_PATH) {
-        try { redemption = await autoRedeemer.poll(); }
-        catch { redemption = { events: [{ type: "credit_auto_failed", reason: "local_failure" }] }; }
-        if (redemption.raw) summary = summarizeRateLimits(redemption.raw);
-        evaluated = evaluateCreditAwareQuota(beforeSample, summary, redemption, { now, config });
-        creditEvaluation = evaluateResetCredits(beforeSample.resetCredits, summary, { now });
-        state = { ...state, creditResetAttributionUntil: evaluated.attributionUntil,
-          fiveHour: evaluated.state, resetCredits: creditEvaluation.state, lastSummary: summary };
-        await saveState(state);
-        if (["reset", "alreadyRedeemed", "settled"].includes(redemption.status)) {
-          // Publish the post-consume sample BEFORE waking. Reuse the existing
-          // safety gate rather than letting redemption itself start any task.
-          try { await managedController.reconcile(summary, { now }); }
-          catch (error) { log("post-credit task reconciliation failed", { error: error.message }); }
-          try { await continuityController.reconcile(summary, { now }); }
-          catch (error) { log("post-credit chat reconciliation failed", { error: error.message }); }
+      if (stopped) return;
+      const performProtectedOperations = async () => {
+        if (stopped) return;
+        try {
+          await managedController.reconcile(summary, { now });
+        } catch (error) {
+          log("managed task reconciliation failed", { error: error.message });
         }
-      }
+        try {
+          await continuityController.reconcile(summary, { now });
+        } catch (error) {
+          log("ordinary chat continuity reconciliation failed", { error: error.message });
+        }
+        // Existing protection/recovery always runs first. A slow card/account RPC
+        // must not delay publishing 9% or interrupting a quota-draining task.
+        // Test quota fixtures are never allowed to reach real consume RPCs.
+        if (!process.env.CODEX_PULSE_TEST_QUOTA_SUMMARY_PATH) {
+          try { redemption = await autoRedeemer.poll(); }
+          catch { redemption = { events: [{ type: "credit_auto_failed", reason: "local_failure" }] }; }
+          if (redemption.raw) summary = summarizeRateLimits(redemption.raw);
+          evaluated = evaluateCreditAwareQuota(beforeSample, summary, redemption, { now, config });
+          creditEvaluation = evaluateResetCredits(beforeSample.resetCredits, summary, { now });
+          state = { ...state, creditResetAttributionUntil: evaluated.attributionUntil,
+            fiveHour: evaluated.state, resetCredits: creditEvaluation.state, lastSummary: summary };
+          await saveState(state);
+          if (["reset", "alreadyRedeemed", "settled"].includes(redemption.status)) {
+            // Publish the post-consume sample BEFORE waking. Reuse the existing
+            // safety gate rather than letting redemption itself start any task.
+            try { await managedController.reconcile(summary, { now }); }
+            catch (error) { log("post-credit task reconciliation failed", { error: error.message }); }
+            try { await continuityController.reconcile(summary, { now }); }
+            catch (error) { log("post-credit chat reconciliation failed", { error: error.message }); }
+          }
+        }
+      };
+      if (operationGuard) {
+        const operation = await operationGuard.runOperation(performProtectedOperations);
+        if (!operation.executed) log("runtime maintenance defers task recovery and credit operations; quota monitoring continues", { reason: operation.reason });
+      } else await performProtectedOperations();
       const tiboEvents = [];
       if (reason !== "server-event" && now - lastTiboPollAt >= 60) {
         lastTiboPollAt = now;

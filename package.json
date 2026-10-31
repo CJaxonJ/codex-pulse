@@ -4,6 +4,7 @@
   "private": true,
   "license": "MIT",
   "codexPulse": {
+    "runtimeOperationProtocol": 1,
     "compatiblePluginVersions": ["0.9.17", "0.9.18", "0.9.22"]
   },
   "engines": {

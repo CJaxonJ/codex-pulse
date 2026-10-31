@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import os from "node:os";
 import { replaceWindowsRuntime, runtimeFingerprint } from "../scripts/windows-installation-transaction.mjs";
+import { RuntimeMaintenanceGuard } from "../src/runtime-maintenance-guard.mjs";
 
 // Filesystem orchestration tests use modeled service/lease ports. Native
 // Windows process and scheduler integration is in the separate native suite.
@@ -25,6 +26,7 @@ async function fixture({ old = true } = {}) {
   await writeFile(path.join(dataDir, "history.txt"), "user goal, checkpoint and credit ledger must survive");
   let state = { startup: { installed: old, enabled: old }, running: old };
   const service = {
+    reserveStop: async () => ({ release: async () => {} }),
     capture: async () => structuredClone(state),
     quiesce: async () => { events.push("stop"); state.startup.enabled = false; state.running = false; },
     undoActivation: async original => { events.push("undo-activation"); if (!original.startup.installed) state.startup = { installed: false, enabled: false }; },
@@ -42,6 +44,31 @@ async function fixture({ old = true } = {}) {
 }
 const version = async app => JSON.parse(await readFile(path.join(app, "package.json"))).version;
 async function historyIntact(f) { assert.equal(await readFile(path.join(f.dataDir, "history.txt"), "utf8"), "user goal, checkpoint and credit ledger must survive"); }
+
+test("an active or unknown managed task refuses installation before any stop or transaction journal", async () => {
+  const f = await fixture(), guard = new RuntimeMaintenanceGuard(f.dataDir), hash = await runtimeFingerprint(f.app);
+  await mkdir(path.join(f.dataDir, "managed-tasks"));
+  await writeFile(path.join(f.dataDir, "managed-tasks", "active.json"), JSON.stringify({ id: "active", status: "running" }));
+  f.service.reserveStop = () => guard.reserveMaintenance();
+  await assert.rejects(replaceWindowsRuntime(f.options), { code: "PULSE_MANAGED_WORK_UNCONFIRMED" });
+  assert(!f.events.includes("stop")); assert.equal(await runtimeFingerprint(f.app), hash);
+  assert(!(await readdir(f.dataDir)).includes("installation-in-progress.json"));
+  assert.deepEqual(f.state(), { startup: { installed: true, enabled: true }, running: true });
+});
+
+test("maintenance remains reserved across activation, verification and rollback, then releases", async () => {
+  for (const fail of [false, true]) {
+    const f = await fixture(), guard = new RuntimeMaintenanceGuard(f.dataDir);
+    f.service.reserveStop = () => guard.reserveMaintenance();
+    const verify = f.service.verify, restore = f.service.restore;
+    const assertFenced = async () => assert.equal((await new RuntimeMaintenanceGuard(f.dataDir).runOperation(async () => { throw Error("must not start work"); })).executed, false);
+    f.service.verify = async (...args) => { await assertFenced(); await verify(...args); if (fail) throw Error("injected verification failure"); };
+    f.service.restore = async (...args) => { await assertFenced(); await restore(...args); };
+    if (fail) await assert.rejects(replaceWindowsRuntime(f.options), /原运行目录和启动状态已恢复/);
+    else assert.equal((await replaceWindowsRuntime(f.options)).ok, true);
+    assert.equal((await guard.runOperation(async () => "released")).value, "released");
+  }
+});
 
 test("installation stages and preflights before quiescing, commits an owned runtime and preserves user history", async () => {
   const f = await fixture();

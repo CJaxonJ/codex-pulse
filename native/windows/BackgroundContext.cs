@@ -175,6 +175,7 @@ namespace CodexPulse {
                 {"supervisorCreationTime", supervisorCreation},
                 {"watcherPid", worker == null || worker.HasExited ? (object)null : worker.Id},
                 {"state", state}, {"restarts", restarts}, {"lastExitCode", exit},
+                {"runtimeRoot", root}, {"runtimeOperationProtocol", 1},
                 {"checkedAt", DateTimeOffset.UtcNow.ToUnixTimeSeconds()}
             };
             string file = Path.Combine(data, "background-status.json"), temporary = file + "." + generation + ".tmp";

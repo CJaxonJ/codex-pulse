@@ -12,6 +12,7 @@ import { runtimeFingerprint } from "./windows-installation-transaction.mjs";
 import { pulsePluginId } from "./windows-plugin-operation.mjs";
 import { writeWindowsBundleManifest } from "./windows-bundle-manifest.mjs";
 import { packageWindows } from "./package-windows.mjs";
+import { ManagedTaskStore } from "../src/managed-task-store.mjs";
 
 if (process.platform !== "win32") throw Error("This acceptance requires real Windows");
 const execute = promisify(execFile);
@@ -30,10 +31,13 @@ async function fixture({ failAfterActivation = false } = {}) {
   // pinned official CLI and this fixture's separate CODEX_HOME, without auth.
   const peer = path.join(path.dirname(f.env.CODEX_BINARY), "node_modules", "@openai", "codex", "bin", "codex.js");
   const original = await readFile(peer, "utf8"), invocation = codexInvocation(official, []);
+  const requests = path.join(f.root, "model-start-attempts.jsonl"), requestNeedle = "const m=JSON.parse(line);if(m.id==null)return;";
+  assert.equal(original.split(requestNeedle).length, 2);
+  const traced = original.replace(requestNeedle, requestNeedle + `if(['thread/start','turn/start','thread/resume'].includes(m.method))fs.appendFileSync(${JSON.stringify(requests)},JSON.stringify({method:m.method})+'\\n');`);
   await writeFile(peer, `if(process.argv[2]==='plugin'){
     const result=require('node:child_process').spawnSync(${JSON.stringify(invocation.file)},[...${JSON.stringify(invocation.args)},...process.argv.slice(2)],{env:process.env,stdio:'inherit',windowsHide:true});
     if(result.error)throw result.error;process.exit(result.status===null?1:result.status);
-  }\n` + original);
+  }\n` + traced);
   if (failAfterActivation) {
     const serviceFile = path.join(f.appRoot, "scripts", "windows-runtime-service.mjs");
     const source = await readFile(serviceFile, "utf8"), needle = "async verify(original, fresh) {";
@@ -64,7 +68,8 @@ async function fixture({ failAfterActivation = false } = {}) {
     if ((await cli(["plugin", "list", "--json"])).installed.some(p => p.pluginId === pulsePluginId)) await cli(["plugin", "remove", pulsePluginId, "--json"]);
     if ((await cli(["plugin", "marketplace", "list", "--json"])).marketplaces.some(p => p.name === "codex-pulse-local")) await cli(["plugin", "marketplace", "remove", "codex-pulse-local", "--json"]);
   };
-  return { ...f, run, uninstall, cli, service, cleanup };
+  const modelRequests = async () => { try { return (await readFile(requests, "utf8")).trim().split("\n").filter(Boolean); } catch (error) { if (error.code === "ENOENT") return []; throw error; } };
+  return { ...f, run, uninstall, cli, service, cleanup, modelRequests };
 }
 
 async function verify(f, body) {
@@ -76,6 +81,8 @@ async function verify(f, body) {
 const failed = await fixture({ failAfterActivation: true });
 await verify(failed, async () => {
   await writeFile(path.join(failed.dataDir, "keep-checkpoint"), "keep original task and unknown credit ledger");
+  const task = await new ManagedTaskStore(failed.dataDir).queue({ cwd: failed.workspace, objective: "This isolated eligible task must not start during a failing installation", startFloor: 50, resumeFloor: 50 });
+  const taskFile = path.join(failed.dataDir, "managed-tasks", task.id + ".json"), taskBefore = await readFile(taskFile);
   const result = await failed.run(); assert.notEqual(result.code, 0); assert.match(result.stderr, /原运行目录和启动状态已恢复/);
   const names = await readdir(failed.dataDir);
   assert(!names.includes("app")); assert(!names.includes("marketplace")); assert(!names.includes("installation-in-progress.json"));
@@ -84,6 +91,8 @@ await verify(failed, async () => {
   assert(!(await failed.cli(["plugin", "marketplace", "list", "--json"])).marketplaces.some(p => p.name === "codex-pulse-local"));
   assert.equal(await readFile(path.join(failed.dataDir, "keep-checkpoint"), "utf8"), "keep original task and unknown credit ledger");
   assert.deepEqual(await failed.queueLog(), []);
+  assert.deepEqual(await readFile(taskFile), taskBefore, "Even eligible queued work must wait until the runtime commits");
+  assert.deepEqual(await failed.modelRequests(), [], "A real model-start RPC must not even be attempted during failing activation");
 });
 
 const f = await fixture();
@@ -131,5 +140,6 @@ await verify(f, async () => {
 console.log(JSON.stringify({ ok: true, nativeWindowsInstallerEntry: true, realOfficialPluginCommands: true, realTaskScheduler: true,
   freshInstallReinstallAndFailedPreflight: true, postActivationRollback: true, uninstallAndPreserveHistory: true, unsafeUninstallRefusedBeforeStop: true,
   verifiedZipEntryAndBundledNode: true, corruptBundleRejectedBeforeStop: true, nodeLicensePreserved: true, archiveSHA256: packaged.checksum,
+  maintenanceBlocksQueuedActivation: true,
   accountRPC: "isolated synthetic peer", modelCalls: 0, realResetCardsUsed: 0,
   guiPackageOrPhysicalSleepVerified: false, productionInstallTouched: false }));

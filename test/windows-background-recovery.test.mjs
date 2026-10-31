@@ -4,10 +4,11 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { windowsRecoveryBackgroundFixture } from "../scripts/test-support/windows-recovery-background-fixture.mjs";
 import { readWindowsProcessIdentity } from "../src/windows-process-bridge.mjs";
+import { readJsonSnapshot } from "../src/atomic-file.mjs";
 
 const windows = { skip: process.platform !== "win32", timeout: 120000 };
 const alive = pid => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === "EPERM"; } };
-async function readOptional(file) { try { return JSON.parse(await readFile(file, "utf8")); } catch (error) { if (error.code === "ENOENT") return null; throw error; } }
+const readOptional = file => readJsonSnapshot(file, { optional: true });
 async function until(f, check) {
   const deadline = Date.now() + 25000;
   while (true) {

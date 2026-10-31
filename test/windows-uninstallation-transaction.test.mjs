@@ -5,6 +5,7 @@ import path from "node:path";
 import os from "node:os";
 import { runtimeFingerprint } from "../scripts/windows-installation-transaction.mjs";
 import { removeWindowsInstallation } from "../scripts/windows-uninstallation-transaction.mjs";
+import { RuntimeMaintenanceGuard } from "../src/runtime-maintenance-guard.mjs";
 
 // These filesystem tests model the native ports, not a Windows proof. Actual
 // native deletion and official plugin removal run in the installer E2E.
@@ -16,6 +17,7 @@ async function fixture() {
   await writeFile(context, '{"installed":"context"}');
   for (const name of ["preferences.json", "checkpoint.json", "credit-ledger.json", "state.json"]) await writeFile(path.join(dataDir, name), name + " must survive");
   const service = {
+    reserveStop: async () => ({ release: async () => {} }),
     capture: async () => ({ startup: { installed: true, enabled: true }, running: true }),
     quiesce: async () => { events.push("stop"); },
     removeStartup: async () => { events.push("remove-startup"); },
@@ -33,6 +35,17 @@ async function fixture() {
 async function historyIntact(f) {
   for (const name of ["preferences.json", "checkpoint.json", "credit-ledger.json", "state.json"]) assert.equal(await readFile(path.join(f.dataDir, name), "utf8"), name + " must survive");
 }
+
+test("active work prevents uninstall before startup changes, plugin removal or any journal", async () => {
+  const f = await fixture(), guard = new RuntimeMaintenanceGuard(f.dataDir), hash = await runtimeFingerprint(f.app);
+  await mkdir(path.join(f.dataDir, "managed-tasks"));
+  await writeFile(path.join(f.dataDir, "managed-tasks", "task.json"), JSON.stringify({ id: "task", status: "starting" }));
+  f.service.reserveStop = () => guard.reserveMaintenance();
+  await assert.rejects(removeWindowsInstallation(f.options), { code: "PULSE_MANAGED_WORK_UNCONFIRMED" });
+  assert(!f.events.includes("stop")); assert(!f.events.includes("remove-plugin"));
+  assert(!(await readdir(f.dataDir)).includes("uninstallation-in-progress.json"));
+  assert.equal(await runtimeFingerprint(f.app), hash); await historyIntact(f);
+});
 
 test("uninstall removes only the verified runtime and context after official plugin removal and verified startup stop", async () => {
   const f = await fixture();

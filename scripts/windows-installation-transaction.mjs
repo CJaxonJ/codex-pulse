@@ -42,7 +42,7 @@ async function restoreSnapshot(file, bytes) {
 export async function replaceWindowsRuntime({ dataDir, stagedName, service, preflight, installSideEffects, rollbackSideEffects,
   acquireLease = () => openWindowsInstallationLease(), acquireLock = () => lockInstallation(dataDir) }) {
   if (!path.isAbsolute(dataDir) || !/^app-install-[a-f0-9]{32}$/.test(stagedName)
-      || ![preflight, installSideEffects, rollbackSideEffects].every(f => typeof f === "function")) throw Error("安装事务参数不完整。");
+      || ![preflight, installSideEffects, rollbackSideEffects, service?.reserveStop].every(f => typeof f === "function")) throw Error("安装事务参数不完整。");
   await ensureWindowsPrivateDirectory(dataDir);
   await assertInstallerOutsideRuntime({ dataDir });
   if (service.sourceBinary) await assertInstallerOutsideRuntime({ dataDir, executable: service.sourceBinary });
@@ -50,7 +50,7 @@ export async function replaceWindowsRuntime({ dataDir, stagedName, service, pref
   const id = randomUUID().replaceAll("-", ""), backup = "app-backup-" + id, failed = "app-failed-" + id;
   const app = path.join(dataDir, "app"), staged = path.join(dataDir, stagedName), journal = path.join(dataDir, journalName);
   const marker = path.join(dataDir, markerName), context = path.join(dataDir, "startup-context.json");
-  let original, hadOld, oldHash, newHash, oldMarker, oldContext, lease, switchStarted = false, sideEffectsStarted = false, movedNew = false;
+  let original, hadOld, oldHash, newHash, oldMarker, oldContext, lease, stopReservation, switchStarted = false, sideEffectsStarted = false, movedNew = false;
   try {
     if (await exists(journal) || await exists(path.join(dataDir, "uninstallation-in-progress.json"))
         || (await readdir(dataDir)).some(name => /^app-backup-[a-f0-9]{32}$/.test(name))) throw Error("发现上次未处理的安装记录或备份，已保留现场，未覆盖安装。");
@@ -72,6 +72,7 @@ export async function replaceWindowsRuntime({ dataDir, stagedName, service, pref
       const value = JSON.parse(oldMarker);
       if (value.name !== "codex-pulse" || value.schema !== 1 || value.fingerprint !== oldHash) throw Error("现有运行文件已改变或不属于本安装，已保留。");
     } else if (oldMarker) throw Error("安装记录与运行目录不一致，已保留现场。");
+    stopReservation = await service.reserveStop(hadOld);
     original = await service.capture(hadOld);
     if (typeof original?.running !== "boolean" || typeof original.startup?.installed !== "boolean" || typeof original.startup?.enabled !== "boolean") throw Error("原启动状态未知。");
     if (!hadOld && (original.running || original.startup.installed)) throw Error("没有现有安装却发现正在运行的后台或自启任务，未接管未知状态。");
@@ -137,6 +138,6 @@ export async function replaceWindowsRuntime({ dataDir, stagedName, service, pref
     if (!cleanupPending) { try { await rm(journal); } catch { cleanupPending = true; } }
     return { ok: true, version: manifest.version, cleanupPending, transactionId: id };
   } finally {
-    try { await lease?.release(); } finally { await release(); }
+    try { await lease?.release(); } finally { try { await stopReservation?.release(); } finally { await release(); } }
   }
 }

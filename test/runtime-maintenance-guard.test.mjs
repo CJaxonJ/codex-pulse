@@ -7,7 +7,39 @@ import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 import os from "node:os";
 import path from "node:path";
-import { RuntimeMaintenanceGuard, assertManagedRecordsAllowMaintenance } from "../src/runtime-maintenance-guard.mjs";
+import { RuntimeMaintenanceGuard, assertManagedRecordsAllowMaintenance, assertMaintenanceRuntimeProtocol } from "../src/runtime-maintenance-guard.mjs";
+
+test("maintenance rejects legacy protocol and an unrelated live runtime instead of guessing participation", async () => {
+  const app = await mkdtemp(path.join(os.tmpdir(), "pulse-protocol-")), other = await mkdtemp(path.join(os.tmpdir(), "pulse-other-runtime-"));
+  await writeFile(path.join(app, "package.json"), JSON.stringify({ codexPulse: {} }));
+  await assert.rejects(assertMaintenanceRuntimeProtocol(app, { running: false }), { code: "PULSE_RUNTIME_PROTOCOL_UNCONFIRMED" });
+  await writeFile(path.join(app, "package.json"), JSON.stringify({ codexPulse: { runtimeOperationProtocol: 1 } }));
+  await assertMaintenanceRuntimeProtocol(app, { running: false });
+  for (const health of [null, { runtimeRoot: app }, { runtimeRoot: other, runtimeOperationProtocol: 1 }]) {
+    await assert.rejects(assertMaintenanceRuntimeProtocol(app, { running: true, health }), { code: "PULSE_RUNTIME_PROTOCOL_UNCONFIRMED" });
+  }
+  await assertMaintenanceRuntimeProtocol(app, { running: true, health: { runtimeRoot: app, runtimeOperationProtocol: 1 } });
+});
+
+test("interrupted maintenance keeps model callbacks fenced even after its original owner has gone", async () => {
+  for (const name of ["installation-in-progress.json", "uninstallation-in-progress.json"]) {
+    const f = await fixture(); await writeFile(path.join(f.data, name), "unknown interrupted phase");
+    let calls = 0; assert.deepEqual(await f.guard.runOperation(async () => calls++), { executed: false, reason: "incomplete_maintenance" });
+    assert.equal(calls, 0); await rm(path.join(f.data, name));
+    assert.equal((await f.guard.runOperation(async () => ++calls)).value, 1);
+  }
+});
+
+test("shutdown waits for operation owner publication, not just the main watcher ownership", async () => {
+  const f = await fixture(); let begin, finish;
+  const entered = new Promise(resolve => begin = resolve), ready = new Promise(resolve => finish = resolve);
+  const acquire = f.guard.manager.acquire.bind(f.guard.manager);
+  f.guard.manager.acquire = async (...args) => { begin(); await ready; return acquire(...args); };
+  const operation = f.guard.runOperation(async () => {}); await entered;
+  let finished = false; const waiting = f.guard.waitForOwnershipPublication().then(() => finished = true);
+  await new Promise(resolve => setImmediate(resolve)); assert.equal(finished, false);
+  finish(); await waiting; await operation; assert.equal(finished, true);
+});
 
 async function fixture() {
   const data = await mkdtemp(path.join(os.tmpdir(), "pulse-runtime-maintenance-")), tasks = path.join(data, "managed-tasks");

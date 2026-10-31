@@ -25,11 +25,11 @@ async function unchanged(file, expected) {
 // newly changed files are safe to erase; repair UI is a separate gate.
 export async function removeWindowsInstallation({ dataDir, service, plugin,
   acquireLock = () => lockInstallation(dataDir), acquireLease = () => openWindowsInstallationLease() }) {
-  if (!path.isAbsolute(dataDir) || !service || !plugin) throw Error("卸载事务参数不完整。");
+  if (!path.isAbsolute(dataDir) || typeof service?.reserveStop !== "function" || !plugin) throw Error("卸载事务参数不完整。");
   await ensureWindowsPrivateDirectory(dataDir);
   await assertInstallerOutsideRuntime({ dataDir });
   if (service.sourceBinary) await assertInstallerOutsideRuntime({ dataDir, executable: service.sourceBinary });
-  const release = await acquireLock(); let lease;
+  const release = await acquireLock(); let lease, stopReservation;
   const app = path.join(dataDir, "app"), marker = path.join(dataDir, "windows-installation.json"), context = path.join(dataDir, "startup-context.json");
   const journal = path.join(dataDir, "uninstallation-in-progress.json");
   let started = false;
@@ -41,6 +41,7 @@ export async function removeWindowsInstallation({ dataDir, service, plugin,
     const hash = await runtimeFingerprint(app), record = markerBytes && JSON.parse(markerBytes);
     if (record?.name !== "codex-pulse" || record.schema !== 1 || record.fingerprint !== hash) throw Error("运行目录没有匹配的产品安装记录，或包含未确认的更改，未卸载其中的文件。");
     await plugin.prepareRemoval(); // Read-only: an external/changed source must fail before stopping anything.
+    stopReservation = await service.reserveStop(true);
     const original = await service.capture(true);
     if (typeof original?.running !== "boolean" || typeof original.startup?.installed !== "boolean" || typeof original.startup?.enabled !== "boolean") throw Error("原后台状态未知，未继续卸载。");
     const retired = "app-failed-" + randomUUID().replaceAll("-", "");
@@ -66,5 +67,5 @@ export async function removeWindowsInstallation({ dataDir, service, plugin,
   } catch (cause) {
     if (!started) throw cause;
     throw new Error("卸载未完成，后台已请求停止；已保留操作记录和未确认的文件，请勿手工删除运行目录。", { cause });
-  } finally { try { await lease?.release(); } finally { await release(); } }
+  } finally { try { await lease?.release(); } finally { try { await stopReservation?.release(); } finally { await release(); } } }
 }
