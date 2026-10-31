@@ -55,8 +55,11 @@ test("real Windows installation transaction restores actual old runtime, context
     await writeFile(path.join(f.dataDir, "credit-operation-sentinel.txt"), "never consume or forget an uncertain credit operation");
     const verify = f.service.verify.bind(f.service); let validatedNew = false;
     f.service.verify = async (...args) => { await verify(...args); assert.equal(await version(f.target), "0.9.22"); validatedNew = true; throw Error("deliberate failure after actual new host/task validation"); };
-    await assert.rejects(f.install(await f.stage("0.9.22")), /原运行目录和启动状态已恢复/);
-    assert(validatedNew, "The failure must occur after the real new version was activated, not before any switching");
+    let upgradeFailure;
+    await assert.rejects(f.install(await f.stage("0.9.22")), error => { upgradeFailure = error; return /原运行目录和启动状态已恢复/.test(error.message); });
+    const causes = []; let cause = upgradeFailure;
+    while (cause && causes.length < 6) { causes.push({ name: cause.name, code: cause.code, message: String(cause.message).slice(0, 1200) }); cause = cause.cause; }
+    assert(validatedNew, "The failure must occur after the real new version was activated, not before switching: " + JSON.stringify(causes));
     assert.equal(await runtimeFingerprint(f.target), oldHash); assert.equal(await version(f.target), "0.9.21");
     assert.deepEqual(await readFile(path.join(f.dataDir, "windows-installation.json")), oldMarker);
     assert.deepEqual(await readFile(path.join(f.dataDir, "startup-context.json")), oldContext);

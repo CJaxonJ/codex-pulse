@@ -123,9 +123,14 @@ namespace CodexPulse {
         }
         private static int ControlCore(string command) {
             if (command == "preview-context") {
-                Console.Out.WriteLine(Program.Json.Serialize(new Dictionary<string, object> {
-                    { "ok", true }, { "text", Program.Json.Serialize(Capture(BackgroundContext.DataDirectory())) }
-                }));
+                // WinExe has no console code page. Console.Out's default
+                // encoding replaces CJK paths with '?'; never use SetConsoleCP.
+                using (StreamWriter output = new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false), 1024, true)) {
+                    output.WriteLine(Program.Json.Serialize(new Dictionary<string, object> {
+                        { "ok", true }, { "text", Program.Json.Serialize(Capture(BackgroundContext.DataDirectory())) }
+                    }));
+                    output.Flush();
+                }
                 return 0;
             }
             if (command == "configure") {
