@@ -118,6 +118,25 @@ export class WindowsPluginOperation {
     const current = await this.inventory();
     if (current.plugin || current.catalog || current.plugins.some(p => p.marketplaceName === marketName) || await exists(this.root)) throw Error("插件或本地市场仍存在，未继续删除运行程序。");
   }
+  rollbackSnapshot() {
+    if (!this.prepared) throw Error("插件尚未完成只读预检。");
+    return { schema: 1, reused: this.reused, hash: this.hash ?? null, version: this.version ?? null };
+  }
+  async verifyPresent() {
+    const value = await this.check();
+    if (value.ok !== true || value.pluginId !== pulsePluginId || value.reusedExistingInstall !== true) throw Error("已提交安装的插件状态无法核实，未放行任务。");
+  }
+  async prepareRecovery(value) {
+    if (this.prepared || value?.schema !== 1 || typeof value.reused !== "boolean"
+        || !value.reused && (!/^[a-f0-9]{64}$/.test(value.hash) || typeof value.version !== "string" || value.version.length > 100)) throw Error("缺少可核实的插件恢复记录，已保留现场。");
+    this.reused = value.reused; this.hash = value.hash; this.version = value.version;
+    if (!this.reused) {
+      const current = await this.inventory();
+      if (await exists(this.root)) { this.ownsDirectory = true; await this.assertOwned(current); }
+      else if (current.plugin || current.catalog || current.plugins.some(p => p.marketplaceName === marketName)) throw Error("插件来源与恢复记录不一致，已保留现场。");
+    }
+    this.prepared = true;
+  }
   async install() {
     if (!this.prepared || this.started) throw Error("插件操作状态不正确。");
     this.started = true;

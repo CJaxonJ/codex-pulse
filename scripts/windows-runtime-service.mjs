@@ -93,6 +93,11 @@ export class WindowsRuntimeService {
     if (enabled) await this.call(this.target(), ["--startup", "enable"]);
     if (fresh || original.running) await this.start(enabled);
   }
+  async previewContext() {
+    const value = await this.call(this.target(), ["--startup", "preview-context"]);
+    if (value.ok !== true || typeof value.text !== "string" || Buffer.byteLength(value.text) > 16384) throw Error("无法预先核实启动上下文，未激活新后台。");
+    return Buffer.from(value.text, "utf8");
+  }
   async restore(original, { hadOld, restoreFiles, hasContext }) {
     if (!hadOld) { await restoreFiles(); return; }
     if (original.startup.installed) await this.call(this.target(), ["--startup", original.startup.enabled ? "enable" : "disable"]);

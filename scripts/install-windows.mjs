@@ -13,6 +13,7 @@ import { replaceWindowsRuntime, runtimeFingerprint } from "./windows-installatio
 import { WindowsRuntimeService } from "./windows-runtime-service.mjs";
 import { WindowsPluginOperation } from "./windows-plugin-operation.mjs";
 import { verifyWindowsBundle } from "./windows-bundle-manifest.mjs";
+import { recoverWindowsMaintenance } from "./windows-maintenance-recovery.mjs";
 
 const execute = promisify(execFile);
 // This is the installation entry for an already-extracted, bundled package.
@@ -35,6 +36,10 @@ export async function installWindows({ sourceRoot = path.resolve(import.meta.dir
   const binary = resolveCodexExecutable({ env });
   if (!path.isAbsolute(binary)) throw Error("无法确认 Codex 的本机安装路径。");
   const childEnv = { ...env, CODEX_BINARY: binary, CODEX_PULSE_DATA_DIR: dataDir };
+  const service = new WindowsRuntimeService({ dataDir, sourceBinary, env: childEnv, startAtLogin });
+  await recoverWindowsMaintenance({ dataDir, service,
+    pluginFor: root => new WindowsPluginOperation({ sourceRoot: root, dataDir, env: childEnv }),
+    acquireLease: () => openWindowsInstallationLease({ binary: sourceBinary, env: childEnv }) });
   const stagedName = "app-install-" + randomUUID().replaceAll("-", ""), staged = path.join(dataDir, stagedName);
   for (const name of entries) {
     const target = path.join(staged, name); await mkdir(path.dirname(target), { recursive: true });
@@ -42,7 +47,6 @@ export async function installWindows({ sourceRoot = path.resolve(import.meta.dir
   }
   await verifyWindowsBundle(staged);
   const plugin = new WindowsPluginOperation({ sourceRoot, dataDir, env: childEnv });
-  const service = new WindowsRuntimeService({ dataDir, sourceBinary, env: childEnv, startAtLogin });
   return replaceWindowsRuntime({ dataDir, stagedName, service,
     acquireLease: () => openWindowsInstallationLease({ binary: sourceBinary, env: childEnv }),
     preflight: async () => {
@@ -57,6 +61,7 @@ export async function installWindows({ sourceRoot = path.resolve(import.meta.dir
       await plugin.prepare();
     },
     installSideEffects: () => plugin.install(), rollbackSideEffects: () => plugin.rollback(),
+    captureSideEffects: () => plugin.rollbackSnapshot(),
   });
 }
 

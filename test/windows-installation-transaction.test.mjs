@@ -45,6 +45,21 @@ async function fixture({ old = true } = {}) {
 const version = async app => JSON.parse(await readFile(path.join(app, "package.json"))).version;
 async function historyIntact(f) { assert.equal(await readFile(path.join(f.dataDir, "history.txt"), "utf8"), "user goal, checkpoint and credit ledger must survive"); }
 
+test("rollback snapshots and intended context are durable BEFORE any activation side effect", async () => {
+  const f = await fixture(), marker = await readFile(path.join(f.dataDir, "windows-installation.json"));
+  const intended = Buffer.from('{"new":"context"}'), plugin = { schema: 1, reused: true, hash: null, version: null };
+  f.service.previewContext = async () => intended;
+  f.service.activate = async () => {
+    const record = JSON.parse(await readFile(path.join(f.dataDir, "installation-in-progress.json")));
+    assert.equal(record.schema, 2); assert.equal(record.phase, "activating");
+    assert.deepEqual(Buffer.from(record.oldMarker, "base64"), marker);
+    assert.deepEqual(Buffer.from(record.oldContext, "base64"), f.originalContext);
+    assert.deepEqual(Buffer.from(record.expectedContext, "base64"), intended);
+    assert.deepEqual(record.pluginRollback, plugin); throw Error("injected before activation");
+  };
+  await assert.rejects(replaceWindowsRuntime({ ...f.options, captureSideEffects: () => plugin }), /原运行目录和启动状态已恢复/);
+});
+
 test("an active or unknown managed task refuses installation before any stop or transaction journal", async () => {
   const f = await fixture(), guard = new RuntimeMaintenanceGuard(f.dataDir), hash = await runtimeFingerprint(f.app);
   await mkdir(path.join(f.dataDir, "managed-tasks"));

@@ -8,6 +8,7 @@ import { WindowsRuntimeService } from "./windows-runtime-service.mjs";
 import { WindowsPluginOperation } from "./windows-plugin-operation.mjs";
 import { removeWindowsInstallation } from "./windows-uninstallation-transaction.mjs";
 import { verifyWindowsBundle } from "./windows-bundle-manifest.mjs";
+import { recoverWindowsMaintenance } from "./windows-maintenance-recovery.mjs";
 
 export async function uninstallWindows({ sourceRoot = path.resolve(import.meta.dirname, ".."), env = process.env } = {}) {
   if (process.platform !== "win32") throw Error("此卸载入口需要原生 Windows。");
@@ -15,6 +16,10 @@ export async function uninstallWindows({ sourceRoot = path.resolve(import.meta.d
   const dataDir = pulseDataDirectory({ env }), sourceBinary = path.join(sourceRoot, "CodexPulse.exe");
   const childEnv = { ...env, CODEX_BINARY: resolveCodexExecutable({ env }), CODEX_PULSE_DATA_DIR: dataDir };
   const service = new WindowsRuntimeService({ dataDir, sourceBinary, env: childEnv });
+  const recovered = await recoverWindowsMaintenance({ dataDir, service,
+    pluginFor: root => new WindowsPluginOperation({ sourceRoot: root, dataDir, env: childEnv }),
+    acquireLease: () => openWindowsInstallationLease({ binary: sourceBinary, env: childEnv }) });
+  if (recovered.operation === "uninstall") return { ok: true, ...recovered };
   const plugin = new WindowsPluginOperation({ sourceRoot: path.join(dataDir, "app"), dataDir, env: childEnv });
   return removeWindowsInstallation({ dataDir, service, plugin,
     acquireLease: () => openWindowsInstallationLease({ binary: sourceBinary, env: childEnv }) });

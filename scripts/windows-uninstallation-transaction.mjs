@@ -21,8 +21,8 @@ async function unchanged(file, expected) {
 
 // Source-package entry only: Node and the native lease must run outside the
 // installed app. We never delete the data root, CODEX_HOME or a stored PID.
-// Interrupted/partial removals keep their journal rather than guessing which
-// newly changed files are safe to erase; repair UI is a separate gate.
+// Interrupted removals keep their snapshots for verified source-entry repair.
+// Newly changed or unknown files must still be preserved rather than erased.
 export async function removeWindowsInstallation({ dataDir, service, plugin,
   acquireLock = () => lockInstallation(dataDir), acquireLease = () => openWindowsInstallationLease() }) {
   if (!path.isAbsolute(dataDir) || typeof service?.reserveStop !== "function" || !plugin) throw Error("卸载事务参数不完整。");
@@ -45,7 +45,8 @@ export async function removeWindowsInstallation({ dataDir, service, plugin,
     const original = await service.capture(true);
     if (typeof original?.running !== "boolean" || typeof original.startup?.installed !== "boolean" || typeof original.startup?.enabled !== "boolean") throw Error("原后台状态未知，未继续卸载。");
     const retired = "app-failed-" + randomUUID().replaceAll("-", "");
-    const progress = { schema: 1, operation: "uninstall", retired, fingerprint: hash, phase: "prepared" };
+    const progress = { schema: 2, operation: "uninstall", retired, fingerprint: hash, phase: "prepared",
+      marker: markerBytes.toString("base64"), context: contextBytes?.toString("base64") ?? null };
     await writeJsonSnapshotAtomic(journal, progress); started = true;
     const phase = async value => { progress.phase = value; await writeJsonSnapshotAtomic(journal, progress); };
     await phase("quiescing"); await service.quiesce();

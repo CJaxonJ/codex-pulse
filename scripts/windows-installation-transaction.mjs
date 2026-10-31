@@ -39,7 +39,7 @@ async function restoreSnapshot(file, bytes) {
   const { renameAtomic } = await import("../src/atomic-file.mjs");
   try { await renameAtomic(temporary, file); } finally { await rm(temporary, { force: true }); }
 }
-export async function replaceWindowsRuntime({ dataDir, stagedName, service, preflight, installSideEffects, rollbackSideEffects,
+export async function replaceWindowsRuntime({ dataDir, stagedName, service, preflight, installSideEffects, rollbackSideEffects, captureSideEffects = async () => null,
   acquireLease = () => openWindowsInstallationLease(), acquireLock = () => lockInstallation(dataDir) }) {
   if (!path.isAbsolute(dataDir) || !/^app-install-[a-f0-9]{32}$/.test(stagedName)
       || ![preflight, installSideEffects, rollbackSideEffects, service?.reserveStop].every(f => typeof f === "function")) throw Error("安装事务参数不完整。");
@@ -76,7 +76,11 @@ export async function replaceWindowsRuntime({ dataDir, stagedName, service, pref
     original = await service.capture(hadOld);
     if (typeof original?.running !== "boolean" || typeof original.startup?.installed !== "boolean" || typeof original.startup?.enabled !== "boolean") throw Error("原启动状态未知。");
     if (!hadOld && (original.running || original.startup.installed)) throw Error("没有现有安装却发现正在运行的后台或自启任务，未接管未知状态。");
-    const record = { schema: 1, id, stagedName, backup, failed, hadOld, oldHash: oldHash || null, newHash, original, phase: "prepared" };
+    const newMarker = { name: "codex-pulse", schema: 1, transactionId: id, version: manifest.version, fingerprint: newHash };
+    const record = { schema: 2, id, stagedName, backup, failed, hadOld, oldHash: oldHash || null, newHash, original, phase: "prepared",
+      oldMarker: oldMarker?.toString("base64") ?? null, oldContext: oldContext?.toString("base64") ?? null,
+      expectedMarker: Buffer.from(JSON.stringify(newMarker, null, 2) + "\n").toString("base64"), expectedContext: null,
+      pluginRollback: await captureSideEffects() };
     await writeJsonSnapshotAtomic(journal, record);
     const phase = async next => { record.phase = next; await writeJsonSnapshotAtomic(journal, record); };
     const restoreFiles = async () => { await restoreSnapshot(marker, oldMarker); await restoreSnapshot(context, oldContext); };
@@ -87,10 +91,11 @@ export async function replaceWindowsRuntime({ dataDir, stagedName, service, pref
       await phase("moving_new"); await lease.move(stagedName, "app"); movedNew = true;
       await lease.release(); lease = null;
       await phase("applying_side_effects"); sideEffectsStarted = true; await installSideEffects();
+      if (service.previewContext) record.expectedContext = (await service.previewContext()).toString("base64");
       await phase("activating"); await service.activate(original, !hadOld);
       await phase("verifying"); await service.verify(original, !hadOld);
       if (await runtimeFingerprint(app) !== newHash) throw Error("新运行目录验证时发生变化。");
-      await phase("committing"); await writeJsonSnapshotAtomic(marker, { name: "codex-pulse", schema: 1, transactionId: id, version: manifest.version, fingerprint: newHash });
+      await phase("committing"); await writeJsonSnapshotAtomic(marker, newMarker);
       await phase("committed");
     } catch (cause) {
       try {
@@ -141,3 +146,4 @@ export async function replaceWindowsRuntime({ dataDir, stagedName, service, pref
     try { await lease?.release(); } finally { try { await stopReservation?.release(); } finally { await release(); } }
   }
 }
+export { snapshot as readInstallationSnapshot, restoreSnapshot as restoreInstallationSnapshot };

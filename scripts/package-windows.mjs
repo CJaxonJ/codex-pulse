@@ -26,7 +26,7 @@ export async function packageWindows() {
     await cp(path.join(project, ".agents", "plugins", "marketplace.json"), path.join(bundle, ".agents", "plugins", "marketplace.json"));
     await mkdir(path.join(bundle, "scripts"));
     for (const name of ["install-windows.mjs", "uninstall-windows.mjs", "install-plugin.mjs", "installation-transaction.mjs",
-      "windows-installation-transaction.mjs", "windows-uninstallation-transaction.mjs", "windows-runtime-service.mjs", "windows-plugin-operation.mjs", "windows-bundle-manifest.mjs"]) await cp(path.join(project, "scripts", name), path.join(bundle, "scripts", name));
+      "windows-installation-transaction.mjs", "windows-uninstallation-transaction.mjs", "windows-maintenance-recovery.mjs", "windows-runtime-service.mjs", "windows-plugin-operation.mjs", "windows-bundle-manifest.mjs"]) await cp(path.join(project, "scripts", name), path.join(bundle, "scripts", name));
     for (const name of ["CodexPulse.exe", "CodexPulse.exe.config"]) await cp(path.join(project, "build", "windows", name), path.join(bundle, name));
     await cp(path.join(project, "docs", "windows-dev-bundle.md"), path.join(bundle, "README.md"));
     const privacy = scanPublicDirectory(bundle);

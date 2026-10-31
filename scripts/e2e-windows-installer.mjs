@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile, writeFile, readdir, rm, mkdtemp } from "node:fs/promises";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
 import os from "node:os";
@@ -78,6 +78,41 @@ async function verify(f, body) {
   finally { try { await f.cleanup(); } catch (cleanup) { throw primary ? new AggregateError([primary, cleanup], "Installer acceptance and cleanup failed") : cleanup; } }
 }
 
+// Kill only a ChildProcess created by this test, after real activation. The
+// next unmodified entry must recover disk state and official plugin effects;
+// a thrown callback inside the original process is not a crash-recovery proof.
+const interrupted = await fixture();
+await verify(interrupted, async () => {
+  const serviceFile = path.join(interrupted.appRoot, "scripts", "windows-runtime-service.mjs");
+  const source = await readFile(serviceFile, "utf8"), ready = path.join(interrupted.root, "installer-waiting");
+  const needle = "async verify(original, fresh) {"; assert.equal(source.split(needle).length, 2);
+  await writeFile(serviceFile, source.replace(needle, needle + `\n    await (await import('node:fs/promises')).writeFile(${JSON.stringify(ready)},'ready'); await new Promise(()=>setInterval(()=>{},1000));`));
+  const manifest = async () => writeWindowsBundleManifest(interrupted.appRoot, { appVersion: JSON.parse(await readFile(path.join(interrupted.appRoot, "package.json"))).version, nodeVersion: process.version });
+  await manifest();
+  const child = spawn(path.join(interrupted.appRoot, "runtime", "node.exe"), [path.join(interrupted.appRoot, "scripts", "install-windows.mjs")],
+    { env: interrupted.env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+  let diagnostics = "", exited = false;
+  child.stdout.on("data", b => { diagnostics = (diagnostics + b).slice(-4000); }); child.stderr.on("data", b => { diagnostics = (diagnostics + b).slice(-4000); });
+  const closed = new Promise((resolve, reject) => { child.once("error", reject); child.once("exit", () => { exited = true; resolve(); }); });
+  try {
+    const deadline = Date.now() + 90000; let reached = false;
+    do {
+      try { reached = await readFile(ready, "utf8") === "ready"; } catch (e) { if (e.code !== "ENOENT") throw e; }
+      if (reached || exited) break; await new Promise(resolve => setTimeout(resolve, 100));
+    } while (Date.now() < deadline);
+    assert.equal(reached, true, diagnostics);
+    assert.equal((await interrupted.service.capture(true)).running, true);
+    child.kill(); await closed;
+    assert.equal(JSON.parse(await readFile(path.join(interrupted.dataDir, "installation-in-progress.json"))).schema, 2);
+    await writeFile(serviceFile, source); await manifest();
+    const retry = await interrupted.run(); assert.equal(retry.code, 0, retry.stderr);
+    assert(!(await readdir(interrupted.dataDir)).includes("installation-in-progress.json"));
+    assert.deepEqual(await interrupted.service.capture(true), { startup: { installed: true, enabled: true }, running: true });
+    assert.deepEqual(await interrupted.modelRequests(), []);
+    assert.equal((await interrupted.uninstall()).code, 0);
+  } finally { if (!exited) child.kill(); await closed; }
+});
+
 const failed = await fixture({ failAfterActivation: true });
 await verify(failed, async () => {
   await writeFile(path.join(failed.dataDir, "keep-checkpoint"), "keep original task and unknown credit ledger");
@@ -127,7 +162,16 @@ await verify(f, async () => {
   assert.equal(JSON.parse(await readFile(path.join(f.dataDir, "background-status.json"))).generation, generation, "Unsafe uninstall must fail before stopping the service");
   assert(!(await readdir(f.dataDir)).includes("uninstallation-in-progress.json"));
   await rm(userNote); // Only this isolated acceptance's own injected file.
-  const removed = await f.uninstall(); assert.equal(removed.code, 0, removed.stderr); assert.equal(removed.value.ok, true);
+  const serviceFile = path.join(f.appRoot, "scripts", "windows-runtime-service.mjs"), serviceSource = await readFile(serviceFile, "utf8");
+  const removalNeedle = "async removeStartup() {"; assert.equal(serviceSource.split(removalNeedle).length, 2);
+  await writeFile(serviceFile, serviceSource.replace(removalNeedle, removalNeedle + '\n    await this.call(this.target(), ["--startup", "remove"]); throw Error("Isolated interruption after real task removal");'));
+  const appVersion = JSON.parse(await readFile(path.join(f.appRoot, "package.json"))).version;
+  await writeWindowsBundleManifest(f.appRoot, { appVersion, nodeVersion: process.version });
+  const interruptedRemoval = await f.uninstall(); assert.notEqual(interruptedRemoval.code, 0);
+  assert((await readdir(f.dataDir)).includes("uninstallation-in-progress.json"));
+  assert.equal(await runtimeFingerprint(path.join(f.dataDir, "app")), hash);
+  await writeFile(serviceFile, serviceSource); await writeWindowsBundleManifest(f.appRoot, { appVersion, nodeVersion: process.version });
+  const removed = await f.uninstall(); assert.equal(removed.code, 0, removed.stderr); assert.equal(removed.value.ok, true); assert.equal(removed.value.repaired, true);
   assert.deepEqual(await f.service.capture(false), { startup: { installed: false, enabled: false }, running: false });
   const names = await readdir(f.dataDir);
   for (const name of ["app", "marketplace", "startup-context.json", "windows-installation.json", "uninstallation-in-progress.json"]) assert(!names.includes(name), name + " was not removed");
@@ -141,5 +185,6 @@ console.log(JSON.stringify({ ok: true, nativeWindowsInstallerEntry: true, realOf
   freshInstallReinstallAndFailedPreflight: true, postActivationRollback: true, uninstallAndPreserveHistory: true, unsafeUninstallRefusedBeforeStop: true,
   verifiedZipEntryAndBundledNode: true, corruptBundleRejectedBeforeStop: true, nodeLicensePreserved: true, archiveSHA256: packaged.checksum,
   maintenanceBlocksQueuedActivation: true,
+  killedInstallerRecoveredByNextEntry: true, interruptedUninstallResumed: true,
   accountRPC: "isolated synthetic peer", modelCalls: 0, realResetCardsUsed: 0,
   guiPackageOrPhysicalSleepVerified: false, productionInstallTouched: false }));

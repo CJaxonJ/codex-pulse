@@ -28,6 +28,23 @@ async function fixture({ reused = false } = {}) {
   return { dataDir, sourceRoot, calls, state, op, mode: value => mode = value };
 }
 const removalFor = f => new WindowsPluginOperation({ sourceRoot: f.sourceRoot, dataDir: f.dataDir, runJson: f.op.runJson });
+test("a new process recovers only the persisted owned plugin and can retry after official removal", async () => {
+  const f = await fixture(); await f.op.prepare(); const snapshot = f.op.rollbackSnapshot(); await f.op.install();
+  const recovery = removalFor(f); await recovery.prepareRecovery(snapshot);
+  // An actual preceding remove may have succeeded before its reply was lost.
+  f.state.plugins = []; await recovery.rollback();
+  assert.deepEqual(f.state.catalogs, []); await assert.rejects(access(f.op.root), { code: "ENOENT" });
+  const again = removalFor(f); await again.prepareRecovery(snapshot); await again.rollback();
+});
+test("persisted plugin recovery refuses changed files or another registered source before any remove", async () => {
+  for (const changed of ["files", "source"]) {
+    const f = await fixture(); await f.op.prepare(); const snapshot = f.op.rollbackSnapshot(); await f.op.install();
+    if (changed === "files") await writeFile(path.join(f.op.root, "user.txt"), "preserve me");
+    else f.state.plugins[0].source.path = f.sourceRoot;
+    const start = f.calls.length; await assert.rejects(removalFor(f).prepareRecovery(snapshot));
+    assert(!f.calls.slice(start).some(args => args.includes("remove"))); assert.equal(f.state.plugins.length, 1);
+  }
+});
 test("uninstall independently proves the private catalog against the owned installed runtime before removal", async () => {
   const f = await fixture(); await f.op.prepare(); await f.op.install();
   const removal = removalFor(f); await removal.prepareRemoval(); await removal.rollback(); await removal.verifyRemoved();

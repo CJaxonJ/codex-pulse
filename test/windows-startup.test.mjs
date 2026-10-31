@@ -43,6 +43,10 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   const contextPath = path.join(f.dataDir, "startup-context.json"), statePath = path.join(f.dataDir, "background-status.json");
   const health = async () => { try { return JSON.parse(await readFile(statePath, "utf8")); } catch (e) { if (e.code === "ENOENT") return {}; throw e; } };
   try {
+    const preview = await f.control("preview-context");
+    assert.equal(preview.ok, true); assert.equal(JSON.parse(preview.text).codexHome, f.env.CODEX_HOME);
+    await assert.rejects(readFile(contextPath), { code: "ENOENT" }, "Preview must not publish context or grant startup");
+    assert.equal((await f.control("status")).installed, false);
     const enabled = await f.control("enable"); assert.equal(enabled.enabled, true);
     const originalDataSpelling = f.env.CODEX_PULSE_DATA_DIR;
     f.env.CODEX_PULSE_DATA_DIR = await realpath(f.dataDir);
@@ -60,6 +64,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     assert.equal(definition.limit, "PT0S"); assert.equal(definition.restart, "PT1M"); assert.equal(definition.restartCount, 3); assert.equal(definition.multiple, 2);
     assert(!/<Password>/i.test(definition.xml));
     const saved = await readFile(contextPath, "utf8"), context = JSON.parse(saved);
+    assert.equal(saved, preview.text, "The preview must match the exact bytes activation will publish");
     assert.deepEqual(Object.keys(context).sort(), ["appRoot", "codexBinary", "codexHome", "dataDir", "userSid", "version"]);
     assert.equal(context.codexHome, f.env.CODEX_HOME); assert.equal(context.codexBinary, f.env.CODEX_BINARY);
     assert(!saved.includes(f.env.DO_NOT_PERSIST_TOKEN));

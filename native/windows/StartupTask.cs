@@ -117,11 +117,17 @@ namespace CodexPulse {
             // uninstall verified absence but before it removes the runtime.
             // Status is read-only; start is fenced by BackgroundContext.Run
             // itself and must not hold this gate while scheduling that host.
-            if (command == "status" || command == "start") return ControlCore(command);
+            if (command == "status" || command == "start" || command == "preview-context") return ControlCore(command);
             if (command != "configure" && command != "enable" && command != "disable" && command != "remove") throw new ArgumentException();
             using (FileStream maintenance = InstallationLease.Acquire(BackgroundContext.DataDirectory())) return ControlCore(command);
         }
         private static int ControlCore(string command) {
+            if (command == "preview-context") {
+                Console.Out.WriteLine(Program.Json.Serialize(new Dictionary<string, object> {
+                    { "ok", true }, { "text", Program.Json.Serialize(Capture(BackgroundContext.DataDirectory())) }
+                }));
+                return 0;
+            }
             if (command == "configure") {
                 string contextData = BackgroundContext.DataDirectory();
                 Environment.SetEnvironmentVariable("CODEX_PULSE_APP_ROOT", Root);
