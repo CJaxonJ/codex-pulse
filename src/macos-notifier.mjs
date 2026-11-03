@@ -138,6 +138,7 @@ function baseNotificationForEvent(event) {
       native_goal_required: "当前聊天没有原生 Goal，外部 watcher 无权写入 Desktop 正在持有的聊天",
       native_goal_changed: "暂停期间原生 Goal 被修改，为避免旧计划覆盖你的新目标",
       native_goal_missing: "原生 Goal 已被清除",
+      native_goal_blocked: "原任务仍标记为受阻，额度恢复不会自动解除该阻塞",
       native_goal_paused: "原生 Goal 仍处于暂停状态",
       native_goal_state_unavailable: "暂时无法读取原生 Goal 状态",
       native_goal_not_started: "续跑请求已提交，但尚未观察到 Codex 启动新任务",

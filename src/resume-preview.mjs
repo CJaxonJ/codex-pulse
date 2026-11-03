@@ -15,6 +15,7 @@ const REASONS = {
   workspace_unverifiable: "暂时无法校验工作区，不能安全续跑。",
   hook_review_required: "请先审查并信任 Codex Pulse Hook。",
   native_goal_changed: "原目标被修改，不会用旧计划覆盖新目标。",
+  native_goal_blocked: "原任务仍处于阻塞状态；额度恢复后也需先确认阻塞已解决。",
   newer_thread_activity: "聊天出现了新操作，请回到原聊天确认。",
   cwd_missing: "原工作目录不可用。",
   resume_state_unknown: "尚无法确认上次执行是否停止，暂不重复启动。",
