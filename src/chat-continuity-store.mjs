@@ -7,6 +7,12 @@ function recordName(sessionId) {
   return `${createHash("sha256").update(String(sessionId)).digest("hex")}.json`;
 }
 
+async function writeRecord(target, record) {
+  const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
+  await writeFile(temporary, `${JSON.stringify(record, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  await renameAtomic(temporary, target);
+}
+
 export class ChatContinuityStore {
   constructor(dataDir) {
     this.recordsDir = path.join(dataDir, "chat-continuity");
@@ -36,6 +42,11 @@ export class ChatContinuityStore {
     return records.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
   }
 
+  async getLastFailure(sessionId) {
+    try { return JSON.parse(await readFile(path.join(this.recordsDir, "incidents", recordName(sessionId)), "utf8")); }
+    catch (error) { if (error.code === "ENOENT") return null; throw error; }
+  }
+
   async put(record) {
     if (!record?.sessionId) throw new Error("chat continuity record requires sessionId");
     await mkdir(this.recordsDir, { recursive: true });
@@ -47,9 +58,18 @@ export class ChatContinuityStore {
       updatedAt: now,
     };
     const target = path.join(this.recordsDir, recordName(next.sessionId));
-    const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(next, null, 2)}\n`, "utf8");
-    await renameAtomic(temporary, target);
+    if (next.status === "needs_attention" && next.blocker) {
+      try {
+        const incidents = path.join(this.recordsDir, "incidents");
+        await mkdir(incidents, { recursive: true, mode: 0o700 });
+        await writeRecord(path.join(incidents, recordName(next.sessionId)), next);
+      } catch {
+        // Diagnostics must not throw out a safety refusal (Hook callers may
+        // fail open on an unexpected exception). Persist the refusal anyway.
+        next.incidentCaptureFailed = true;
+      }
+    }
+    await writeRecord(target, next);
     return next;
   }
 }

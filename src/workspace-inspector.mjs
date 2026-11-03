@@ -166,7 +166,7 @@ async function hashUntracked(cwd, list, startedAt) {
   return hash.digest("hex");
 }
 
-async function filesystemFingerprint(cwd) {
+async function filesystemFingerprint(cwd, version = 2) {
   const startedAt = Date.now();
   const root = path.resolve(cwd);
   const queue = [""];
@@ -188,6 +188,18 @@ async function filesystemFingerprint(cwd) {
     }
     children.sort((a, b) => a.name.localeCompare(b.name));
     for (const child of children) {
+      if (version >= 2 && child.name === ".git") {
+        // A read-only git status may create/remove index.lock and change the
+        // directory mtime. Compare repository identity and staged state, not
+        // incidental lock files, reflogs or background fetch metadata.
+        const status = await git(absoluteDirectory, ["--no-optional-locks", "-c", "core.fsmonitor=false",
+          "status", "--porcelain=v2", "--branch", "-z", "--untracked-files=no"]);
+        const stable = status.split("\0").filter(row => row &&
+          (!row.startsWith("# ") || /^# branch\.(?:oid|head) /.test(row)));
+        hash.update(path.join(relativeDirectory, ".git")).update("\0git-state\0")
+          .update(JSON.stringify(stable)).update("\0");
+        continue;
+      }
       if (relativeDirectory === "" && FALLBACK_EXCLUDED_DIRECTORIES.has(child.name)) {
         continue;
       }
@@ -231,7 +243,7 @@ async function filesystemFingerprint(cwd) {
       }
     }
   }
-  return `fs:${hash.digest("hex")}`;
+  return `fs:${version >= 2 ? "v2:" : ""}${hash.digest("hex")}`;
 }
 
 async function gitFingerprint(cwd) {
@@ -288,7 +300,7 @@ export class WorkspaceInspector {
       const result = await retryFingerprint(
         "filesystem",
         "filesystem_scan_failed",
-        () => filesystemFingerprint(cwd),
+        () => filesystemFingerprint(cwd, options.filesystemVersion ?? 2),
       );
       if (result.ok) return result.value;
       this.lastFingerprintFailure = {
@@ -425,6 +437,7 @@ export class WorkspaceInspector {
         strategy: String(scope.fingerprint || "").startsWith("fs:")
           ? "filesystem"
           : undefined,
+        filesystemVersion: String(scope.fingerprint || "").startsWith("fs:v2:") ? 2 : 1,
       });
       if (fingerprint == null) {
         return {

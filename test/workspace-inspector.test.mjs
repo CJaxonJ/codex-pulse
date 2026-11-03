@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile, unlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -97,7 +97,7 @@ test("filesystem fingerprint retries when the workspace appears during a transie
   const fingerprint = await inspector.fingerprint(cwd, { strategy: "filesystem" });
   if (setupError) throw setupError;
   assert.equal(retries, 1, "the real missing workspace must trigger exactly one retry");
-  assert.match(fingerprint, /^fs:[a-f0-9]{64}$/);
+  assert.match(fingerprint, /^fs:v2:[a-f0-9]{64}$/);
   assert.equal(inspector.failureDiagnostic(), null);
 });
 
@@ -135,6 +135,44 @@ test("non-git workspaces use a stable filesystem fallback that detects edits", a
   assert.match(first, /^fs:/);
   assert.equal(repeat, first);
   assert.notEqual(second, first);
+});
+
+test("filesystem fallback ignores transient nested Git locks but detects branch, index and file changes", async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), "pulse-nested-git-"));
+  const repo = path.join(cwd, "product", "app");
+  await mkdir(repo, { recursive: true });
+  await writeFile(path.join(repo, "work.txt"), "original\n");
+  git(repo, ["init", "-q"]);
+  git(repo, ["config", "user.name", "Pulse Test"]);
+  git(repo, ["config", "user.email", "pulse@example.invalid"]);
+  git(repo, ["add", "work.txt"]); git(repo, ["commit", "-qm", "baseline"]);
+  const inspector = new WorkspaceInspector();
+  const first = await inspector.snapshot(cwd, { timeoutMs: 4000 });
+  assert.match(first.scopes[0].fingerprint, /^fs:v2:/);
+  git(repo, ["status", "--porcelain"]);
+  const lock = path.join(repo, ".git", "index.lock");
+  await writeFile(lock, "temporary read-side lock"); await unlink(lock);
+  assert.equal((await inspector.compareSnapshot(cwd, first, { timeoutMs: 4000 })).same, true);
+  git(repo, ["checkout", "-qb", "another-branch"]);
+  assert.equal((await inspector.compareSnapshot(cwd, first)).same, false, "identical files on another branch must still block");
+  const branch = await inspector.snapshot(cwd);
+  await writeFile(path.join(repo, "work.txt"), "changed\n");
+  assert.equal((await inspector.compareSnapshot(cwd, branch)).same, false);
+  const unstaged = await inspector.snapshot(cwd);
+  git(repo, ["add", "work.txt"]);
+  assert.equal((await inspector.compareSnapshot(cwd, unstaged)).same, false, "staging alone must still block");
+});
+
+test("legacy filesystem snapshots are compared with their original algorithm", async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), "pulse-legacy-fs-"));
+  await writeFile(path.join(cwd, "work.txt"), "original\n");
+  const inspector = new WorkspaceInspector();
+  const fingerprint = await inspector.fingerprint(cwd, { strategy: "filesystem", filesystemVersion: 1 });
+  assert.match(fingerprint, /^fs:[a-f0-9]{64}$/);
+  const snapshot = { version: 1, scopes: [{ root: ".", fingerprint }] };
+  assert.equal((await inspector.compareSnapshot(cwd, snapshot, { timeoutMs: 4000 })).same, true);
+  await writeFile(path.join(cwd, "work.txt"), "changed\n");
+  assert.equal((await inspector.compareSnapshot(cwd, snapshot)).same, false);
 });
 
 test("scoped snapshots ignore unrelated sibling changes but detect changes in the touched repo", async () => {
