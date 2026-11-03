@@ -87,7 +87,8 @@ namespace CodexPulse {
                             } else throw new InvalidDataException();
                             Console.Out.WriteLine("{\"id\":" + id + ",\"ok\":true}");
                         } catch (Exception error) {
-                            Console.Out.WriteLine(Program.Json.Serialize(new Dictionary<string, object> { { "id", id }, { "ok", false }, { "error", error.GetType().Name } }));
+                            // Return only exception kind/code, never user paths.
+                            Console.Out.WriteLine(Program.Json.Serialize(new Dictionary<string, object> { { "id", id }, { "ok", false }, { "error", error.GetType().Name }, { "win32Code", error.HResult & 0xffff } }));
                         }
                         Console.Out.Flush();
                     }

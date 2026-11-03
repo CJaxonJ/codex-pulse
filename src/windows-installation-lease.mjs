@@ -40,7 +40,14 @@ export async function openWindowsInstallationLease({ gate = false, binary = nati
       if (value.status === "maintenance_acquired") { clearTimeout(timeout); readyResolve(); }
       else if (pending && value.id === pending.id) {
         const request = pending; pending = null; clearTimeout(request.timer);
-        value.ok === true ? request.resolve() : request.reject(error());
+        if (value.ok === true) request.resolve();
+        else {
+          const failure = error();
+          failure.operation = "native_runtime_mutation";
+          if (/^[A-Za-z]+Exception$/.test(value.error || "")) failure.nativeError = value.error;
+          if (Number.isInteger(value.win32Code)) failure.code = `WIN32_${value.win32Code}`;
+          request.reject(failure);
+        }
       } else throw Error("Unexpected installation response");
     } catch { readyReject(error()); child.kill(); }
   });

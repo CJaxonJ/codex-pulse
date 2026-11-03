@@ -81,11 +81,15 @@ test("shared JSON snapshots remain complete during real cross-process replacemen
   const root = await mkdtemp(path.join(os.tmpdir(), "pulse atomic 快照-")), file = path.join(root, "state.json");
   await writeJsonSnapshotAtomic(file, { sequence: 0, payload: "", digest: createHash("sha256").update("").digest("hex") });
   const writer = fork(path.resolve(import.meta.dirname, "../scripts/test-support/snapshot-writer.mjs"), [file], { stdio: ["ignore", "ignore", "pipe", "ipc"] });
-  let started, done = false, barrier = null, failure, reads = 0;
+  let started, done = false, barrier = null, failure, reads = 0, diagnostic = "";
+  writer.stderr.on("data", chunk => { diagnostic = (diagnostic + chunk).slice(-2000); });
   const ready = new Promise((resolve, reject) => {
     started = resolve;
     writer.once("error", reject);
-    writer.once("exit", code => { if (!done) { failure = Error("Snapshot writer exited before completion: " + code); reject(failure); } });
+    writer.once("exit", code => { if (!done) {
+      failure ||= Error("Snapshot writer exited before completion: " + code + (diagnostic ? ": " + diagnostic : ""));
+      reject(failure);
+    } });
   });
   writer.on("message", message => {
     if (message.type === "ready") started();
