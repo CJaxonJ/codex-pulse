@@ -340,6 +340,62 @@ test("watcher never pauses or overwrites a user-changed Goal", async () => {
   assert.equal(client.calls.some(c => c.method === "thread/goal/set"), false);
 });
 
+test("an unchanged pre-existing blocked Goal is reported as blocked, not changed", async () => {
+  const objective = "Existing user-approved Windows work";
+  const store = new MemoryChatContinuityStore([observingChat({
+    initialGoal: null, observedGoalObjective: objective,
+  })]);
+  const client = new FakeClient();
+  client.latestTurnStatus = "inProgress";
+  client.goalStatus = "blocked"; client.goalObjective = objective;
+  const events = await new ChatContinuityController({ client, store }).reconcile(summary(9), { now: 200 });
+  assert.equal(events[0].reason, "native_goal_blocked");
+  const record = await store.get("thread-1");
+  assert.equal(record.status, "needs_attention");
+  assert.ok(record.checkpoint.workspaceFingerprint);
+  assert.equal(record.autoResume, false);
+  assert.equal(client.calls.some(c => c.method === "thread/goal/set"), false);
+});
+
+for (const status of ["needs_attention", "complete"]) test(`a refused checkpoint marked ${status} by an older Stop hook keeps its final plan`, async () => {
+  const plan = "Completed: Windows installed. Remaining: install network driver. Blockers: network unavailable.";
+  const store = new MemoryChatContinuityStore([pausedChat({
+    status, blocker: "native_goal_blocked", autoResume: false,
+    checkpointRequestedAt: 10, checkpoint: { workspaceFingerprint: "original-snapshot" },
+  })]);
+  const client = new FakeClient(); client.goalStatus = "blocked";
+  const request = client.request.bind(client);
+  client.request = async (method, params) => method === "thread/turns/list"
+    ? { data: [{ id: "turn-1", status: "completed", items: [{ type: "agentMessage", text: plan }] }] }
+    : request(method, params);
+  const controller = new ChatContinuityController({ client, store });
+  await controller.reconcile(summary(100, 200), { now: 200 });
+  await controller.reconcile(summary(100, 200), { now: 201 });
+  const saved = await store.get("thread-1");
+  assert.equal(saved.status, "needs_attention");
+  assert.equal(saved.autoResume, false);
+  assert.equal(saved.blocker, "native_goal_blocked");
+  assert.equal(saved.checkpoint.summary, plan);
+  assert.equal(saved.checkpoint.workspaceFingerprint, "original-snapshot");
+  assert.equal(client.calls.some(c => c.method === "thread/goal/set" || c.method === "turn/start"), false);
+});
+
+for (const condition of ["live", "unknown", "newer", "race"]) test(`blocked handoff repair does not invent completion or overwrite ${condition} work`, async () => {
+  const store = new MemoryChatContinuityStore([pausedChat({ status: "needs_attention",
+    blocker: "native_goal_blocked", autoResume: false, checkpointRequestedAt: 10,
+    checkpoint: { workspaceFingerprint: "original-snapshot" } })]);
+  const client = new FakeClient();
+  client.readLatestTurn = async () => {
+    if (condition === "race") await store.put({ sessionId: "thread-1", status: "observing", turnId: "new-user-turn" });
+    return { id: condition === "newer" ? "newer-turn" : "turn-1",
+      status: condition === "live" ? "inProgress" : condition === "unknown" ? "unknown" : "completed",
+      items: [{ type: "agentMessage", text: "This must not replace the newer or unfinished work." }] };
+  };
+  await new ChatContinuityController({ client, store }).reconcile(summary(100, 200), { now: 200 });
+  assert.equal((await store.get("thread-1")).checkpoint?.summary, undefined);
+  assert.equal(client.calls.some(c => c.method === "thread/goal/set" || c.method === "turn/start"), false);
+});
+
 test("a normally completed no-Goal turn is not restarted when quota later falls", async () => {
   const store = new MemoryChatContinuityStore([observingChat({ initialGoal: null })]);
   const client = new FakeClient();

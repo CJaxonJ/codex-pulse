@@ -123,6 +123,16 @@ export class ChatContinuityController {
     }
     records = await this.store.list();
 
+    // Older trusted Stop hooks mark attention records complete without saving
+    // the handoff. Recover only the final text; never clear a safety refusal.
+    for (const record of records.filter(candidate =>
+      ["needs_attention", "complete"].includes(candidate.status) && candidate.blocker &&
+      candidate.checkpointRequestedAt && !candidate.checkpoint?.summary &&
+      retryIsDue(candidate, now))) {
+      await this.#captureBlockedHandoff(record, now);
+    }
+    records = await this.store.list();
+
     for (const record of records.filter((candidate) =>
       ["checkpoint_requested", "checkpointing"].includes(candidate.status) &&
       retryIsDue(candidate, now)
@@ -280,8 +290,8 @@ export class ChatContinuityController {
         await this.store.put({ ...latest, status: "complete", autoResume: false });
         return null;
       }
-      if (goal && (!current.initialGoal ||
-        (current.observedGoalObjective || current.initialGoal.objective) !== goal.objective)) {
+      const observedObjective = current.observedGoalObjective || current.initialGoal?.objective;
+      if (goal && observedObjective && observedObjective !== goal.objective) {
         return this.#checkpointAttention(requested, "native_goal_changed", now);
       }
       if (goal && goal.status !== "active") {
@@ -373,6 +383,31 @@ export class ChatContinuityController {
     await this.store.put({ ...current, status: "needs_attention", autoResume: false,
       blocker: reason, checkpointFailedAt: now });
     return { type: "chat_continuity_attention", sessionId: record.sessionId, reason };
+  }
+
+  async #captureBlockedHandoff(original, now) {
+    let turn;
+    try { turn = await this.#readTurn(original.sessionId, "full"); }
+    catch (error) {
+      // Failure to read history cannot turn a refused recovery into a restart.
+      const current = await this.store.get(original.sessionId);
+      if (current?.turnId === original.turnId && current.blocker === original.blocker &&
+        ["needs_attention", "complete"].includes(current.status) && !current.checkpoint?.summary)
+        await this.#deferRetry(current, error, now, { status: current.status });
+      return;
+    }
+    if (turn?.id !== original.turnId || !["completed", "failed"].includes(turn.status)) return;
+    const summary = (turn.items || []).filter(item => item.type === "agentMessage")
+      .map(item => item.text || "").filter(Boolean).at(-1);
+    if (!summary) return;
+    const current = await this.store.get(original.sessionId);
+    if (current?.turnId !== original.turnId || current.blocker !== original.blocker ||
+      !["needs_attention", "complete"].includes(current.status) || current.checkpoint?.summary) return;
+    await this.store.put({ ...current, status: "needs_attention", autoResume: false,
+      checkpoint: { ...current.checkpoint, summary: summary.slice(0, 8_000),
+        completedAt: now, repairedFromTurnStatus: turn.status },
+      retryNotBefore: null,
+    });
   }
 
   async #recoverAfterWatcherRestart(original, now) {
