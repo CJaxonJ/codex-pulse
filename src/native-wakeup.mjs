@@ -26,7 +26,10 @@ export function trustedRecoveryHooks(result) {
 export async function queueNativeWakeup(binary, record, executeCommand = execute) {
   // Official queue routes to the owning session through the local daemon.
   // It does not claim the thread's writer lock or start another writer.
-  const invocation = codexInvocation(binary, ["queue", "--thread", record.sessionId, "--message", recoveryWakeMessage(record)]);
+  // Queue alone can succeed while leaving a stored/unloaded thread idle.
+  // Let the official owning daemon reload it; execution still needs a new
+  // observed turn, not this command's exit status, before reporting success.
+  const invocation = codexInvocation(binary, ["queue", "--thread", record.sessionId, "--message", recoveryWakeMessage(record), "--resume"]);
   await executeCommand(invocation.file, invocation.args, {
     cwd: record.cwd, timeout: 20000, maxBuffer: 1024 * 1024, windowsHide: true,
   });

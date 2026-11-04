@@ -14,6 +14,7 @@ test("official queue receives arguments directly without a shell or a second wri
     initialGoal: { objective: "Keep literal $(do-not-run) and `text`" } };
   await queueNativeWakeup("codex", record, async (...args) => calls.push(args));
   assert.deepEqual(calls[0][1].slice(0, 4), ["queue", "--thread", "thread", "--message"]);
+  assert.equal(calls[0][1].at(-1), "--resume", "The owning official daemon must reload stored threads, not only enqueue text");
   assert.match(calls[0][1][4], /\$\(do-not-run\)/);
   assert.equal(calls[0][2].cwd, record.cwd);
   assert.equal(calls[0][2].shell, undefined);

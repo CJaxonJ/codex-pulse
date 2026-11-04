@@ -40,6 +40,9 @@ jobs:
       - name: Real Codex Windows hook review protocol (isolated config, no model)
         if: matrix.node == 22
         run: node scripts/e2e-windows-codex-hooks.mjs
+      - name: Real official queue reload after server restart (isolated rejecting provider, no real model)
+        if: matrix.node == 22
+        run: node scripts/e2e-windows-queue-resume.mjs
       - name: Official plugin installation and verified rollback (isolated config, no account)
         if: matrix.node == 22
         run: node scripts/e2e-plugin-operation.mjs

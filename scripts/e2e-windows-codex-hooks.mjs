@@ -18,7 +18,7 @@ assert.equal(actualCodexVersion,"0.163.0-alpha.11.1","Acceptance must use the ac
 const fixture=await protectionFixture(project);
 // Parse the exact production argument shape, but terminate in help before any
 // enqueue. Hidden flags need not appear in help text. No real thread is used.
-const queueHelp=codexInvocation(resolveCodexBinary(),["queue","--thread",randomUUID(),"--message","Codex Pulse isolated parser probe","--help"]);
+const queueHelp=codexInvocation(resolveCodexBinary(),["queue","--thread",randomUUID(),"--message","Codex Pulse isolated parser probe","--resume","--help"]);
 const queueUsage=(await promisify(execFile)(queueHelp.file,queueHelp.args,{env:{...process.env,CODEX_HOME:fixture.home},encoding:"utf8",timeout:15000,windowsHide:true})).stdout;
 assert.match(queueUsage,/usage:/i,"Official Windows CLI must parse the queued-message flags without enqueueing");
 const originalHome=process.env.CODEX_HOME;
