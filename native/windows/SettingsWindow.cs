@@ -15,6 +15,7 @@ namespace CodexPulse {
         private readonly NumericUpDown threshold;
         private readonly Dictionary<string, CheckBox> switches = new Dictionary<string, CheckBox>();
         private readonly string[] policies = { "strict_reserve", "finish_current", "deadline" };
+        private readonly Button quotaAction;
         private Dictionary<string, object> baseline;
         private bool busy, autoRedeem;
 
@@ -28,6 +29,8 @@ namespace CodexPulse {
             FlowLayoutPanel navigation = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, Margin = new Padding(0, 0, 0, 12) };
             navigation.Controls.Add(Program.Button("消息历史", delegate { using (HistoryWindow view = new HistoryWindow(false)) view.ShowDialog(this); }));
             navigation.Controls.Add(Program.Button("续跑计划", delegate { using (HistoryWindow view = new HistoryWindow(true)) view.ShowDialog(this); }));
+            quotaAction = Program.Button("解除10%暂停", async delegate { await ChangeQuotaPolicy(); }); quotaAction.Enabled = false;
+            navigation.Controls.Add(quotaAction);
             layout.Controls.Add(navigation, 0, 2);
             tabs = new TabControl { Dock = DockStyle.Fill, Margin = new Padding(0) };
             TabPage reminders = new TabPage("提醒设置") { Padding = new Padding(16) };
@@ -84,13 +87,15 @@ namespace CodexPulse {
             policy.SelectedIndex = index; threshold.Value = percent;
             foreach (KeyValuePair<string, CheckBox> entry in switches) entry.Value.Checked = Program.BooleanValue(settings, entry.Key, true);
             baseline = new Dictionary<string, object>(settings);
+            quotaAction.Text = Program.StringValue(baseline, "quotaPolicy") == "strict_reserve" ? "解除10%暂停" : "恢复10%保护";
+            quotaAction.Enabled = true;
             autoRedeem = Program.BooleanValue(result, "autoRedeemEnabled", false);
             card.Text = autoRedeem ? "关闭临期自动用卡" : "开启临期自动用卡";
             card.Enabled = true; save.Enabled = true;
         }
         private async Task LoadSnapshot() {
             if (busy) return;
-            refresh.Enabled = false; save.Enabled = false; card.Enabled = false; tabs.Enabled = false;
+            refresh.Enabled = false; save.Enabled = false; card.Enabled = false; quotaAction.Enabled = false; tabs.Enabled = false;
             try {
                 Dictionary<string, object> result = await Bridge.Run("settings");
                 if (IsDisposed) return; Apply(result);
@@ -124,7 +129,23 @@ namespace CodexPulse {
             values["quotaPolicy"] = policies[policy.SelectedIndex]; values["lowQuotaPercent"] = (int)threshold.Value;
             return values.Where(entry => !baseline.ContainsKey(entry.Key) || !Object.Equals(baseline[entry.Key], entry.Value)).ToDictionary(entry => entry.Key, entry => entry.Value);
         }
-        private void SetBusy(bool value) { busy = value; tabs.Enabled = !value; save.Enabled = !value && baseline != null; refresh.Enabled = !value; }
+        private void SetBusy(bool value) { busy = value; tabs.Enabled = !value; save.Enabled = !value && baseline != null; refresh.Enabled = !value; quotaAction.Enabled = !value && baseline != null; }
+        private async Task ChangeQuotaPolicy() {
+            if (busy || baseline == null) return;
+            string mode = Program.StringValue(baseline, "quotaPolicy") == "strict_reserve" ? "finish_current" : "strict_reserve";
+            SetBusy(true); feedback.Text = "正在切换保护方式…";
+            try {
+                Dictionary<string, object> result = await Bridge.Run("settings", "--update", Program.Json.Serialize(new Dictionary<string, object> { { "quotaPolicy", mode } }));
+                if (IsDisposed) return;
+                object raw;
+                Dictionary<string, object> settings = result.TryGetValue("settings", out raw) ? raw as Dictionary<string, object> : null;
+                if (!Program.BooleanValue(result, "ok", false) || settings == null || Program.StringValue(settings, "quotaPolicy") != mode) throw new InvalidOperationException();
+                baseline["quotaPolicy"] = mode; policy.SelectedIndex = Array.IndexOf(policies, mode);
+                quotaAction.Text = mode == "strict_reserve" ? "解除10%暂停" : "恢复10%保护";
+                feedback.Text = mode == "strict_reserve" ? "已恢复10%保护。" : "已解除10%暂停，切换为收尾模式。回Codex发送“继续”；此选择会保留，可点“恢复10%保护”切回。";
+            } catch { if (!IsDisposed) feedback.Text = "切换未确认，请刷新核对。"; }
+            finally { if (!IsDisposed) SetBusy(false); }
+        }
         private async Task SaveSettings() {
             if (busy || baseline == null || policy.SelectedIndex < 0) return;
             Dictionary<string, object> patch = Patch();

@@ -34,6 +34,8 @@
 @property(strong) NSSlider *threshold;
 @property(strong) NSTextField *thresholdLabel;
 @property(strong) NSPopUpButton *policy;
+@property(strong) NSButton *quotaAction;
+@property(copy) void (^afterPolicyChange)(BOOL);
 @property(strong) NSButton *saveButton;
 @property(strong) NSTextField *feedback;
 @property(strong) NSTextField *health;
@@ -180,7 +182,12 @@
     [self section:@"额度保护" at:216 parent:body];
     NSView *protection = [self cardAt:248 height:88 parent:body];
     [self label:@"保护策略" frame:NSMakeRect(24, 16, 280, 24) size:14 weight:NSFontWeightMedium parent:protection];
-    [self label:@"提醒可关闭，安全校验始终保留。" frame:NSMakeRect(24, 48, 320, 24) size:12 weight:NSFontWeightRegular parent:protection].textColor = NSColor.secondaryLabelColor;
+    self.quotaAction = [NSButton buttonWithTitle:@"解除10%暂停" target:self action:@selector(changeQuotaPolicy:)];
+    self.quotaAction.frame = NSMakeRect(24, 48, 160, 28);
+    self.quotaAction.accessibilityLabel = @"解除10%暂停";
+    self.quotaAction.enabled = NO;
+    [protection addSubview:self.quotaAction];
+    [self label:@"解除后改为收尾模式，需手动恢复。" frame:NSMakeRect(200, 52, 416, 24) size:12 weight:NSFontWeightRegular parent:protection].textColor = NSColor.secondaryLabelColor;
     self.policy = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(368, 24, 248, 32) pullsDown:NO];
     self.policy.font = [NSFont systemFontOfSize:14 weight:NSFontWeightMedium];
     [self.policy addItemsWithTitles:@[@"10% 安全暂停（推荐）", @"优先完成当前结果", @"截止时间优先"]];
@@ -282,6 +289,10 @@
 }
 - (void)setEditingEnabled:(BOOL)enabled {
     self.policy.enabled = enabled;
+    BOOL strict = [self.saved[@"quotaPolicy"] isEqual:@"strict_reserve"];
+    self.quotaAction.title = strict ? @"解除10%暂停" : @"恢复10%保护";
+    self.quotaAction.accessibilityLabel = self.quotaAction.title;
+    self.quotaAction.enabled = enabled && self.saved != nil;
     for (NSSwitch *control in self.switches.allValues) control.enabled = enabled;
     self.threshold.enabled = enabled && self.switches[@"quotaAlertsEnabled"].state == NSControlStateValueOn;
     self.creditSwitch.enabled = enabled && !self.creditBusy;
@@ -308,6 +319,26 @@
         [self setEditingEnabled:YES];
         self.feedback.stringValue = @"更改后点击保存";
         if (self.afterLoad) { dispatch_block_t block = self.afterLoad; self.afterLoad = nil; block(); }
+    });
+}
+- (void)changeQuotaPolicy:(id)sender {
+    if (self.loading || self.saving || !self.saved) return;
+    NSString *mode = [self.saved[@"quotaPolicy"] isEqual:@"strict_reserve"] ? @"finish_current" : @"strict_reserve";
+    NSData *data = [NSJSONSerialization dataWithJSONObject:@{@"quotaPolicy":mode} options:0 error:nil];
+    NSString *json = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    self.saving = YES; [self setEditingEnabled:NO]; self.feedback.stringValue = @"正在切换保护方式…";
+    self.runner(@[@"settings", @"--update", json], ^(NSDictionary *result) {
+        BOOL confirmed = [result[@"ok"] boolValue] && [result[@"settings"] isKindOfClass:NSDictionary.class]
+            && [result[@"settings"][@"quotaPolicy"] isEqual:mode];
+        if (confirmed) {
+            // Change only this baseline field: other unsaved controls and
+            // separately granted credit consent remain untouched.
+            NSMutableDictionary *saved = [self.saved mutableCopy]; saved[@"quotaPolicy"] = mode; self.saved = saved;
+            [self.policy selectItemAtIndex:[mode isEqual:@"strict_reserve"] ? 0 : 1];
+            self.feedback.stringValue = [mode isEqual:@"strict_reserve"] ? @"已恢复10%保护" : @"已解除；回Codex发“继续”。可随时恢复保护。";
+        } else self.feedback.stringValue = @"切换未确认，请重新打开窗口核对";
+        self.saving = NO; [self setEditingEnabled:YES];
+        if (self.afterPolicyChange) { void (^done)(BOOL) = self.afterPolicyChange; self.afterPolicyChange = nil; done(confirmed); }
     });
 }
 - (void)open {
@@ -776,10 +807,11 @@
             view.switches[@"soundEnabled"].state = NSControlStateValueOff;
             view.switches[@"persistentAlertsEnabled"].state = NSControlStateValueOff;
             [NSApp sendAction:view.threshold.action to:view.threshold.target from:view.threshold];
+            __block BOOL quickPolicyOK = NO;
             view.afterSave = ^{
                 PulseSettingsWindow *current = weakSelf;
                 NSDictionary *saved = [current readJSON:@"preferences.json"];
-                BOOL ok = layoutOK && alignmentOK && quotaOK && freshnessOK && tiboOK && current.window.isVisible && [saved[@"lowQuotaPercent"] integerValue] == 35
+                BOOL ok = quickPolicyOK && layoutOK && alignmentOK && quotaOK && freshnessOK && tiboOK && current.window.isVisible && [saved[@"lowQuotaPercent"] integerValue] == 35
                     && ![saved[@"soundEnabled"] boolValue] && ![saved[@"persistentAlertsEnabled"] boolValue]
                     && [saved[@"autoRedeem"][@"enabled"] boolValue] && !current.saveButton.enabled;
                 [current capture:@"settings-saved.png"];
@@ -800,7 +832,21 @@
                 current.creditSwitch.state = NSControlStateValueOff;
                 [NSApp sendAction:current.creditSwitch.action to:current.creditSwitch.target from:current.creditSwitch];
             };
-            [view.saveButton performClick:nil];
+            view.afterPolicyChange = ^(BOOL unlocked) {
+                PulseSettingsWindow *current = weakSelf;
+                NSDictionary *settings = [current readJSON:@"preferences.json"];
+                BOOL preserved = unlocked && [settings[@"quotaPolicy"] isEqual:@"finish_current"]
+                    && [settings[@"soundEnabled"] boolValue] && [settings[@"autoRedeem"][@"enabled"] boolValue]
+                    && current.switches[@"soundEnabled"].state == NSControlStateValueOff && current.threshold.doubleValue == 35;
+                current.afterPolicyChange = ^(BOOL restored) {
+                    PulseSettingsWindow *finalView = weakSelf;
+                    quickPolicyOK = preserved && restored && [[finalView readJSON:@"preferences.json"][@"quotaPolicy"] isEqual:@"strict_reserve"]
+                        && finalView.saveButton.enabled;
+                    [finalView.saveButton performClick:nil];
+                };
+                [current.quotaAction performClick:nil];
+            };
+            [view.quotaAction performClick:nil];
         });
     };
 }

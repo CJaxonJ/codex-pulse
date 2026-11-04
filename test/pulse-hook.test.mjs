@@ -8,6 +8,7 @@ import test from "node:test";
 import { handleHook as handleHookImpl } from "../plugin/scripts/pulse-hook.mjs";
 import { ChatContinuityStore } from "../src/chat-continuity-store.mjs";
 import { WorkspaceInspector } from "../src/workspace-inspector.mjs";
+import { PulsePreferencesStore } from "../src/preferences-store.mjs";
 
 const NOW = 2_000_000_000;
 const APP_ROOT = path.resolve(import.meta.dirname, "..");
@@ -345,6 +346,24 @@ test("strict-reserve mode blocks new turns and stops at the hard floor", async (
   assert.match(blocked.reason, /严格保余额/);
   assert.equal(stopped.decision, "block");
   assert.match(stopped.reason, /hard floor/);
+});
+
+test("explicit settings unlock is read by the next Hook and restoring reserve blocks again without losing the checkpoint or credit consent", async () => {
+  const dataDir = await createDataDir(9), cwd = await mkdtemp(path.join(os.tmpdir(), "pulse-manual-policy-"));
+  const preferences = new PulsePreferencesStore(dataDir), store = new ChatContinuityStore(dataDir);
+  const consent = { enabled: true, accountBinding: "a".repeat(64) };
+  await preferences.set({ quotaPolicy: "strict_reserve", autoRedeem: consent });
+  const input = { hook_event_name: "PreToolUse", session_id: "manual-policy", turn_id: "paused-turn", cwd, tool_name: "Bash" };
+  const invoke = () => handleHook(input, { dataDir, appRoot: APP_ROOT, now: NOW });
+  assert.equal((await invoke()).decision, "block");
+  const checkpoint = (await store.get(input.session_id)).checkpoint;
+  await preferences.setUserSettings({ quotaPolicy: "finish_current" });
+  assert.notEqual((await invoke())?.decision, "block", "The UI policy change must not require restarting Codex");
+  assert.equal((await store.get(input.session_id)).checkpoint.workspaceFingerprint, checkpoint.workspaceFingerprint);
+  assert.deepEqual((await preferences.get()).autoRedeem, consent);
+  await preferences.setUserSettings({ quotaPolicy: "strict_reserve" });
+  assert.equal((await invoke()).decision, "block");
+  assert.deepEqual((await preferences.get()).autoRedeem, consent);
 });
 
 test("ordinary chat blocks further tools and saves one local checkpoint without storing the prompt", async () => {

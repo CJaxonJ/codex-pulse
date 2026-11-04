@@ -25,6 +25,17 @@ test("native Windows settings save only changed fields, preserve concurrent chan
     assert.equal((await f.cli(["settings"])).settings.quotaAlertsEnabled, true, "Toggling is not an implicit save");
     // Another real process edits an unrelated setting after the UI loaded.
     await f.cli(["settings", "--update", JSON.stringify({ lowQuotaPercent: 35 })]);
+    await inspectWindowsUI(session, { title, click: "解除10%暂停" });
+    await waitForWindowsUI(session, ui => button(ui, "恢复10%保护")?.enabled, { title });
+    const unlocked = await f.cli(["settings"]);
+    assert.equal(unlocked.settings.quotaPolicy, "finish_current");
+    assert.equal(unlocked.settings.quotaAlertsEnabled, true, "Quick unlock must not save unrelated draft controls");
+    assert.equal(unlocked.settings.lowQuotaPercent, 35, "Quick unlock must preserve concurrent preferences");
+    assert.equal(unlocked.autoRedeemEnabled, false);
+    await inspectWindowsUI(session, { title, click: "恢复10%保护" });
+    const restored = await waitForWindowsUI(session, ui => button(ui, "解除10%暂停")?.enabled, { title });
+    assert.equal(button(restored, "提前额度提醒")?.checked, false, "The unsaved control must remain edited");
+    assert.equal((await f.cli(["settings"])).settings.quotaPolicy, "strict_reserve");
     await inspectWindowsUI(session, { title, click: "保存修改" });
     await waitForWindowsUI(session, ui => /已保存/.test(ui.content.join("\n")), { title });
     const saved = await f.cli(["settings"]);
