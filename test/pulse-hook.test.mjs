@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -731,6 +731,70 @@ test("the trusted pre-tool hook pauses recovery when the workspace changed", asy
     { dataDir, appRoot: APP_ROOT, now: NOW + 1, goalCoordinator });
   assert.equal(retried.decision, "block");
   assert.match(retried.reason, /remains blocked/);
+});
+
+for (const scenario of ["descendant", "parallel-descendant", "changed-sibling", "outside", "symlink-outside", "symlink-inside"]) {
+  test(`recovery keeps the saved workspace boundary for a ${scenario} tool cwd`, async () => {
+    const dataDir = await createDataDir(80);
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "pulse-recovery-cwd-"));
+    const child = path.join(cwd, "product");
+    const outside = await mkdtemp(path.join(os.tmpdir(), "pulse-recovery-outside-"));
+    await mkdir(child);
+    await writeFile(path.join(cwd, "sibling.txt"), "baseline\n");
+    if (scenario === "symlink-outside") {
+      await symlink(outside, path.join(cwd, "external"), "junction");
+    }
+    if (scenario === "symlink-inside") {
+      await symlink(child, path.join(cwd, "internal"), "junction");
+    }
+    const snapshot = await new WorkspaceInspector().snapshot(cwd);
+    const store = new ChatContinuityStore(dataDir);
+    await store.put({ sessionId: "cwd-recovery", status: "native_goal_active", cwd,
+      turnId: "paused", workspaceValidationRequired: true,
+      checkpoint: { workspaceSnapshot: snapshot, workspaceFingerprint: snapshot.digest } });
+    if (scenario === "changed-sibling") {
+      await writeFile(path.join(cwd, "sibling.txt"), "changed while paused\n");
+    }
+    const toolCwd = scenario === "outside" ? outside
+      : scenario === "symlink-outside" ? path.join(cwd, "external")
+      : scenario === "symlink-inside" ? path.join(cwd, "internal") : child;
+    const pauses = [];
+    const options = { dataDir, appRoot: APP_ROOT, now: NOW, goalCoordinator: {
+      async pauseIfActive() { pauses.push(true); return { paused: true }; },
+    } };
+    const input = { hook_event_name: "PreToolUse", session_id: "cwd-recovery",
+      turn_id: "resumed", cwd: toolCwd, tool_name: "Bash" };
+    const [output, parallelOutput] = scenario === "parallel-descendant"
+      ? await Promise.all([handleHookImpl(input, options), handleHookImpl({ ...input, cwd }, options)])
+      : [await handleHookImpl(input, options)];
+    const saved = await store.get("cwd-recovery");
+    if (["descendant", "parallel-descendant", "symlink-inside"].includes(scenario)) {
+      assert.equal(output, null, "an unchanged project subdirectory must not pause recovery");
+      if (scenario === "parallel-descendant") assert.equal(parallelOutput, null);
+      assert.equal(saved.workspaceValidationRequired, false);
+      assert.equal(saved.cwd, cwd, "the command directory must not replace the saved workspace root");
+      assert.equal(pauses.length, 0);
+    } else {
+      assert.equal(output.decision, "block");
+      assert.equal(saved.blocker, scenario === "changed-sibling" ? "workspace_changed" : "cwd_outside_workspace");
+      assert.equal(pauses.length, 1);
+    }
+  });
+}
+
+test("recovery retains the verifier failure code in the saved incident", async () => {
+  const dataDir = await createDataDir(80);
+  const cwd = await mkdtemp(path.join(os.tmpdir(), "pulse-recovery-diagnostic-"));
+  const store = new ChatContinuityStore(dataDir);
+  await store.put({ sessionId: "diagnostic-recovery", status: "native_goal_active", cwd,
+    turnId: "paused", workspaceValidationRequired: true,
+    checkpoint: { workspaceSnapshot: { version: 1, scopes: null } } });
+  const output = await handleHook({ hook_event_name: "PreToolUse", session_id: "diagnostic-recovery",
+    turn_id: "resumed", cwd, tool_name: "Bash" }, { dataDir, appRoot: APP_ROOT, now: NOW });
+  assert.equal(output.decision, "block");
+  const incident = await store.getLastFailure("diagnostic-recovery");
+  assert.equal(incident.blocker, "workspace_unverifiable");
+  assert.equal(incident.blockerDetails.failure.failures[0].reason, "invalid_snapshot");
 });
 
 test("deadline mode stays quiet at fifteen percent and drains at five", async () => {

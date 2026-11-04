@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, realpath, rename, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -305,12 +305,26 @@ async function validateRecoveryWorkspace({
     return null;
   }
 
-  const cwd = path.resolve(input.cwd || chat.cwd || process.cwd());
+  // Tool hooks may carry the command's subdirectory. The checkpoint is still
+  // relative to the saved workspace root, never to the individual command.
+  const cwd = chat.cwd ? path.resolve(chat.cwd) : null;
+  const toolCwd = path.resolve(input.cwd || cwd || process.cwd());
   let reason = null;
   let changedScopes = [];
-  if (!chat.cwd || !(await workspace.exists(cwd)) || path.resolve(chat.cwd) !== cwd) {
+  let validationFailure = null;
+  if (!cwd || !(await workspace.exists(cwd)) || !(await workspace.exists(toolCwd))) {
     reason = "cwd_missing";
-  } else if (chat.checkpoint?.workspaceSnapshot) {
+  } else {
+    try {
+      const relative = path.relative(await realpath(cwd), await realpath(toolCwd));
+      if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+        reason = "cwd_outside_workspace";
+      }
+    } catch {
+      reason = "cwd_missing";
+    }
+  }
+  if (!reason && chat.checkpoint?.workspaceSnapshot) {
     const comparison = await workspace.compareSnapshot(
       cwd,
       chat.checkpoint.workspaceSnapshot,
@@ -318,22 +332,26 @@ async function validateRecoveryWorkspace({
     );
     if (comparison?.verifiable === false) {
       reason = "workspace_unverifiable";
+      validationFailure = comparison.failure || workspace.failureDiagnostic?.() || null;
     } else if (!comparison?.same) {
       reason = "workspace_changed";
       changedScopes = comparison?.changedScopes || [];
     }
-  } else if (chat.checkpoint?.workspaceFingerprint) {
+  } else if (!reason && chat.checkpoint?.workspaceFingerprint) {
     const fingerprint = await workspace.fingerprint(cwd, {
       timeoutMs: 4000,
       strategy: String(chat.checkpoint.workspaceFingerprint).startsWith("fs:")
         ? "filesystem"
         : undefined,
     });
-    if (fingerprint == null) reason = "workspace_unverifiable";
+    if (fingerprint == null) {
+      reason = "workspace_unverifiable";
+      validationFailure = workspace.failureDiagnostic?.() || null;
+    }
     else if (fingerprint !== chat.checkpoint.workspaceFingerprint) {
       reason = "workspace_changed";
     }
-  } else {
+  } else if (!reason) {
     reason = "checkpoint_missing_fingerprint";
   }
 
@@ -347,7 +365,9 @@ async function validateRecoveryWorkspace({
       ...chat,
       status: "needs_attention",
       blocker: reason,
-      blockerDetails: changedScopes.length ? { changedScopes } : null,
+      blockerDetails: changedScopes.length || validationFailure
+        ? { ...(changedScopes.length ? { changedScopes } : {}), ...(validationFailure ? { failure: validationFailure } : {}) }
+        : null,
       autoResume: false,
       holdWorktreeLock: false,
       workspaceValidationRequired: false,
