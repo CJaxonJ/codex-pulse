@@ -7,11 +7,15 @@ using System.Text;
 using System.Threading;
 using System.Web.Script.Serialization;
 
+[assembly: System.Runtime.Versioning.TargetFramework(".NETFramework,Version=v4.8", FrameworkDisplayName = ".NET Framework 4.8")]
+
 // Isolated kernel-event/file-lock peer. It deliberately keeps its process and
 // working-directory handle alive after releasing the background ownership lock.
 internal static class DelayedBackgroundOwner {
     private static int Main(string[] args) {
-        string data = args[0], control = args[1], generation = Guid.NewGuid().ToString("N"), name;
+        // Match the shipped DataDirectory normalization before deriving the
+        // event name. CI's temporary root may use an 8.3 short path spelling.
+        string data = Path.GetFullPath(args[0]).TrimEnd('\\'), control = args[1], generation = Guid.NewGuid().ToString("N"), name;
         using (SHA256 hash = SHA256.Create()) name = "Global\\CodexPulse-" + WindowsIdentity.GetCurrent().User.Value + "-"
             + BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(data.TrimEnd('\\').ToUpperInvariant()))).Replace("-", "") + "-" + generation;
         using (EventWaitHandle stop = new EventWaitHandle(false, EventResetMode.ManualReset, name)) {

@@ -22,9 +22,14 @@ async function delayedOwner() {
     "$c=Join-Path ([Runtime.InteropServices.RuntimeEnvironment]::GetRuntimeDirectory()) 'csc.exe'; & $c /nologo /target:exe /reference:System.Web.Extensions.dll ('/out:'+$env:PULSE_TEST_OUTPUT) $env:PULSE_TEST_SOURCE; if($LASTEXITCODE -ne 0){exit 1}"], {
     env: { ...f.env, PULSE_TEST_OUTPUT: binary, PULSE_TEST_SOURCE: path.resolve(import.meta.dirname, "../scripts/test-support/windows-delayed-background-owner.cs") }, windowsHide: true, timeout: 20000,
   });
+  await writeFile(binary + ".config", await readFile(path.join(f.appRoot, "CodexPulse.exe.config")));
   const child = spawn(binary, [f.dataDir, control], { env: f.env, cwd: f.appRoot, windowsHide: true, stdio: "ignore" });
   const closed = once(child, "exit");
-  await until(async () => { if (child.exitCode != null) throw Error("Isolated owner exited before readiness"); try { return await readFile(control + ".ready"); } catch { return false; } });
+  try {
+    await until(async () => { if (child.exitCode != null) throw Error("Isolated owner exited before readiness"); try { return await readFile(control + ".ready"); } catch { return false; } });
+    const inspect = f.start("--background-info");
+    assert.equal((await inspect.closed)[0], 0, "The isolated peer must first pass real native ownership/event inspection: " + inspect.diagnostic());
+  } catch (error) { if (child.exitCode == null) child.kill(); await closed; throw error; }
   return { ...f, child, closed, control, released: () => until(async () => { try { return await readFile(control + ".guard-released"); } catch { return false; } }) };
 }
 for (const alreadyReleased of [false, true]) test(`native stop waits for the actual owner process after guard release (released before request: ${alreadyReleased})`, windows, async () => {
@@ -32,7 +37,11 @@ for (const alreadyReleased of [false, true]) test(`native stop waits for the act
   try {
     if (alreadyReleased) { await writeFile(f.control + ".release-guard", "release ownership only"); await f.released(); }
     stop = f.start("--stop-background");
-    await f.released();
+    await until(async () => {
+      if (stop.child.exitCode != null) throw Error("Stop returned before guard release: " + stop.diagnostic());
+      if (f.child.exitCode != null) throw Error("Isolated owner exited before guard release");
+      try { return await readFile(f.control + ".guard-released"); } catch { return false; }
+    });
     const observed = await Promise.race([stop.closed.then(() => "returned-before-exit"), new Promise(resolve => setTimeout(() => resolve("waiting-for-owner"), 1000))]);
     assert.equal(observed, "waiting-for-owner", stop.diagnostic());
     assert.equal(f.child.exitCode, null, "The old process must actually still be alive in this interval");
