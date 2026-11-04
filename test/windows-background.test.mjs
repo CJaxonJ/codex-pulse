@@ -4,6 +4,9 @@ import { mkdir, readFile, writeFile, unlink, readdir } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { windowsUIFixture } from "../scripts/test-support/windows-ui-fixture.mjs";
+import { execFile, spawn } from "node:child_process";
+import { promisify } from "node:util";
+import { once } from "node:events";
 
 const windows = { skip: process.platform !== "win32", timeout: 120000 };
 const alive = pid => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === "EPERM"; } };
@@ -11,6 +14,51 @@ async function until(check) {
   const deadline = Date.now() + 20000;
   while (true) { const value = await check(); if (value) return value; if (Date.now() > deadline) throw Error("Native background state was not observed"); await new Promise(r => setTimeout(r, 100)); }
 }
+async function delayedOwner() {
+  const f = await windowsUIFixture({ installed: true });
+  await f.cli(["background-prepare"]);
+  const binary = path.join(f.root, "delayed-owner.exe"), control = path.join(f.root, "owner-control");
+  await promisify(execFile)("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+    "$c=Join-Path ([Runtime.InteropServices.RuntimeEnvironment]::GetRuntimeDirectory()) 'csc.exe'; & $c /nologo /target:exe /reference:System.Web.Extensions.dll ('/out:'+$env:PULSE_TEST_OUTPUT) $env:PULSE_TEST_SOURCE; if($LASTEXITCODE -ne 0){exit 1}"], {
+    env: { ...f.env, PULSE_TEST_OUTPUT: binary, PULSE_TEST_SOURCE: path.resolve(import.meta.dirname, "../scripts/test-support/windows-delayed-background-owner.cs") }, windowsHide: true, timeout: 20000,
+  });
+  const child = spawn(binary, [f.dataDir, control], { env: f.env, cwd: f.appRoot, windowsHide: true, stdio: "ignore" });
+  const closed = once(child, "exit");
+  await until(async () => { if (child.exitCode != null) throw Error("Isolated owner exited before readiness"); try { return await readFile(control + ".ready"); } catch { return false; } });
+  return { ...f, child, closed, control, released: () => until(async () => { try { return await readFile(control + ".guard-released"); } catch { return false; } }) };
+}
+for (const alreadyReleased of [false, true]) test(`native stop waits for the actual owner process after guard release (released before request: ${alreadyReleased})`, windows, async () => {
+  const f = await delayedOwner(); let stop;
+  try {
+    if (alreadyReleased) { await writeFile(f.control + ".release-guard", "release ownership only"); await f.released(); }
+    stop = f.start("--stop-background");
+    await f.released();
+    const observed = await Promise.race([stop.closed.then(() => "returned-before-exit"), new Promise(resolve => setTimeout(() => resolve("waiting-for-owner"), 1000))]);
+    assert.equal(observed, "waiting-for-owner", stop.diagnostic());
+    assert.equal(f.child.exitCode, null, "The old process must actually still be alive in this interval");
+    await writeFile(f.control + ".exit", "allow OS process exit");
+    assert.equal((await f.closed)[0], 0);
+    assert.equal((await stop.closed)[0], 0, stop.diagnostic());
+  } finally {
+    await writeFile(f.control + ".exit", "cleanup"); await writeFile(f.control + ".release-guard", "cleanup");
+    for (const session of [f, stop]) if (session && session.child.exitCode == null) session.child.kill();
+    await f.closed;
+  }
+});
+test("native stop refuses a mismatched owner creation time without signalling or killing that process", windows, async () => {
+  const f = await delayedOwner(); let stop;
+  try {
+    const file = path.join(f.dataDir, "background-status.json"), status = JSON.parse(await readFile(file, "utf8"));
+    await writeFile(file, JSON.stringify({ ...status, supervisorCreationTime: "0" }));
+    stop = f.start("--stop-background");
+    assert.notEqual((await stop.closed)[0], 0);
+    assert.equal(f.child.exitCode, null);
+    await assert.rejects(readFile(f.control + ".guard-released"), { code: "ENOENT" });
+  } finally {
+    await writeFile(f.control + ".exit", "cleanup"); await writeFile(f.control + ".release-guard", "cleanup");
+    if (f.child.exitCode == null) f.child.kill(); await f.closed;
+  }
+});
 test("native stop during watcher owner publication finishes safely without an ownerless lock", windows, async () => {
   const f = await windowsUIFixture({ installed: true });
   await f.cli(["background-prepare"]);

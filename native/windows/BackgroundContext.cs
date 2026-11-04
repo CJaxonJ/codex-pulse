@@ -100,18 +100,48 @@ namespace CodexPulse {
             Console.Out.WriteLine(Program.Json.Serialize(new Dictionary<string, object> { { "ok", true }, { "running", running } }));
             return 0;
         }
+        private static Process ReadStoppingOwner(Dictionary<string, object> status) {
+            object rawPid;
+            string creation = Program.StringValue(status, "supervisorCreationTime");
+            if (status == null || !status.TryGetValue("supervisorPid", out rawPid) || !(rawPid is int) || (int)rawPid <= 0
+                || !Regex.IsMatch(creation, @"^[0-9]{1,20}$")) throw new InvalidDataException();
+            Process owner;
+            try { owner = Process.GetProcessById((int)rawPid); }
+            catch (ArgumentException) { return null; }
+            try {
+                // Retain the actual process handle before checking creation
+                // time. A reused PID must never become an unrelated wait target.
+                IntPtr handle = owner.Handle;
+                if (owner.HasExited || owner.StartTime.ToFileTimeUtc().ToString(System.Globalization.CultureInfo.InvariantCulture) != creation) {
+                    owner.Dispose(); return null;
+                }
+                return owner;
+            } catch { owner.Dispose(); throw; }
+        }
         internal static int RequestStop() {
             string data = DataDirectory(), file = Path.Combine(data, "background-status.json");
-            if (GuardFree(data)) { ConfirmWatcherStopped(data); Program.Acknowledge("not_running"); return 0; }
-            if (!File.Exists(file) || new FileInfo(file).Length > 8192) throw new IOException();
+            bool free = GuardFree(data);
+            if (free && !File.Exists(file)) { ConfirmWatcherStopped(data); Program.Acknowledge("not_running"); return 0; }
+            if (!File.Exists(file) || (File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0 || new FileInfo(file).Length > 8192) throw new IOException();
             Dictionary<string, object> status = Program.Json.DeserializeObject(File.ReadAllText(file, Encoding.UTF8)) as Dictionary<string, object>;
             string generation = Program.StringValue(status, "generation"); Guid parsed;
             if (!Guid.TryParse(generation, out parsed)) throw new IOException();
-            // Signal the exact generation; never terminate a PID from a file.
-            using (EventWaitHandle signal = EventWaitHandle.OpenExisting(SignalName(data, generation))) {
-                signal.Set();
+            using (Process owner = ReadStoppingOwner(status)) {
+                if (owner == null) {
+                    if (!free) throw new IOException();
+                    ConfirmWatcherStopped(data); Program.Acknowledge("not_running"); return 0;
+                }
                 Stopwatch deadline = Stopwatch.StartNew();
-                while (!GuardFree(data) && deadline.Elapsed.TotalSeconds < 15) Thread.Sleep(100);
+                // Signal only the saved generation, never terminate a process.
+                if (!free) using (EventWaitHandle signal = EventWaitHandle.OpenExisting(SignalName(data, generation))) {
+                    signal.Set();
+                    while (!GuardFree(data) && deadline.Elapsed.TotalSeconds < 15) Thread.Sleep(100);
+                }
+                if (!GuardFree(data)) throw new IOException();
+                // Releasing background.guard is earlier than OS process exit.
+                // This also covers a second stop arriving in that interval.
+                int remaining = Math.Max(0, 15000 - (int)deadline.ElapsedMilliseconds);
+                if (!owner.WaitForExit(remaining)) throw new IOException();
                 if (!GuardFree(data)) throw new IOException();
             }
             ConfirmWatcherStopped(data);
