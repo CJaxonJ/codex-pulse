@@ -35,6 +35,8 @@
 @property(strong) NSTextField *thresholdLabel;
 @property(strong) NSPopUpButton *policy;
 @property(strong) NSButton *quotaAction;
+@property(strong) NSTextField *policyTitle;
+@property(strong) NSTextField *quotaHelp;
 @property(copy) void (^afterPolicyChange)(BOOL);
 @property(strong) NSButton *saveButton;
 @property(strong) NSTextField *feedback;
@@ -153,7 +155,7 @@
     self.scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(32, 104, 656, height - 184)];
     self.scroll.hasVerticalScroller = YES; self.scroll.autohidesScrollers = YES;
     self.scroll.drawsBackground = NO;
-    PulseFlippedView *body = [[PulseFlippedView alloc] initWithFrame:NSMakeRect(0, 0, 640, 1040)];
+    PulseFlippedView *body = [[PulseFlippedView alloc] initWithFrame:NSMakeRect(0, 0, 640, 1064)];
     self.scroll.documentView = body;
     [root addSubview:self.scroll];
     NSView *quota = [self cardAt:0 height:192 parent:body];
@@ -180,23 +182,37 @@
     [quota addSubview:tibo];
 
     [self section:@"额度保护" at:216 parent:body];
-    NSView *protection = [self cardAt:248 height:88 parent:body];
-    [self label:@"保护策略" frame:NSMakeRect(24, 16, 280, 24) size:14 weight:NSFontWeightMedium parent:protection];
+    NSView *protection = [self cardAt:248 height:112 parent:body];
+    self.policyTitle = [NSTextField labelWithString:@"保护策略"];
+    self.policyTitle.font = [NSFont systemFontOfSize:14 weight:NSFontWeightMedium];
     self.quotaAction = [NSButton buttonWithTitle:@"解除10%暂停" target:self action:@selector(changeQuotaPolicy:)];
-    self.quotaAction.frame = NSMakeRect(24, 48, 160, 28);
     self.quotaAction.accessibilityLabel = @"解除10%暂停";
     self.quotaAction.enabled = NO;
-    [protection addSubview:self.quotaAction];
-    [self label:@"解除后改为收尾模式，需手动恢复。" frame:NSMakeRect(200, 52, 416, 24) size:12 weight:NSFontWeightRegular parent:protection].textColor = NSColor.secondaryLabelColor;
-    self.policy = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(368, 24, 248, 32) pullsDown:NO];
+    self.quotaAction.font = [NSFont systemFontOfSize:14 weight:NSFontWeightMedium];
+    self.quotaHelp = [NSTextField labelWithString:@"解除后改为收尾模式，需手动恢复。"];
+    self.quotaHelp.font = [NSFont systemFontOfSize:12 weight:NSFontWeightRegular];
+    self.quotaHelp.textColor = NSColor.secondaryLabelColor;
+    self.policy = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
     self.policy.font = [NSFont systemFontOfSize:14 weight:NSFontWeightMedium];
     [self.policy addItemsWithTitles:@[@"10% 安全暂停（推荐）", @"优先完成当前结果", @"截止时间优先"]];
     self.policy.target = self; self.policy.action = @selector(changed:);
     self.policy.accessibilityLabel = @"保护策略";
-    [protection addSubview:self.policy];
+    NSArray *pairs = @[@[self.policyTitle, self.policy], @[self.quotaHelp, self.quotaAction]];
+    for (NSUInteger index = 0; index < pairs.count; index++) {
+        NSView *left = pairs[index][0], *right = pairs[index][1];
+        CGFloat rightWidth = index == 0 ? 248 : 160;
+        [left.widthAnchor constraintEqualToConstant:592 - 16 - rightWidth].active = YES;
+        [right.widthAnchor constraintEqualToConstant:rightWidth].active = YES;
+        NSStackView *row = [NSStackView stackViewWithViews:pairs[index]];
+        row.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+        row.alignment = NSLayoutAttributeCenterY;
+        row.spacing = 16;
+        row.frame = NSMakeRect(24, 16 + index * 48, 592, 32);
+        [protection addSubview:row];
+    }
 
-    [self section:@"提醒偏好" at:360 parent:body];
-    NSView *notices = [self cardAt:392 height:416 parent:body];
+    [self section:@"提醒偏好" at:384 parent:body];
+    NSView *notices = [self cardAt:416 height:416 parent:body];
     [self row:@"提前提醒我" detail:@"低于设定比例或用量消耗过快时提醒。10% 保护提醒始终保留。" key:@"quotaAlertsEnabled" at:0 parent:notices];
     [self label:@"剩余额度低于" frame:NSMakeRect(24, 80, 112, 24) size:12 weight:NSFontWeightRegular parent:notices].textColor = NSColor.secondaryLabelColor;
     self.threshold = [[NSSlider alloc] initWithFrame:NSMakeRect(144, 80, 392, 24)];
@@ -216,8 +232,8 @@
     [self separatorAt:336 parent:notices];
     [self row:@"通知声音" detail:@"关闭后仍会显示通知，不影响额度保护。" key:@"soundEnabled" at:336 parent:notices];
 
-    [self section:@"自动用卡 · 单独授权" at:832 parent:body];
-    NSView *credits = [self cardAt:864 height:104 parent:body];
+    [self section:@"自动用卡 · 单独授权" at:856 parent:body];
+    NSView *credits = [self cardAt:888 height:104 parent:body];
     self.creditSwitch = [self row:@"到期前自动用一张" detail:@"不足 10 分钟且有额度可重置时，使用最早到期的一张。" key:nil at:0 parent:credits];
     self.creditSwitch.action = @selector(creditChanged:);
     [self label:@"仅限已授权账户。即时生效；睡眠或离线可能错过到期。" frame:NSMakeRect(24, 72, 592, 24) size:12 weight:NSFontWeightRegular parent:credits].textColor = NSColor.secondaryLabelColor;
@@ -227,10 +243,10 @@
     plan.font = [NSFont systemFontOfSize:14 weight:NSFontWeightMedium];
     [root addSubview:plan];
     NSButton *system = [NSButton buttonWithTitle:@"系统通知设置" target:self action:@selector(openSystem:)];
-    system.frame = NSMakeRect(0, 984, 128, 32); [body addSubview:system];
+    system.frame = NSMakeRect(0, 1008, 128, 32); [body addSubview:system];
     NSButton *authorization=[NSButton buttonWithTitle:@"保护授权" target:self action:@selector(openProtection:)];
-    authorization.frame=NSMakeRect(144,984,104,32); [body addSubview:authorization];
-    [self label:@"偏好仅存本机，不更改系统权限。" frame:NSMakeRect(304, 992, 336, 24) size:12 weight:NSFontWeightRegular parent:body].textColor = NSColor.secondaryLabelColor;
+    authorization.frame=NSMakeRect(144,1008,104,32); [body addSubview:authorization];
+    [self label:@"偏好仅存本机，不更改系统权限。" frame:NSMakeRect(304, 1016, 336, 24) size:12 weight:NSFontWeightRegular parent:body].textColor = NSColor.secondaryLabelColor;
     self.feedback = [self label:@"正在读取设置…" frame:NSMakeRect(168, height - 48, 360, 24) size:12 weight:NSFontWeightRegular parent:root];
     self.feedback.textColor = NSColor.secondaryLabelColor;
     self.saveButton = [NSButton buttonWithTitle:@"保存更改" target:self action:@selector(save:)];
@@ -768,6 +784,19 @@
         && NSMaxX(cardInWindow) == NSMaxX(self.saveButton.frame)
         && NSMaxX(cardInWindow) == NSMaxX(self.health.frame);
 }
+- (NSRect)policyAlignmentRect:(NSView *)view {
+    NSView *card = self.policy.superview.superview;
+    return [view.superview convertRect:[view alignmentRectForFrame:view.frame] toView:card];
+}
+- (BOOL)validatePolicyAlignment {
+    NSRect title = [self policyAlignmentRect:self.policyTitle], policy = [self policyAlignmentRect:self.policy];
+    NSRect help = [self policyAlignmentRect:self.quotaHelp], action = [self policyAlignmentRect:self.quotaAction];
+    return fabs(NSMidY(title) - NSMidY(policy)) <= 1
+        && fabs(NSMidY(help) - NSMidY(action)) <= 1
+        && fabs(NSMinX(title) - NSMinX(help)) <= 1
+        && fabs(NSMaxX(policy) - NSMaxX(action)) <= 1
+        && NSMinY(help) > NSMaxY(title);
+}
 - (void)runIsolatedSelfTest {
     __weak PulseSettingsWindow *weakSelf = self;
     self.afterLoad = ^{
@@ -775,7 +804,7 @@
             PulseSettingsWindow *view = weakSelf;
             BOOL layoutOK = [view validateLayoutIn:view.window.contentView]
                 && [view validateLayoutIn:view.scroll.documentView];
-            BOOL alignmentOK = [view validateAlignment];
+            BOOL alignmentOK = [view validateAlignment] && [view validatePolicyAlignment];
             // Prove the test rejects the original two regressions, not just
             // clipping: a smaller metric font and a differently sized bar.
             NSFont *metricFont = view.weeklyText.font;
@@ -786,7 +815,15 @@
             changedBar.size.width -= 16; view.weeklyBar.frame = changedBar;
             BOOL rejectedUnequalBar = ![view validateAlignment];
             view.weeklyBar.frame = barFrame;
-            alignmentOK = alignmentOK && rejectedSmallFont && rejectedUnequalBar;
+            NSRect titleFrame = view.policyTitle.frame, shiftedTitle = titleFrame;
+            shiftedTitle.origin.y += 8; view.policyTitle.frame = shiftedTitle;
+            BOOL rejectedPolicyOffset = ![view validatePolicyAlignment];
+            view.policyTitle.frame = titleFrame;
+            NSRect actionFrame = view.quotaAction.frame, shiftedAction = actionFrame;
+            shiftedAction.origin.x -= 8; view.quotaAction.frame = shiftedAction;
+            BOOL rejectedActionOffset = ![view validatePolicyAlignment];
+            view.quotaAction.frame = actionFrame;
+            alignmentOK = alignmentOK && rejectedSmallFont && rejectedUnequalBar && rejectedPolicyOffset && rejectedActionOffset;
             NSDictionary *state = [view readJSON:@"state.json"];
             NSDictionary *summary = state[@"lastSummary"];
             // Both missing values are valid too, and must leave tracks empty.
