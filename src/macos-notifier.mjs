@@ -143,6 +143,7 @@ function baseNotificationForEvent(event) {
       native_goal_state_unavailable: "暂时无法读取原生 Goal 状态",
       native_goal_not_started: "续跑请求已提交，但尚未观察到 Codex 启动新任务",
       hook_review_required: "恢复所需的 Hook 尚未启用或完成本人审查",
+      queue_resume_unavailable: "当前 Codex 版本不支持自动恢复已保存的聊天，请更新 Codex；原计划已保留",
       resume_failed: "恢复后的任务执行失败",
       resume_interrupted: "恢复后的任务被中断",
       resume_incomplete: "恢复请求未能完整启动",

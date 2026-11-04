@@ -66,6 +66,13 @@ test("a Goal edited during the pause is never silently overwritten", () => {
   assert.equal(notice.persistent, true);
 });
 
+test("an unsupported Codex version tells the user what to update and preserves the plan", () => {
+  const notice = notificationForEvent({ type: "chat_continuity_attention", reason: "queue_resume_unavailable" });
+  assert.match(notice.body, /请更新 Codex/);
+  assert.match(notice.body, /原计划已保留/);
+  assert.equal(notice.persistent, true);
+});
+
 test("limits updates are clearly separated from reset alerts", () => {
   const update = notificationForEvent({
     type: "tibo_limits_update",

@@ -14,6 +14,7 @@ const REASONS = {
   workspace_changed: "暂停后文件已变化，请回到原聊天确认后继续。",
   workspace_unverifiable: "暂时无法校验工作区，不能安全续跑。",
   hook_review_required: "请先审查并信任 Codex Pulse Hook。",
+  queue_resume_unavailable: "当前 Codex 版本不支持自动续跑；请更新 Codex，或回到原聊天继续。原计划已保留。",
   native_goal_changed: "原目标被修改，不会用旧计划覆盖新目标。",
   native_goal_blocked: "原任务仍处于阻塞状态；额度恢复后也需先确认阻塞已解决。",
   newer_thread_activity: "聊天出现了新操作，请回到原聊天确认。",

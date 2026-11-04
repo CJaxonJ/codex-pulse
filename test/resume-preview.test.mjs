@@ -40,6 +40,9 @@ test("eligibility matches core resume floor plus new window or material recovery
   assert.equal(preview(record, { state: { ...state, lastSummary: { fiveHour: { remainingPercent: 35, resetsAt: 2000 } } } }).restart.kind, "window");
   assert.equal(preview({ ...chat, status: "needs_attention", blocker: "workspace_changed" }).restart.kind, "blocked");
   assert.match(preview({ ...chat, status: "needs_attention", blocker: "workspace_changed" }).blockers, /文件已变化/);
+  const unsupported = preview({ ...chat, status: "needs_attention", blocker: "queue_resume_unavailable" });
+  assert.match(unsupported.blockers, /更新 Codex/);
+  assert.equal(unsupported.restart.kind, "blocked");
   assert.match(preview({ ...chat, status: "native_goal_active" }).statusText, /等待实际启动/);
   assert.match(preview({ ...chat, status: "native_goal_active", executionObservedAt: now }).statusText, /观察到续跑执行/);
 });

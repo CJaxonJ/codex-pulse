@@ -78,6 +78,12 @@ function retryDelaySeconds(retryCount) {
   return Math.min(900, 30 * 2 ** Math.max(0, retryCount - 1));
 }
 
+function resumeFailureReason(error) {
+  if (error.code === "PULSE_HOOK_REVIEW_REQUIRED") return "hook_review_required";
+  if (error.code === "PULSE_QUEUE_RESUME_UNAVAILABLE") return "queue_resume_unavailable";
+  return "resume_incomplete";
+}
+
 export class ChatContinuityController {
   constructor({
     client,
@@ -726,7 +732,8 @@ export class ChatContinuityController {
         wakeAttempts: 0,
       });
       if (this.client.wakeThread && !activated.executionObservedAt && activated.turnId === record.turnId) {
-        await this.#deliverWake(activated, now);
+        const attention = await this.#deliverWake(activated, now);
+        if (attention) return attention;
       }
       return {
         type: "chat_continuity_resumed",
@@ -743,14 +750,14 @@ export class ChatContinuityController {
       const blocked = await this.store.put({
         ...resuming,
         status: "needs_attention",
-        blocker: error.code === "PULSE_HOOK_REVIEW_REQUIRED" ? "hook_review_required" : "resume_incomplete",
+        blocker: resumeFailureReason(error),
         lastResumeError: error.message,
       });
       await this.#releaseLock(blocked);
       return {
         type: "chat_continuity_attention",
         sessionId: record.sessionId,
-        reason: error.code === "PULSE_HOOK_REVIEW_REQUIRED" ? "hook_review_required" : "resume_incomplete",
+        reason: resumeFailureReason(error),
       };
     }
   }
@@ -771,6 +778,16 @@ export class ChatContinuityController {
       }
     } catch (error) {
       const latest = await this.store.get(record.sessionId);
+      if (error.code === "PULSE_QUEUE_RESUME_UNAVAILABLE" &&
+        latest?.status === "native_goal_active" && !latest.executionObservedAt &&
+        latest.wakeSourceTurnId === attempted.wakeSourceTurnId) {
+        const blocked = await this.store.put({ ...latest, status: "needs_attention",
+          blocker: "queue_resume_unavailable", lastWakeError: error.message,
+          holdWorktreeLock: false });
+        await this.#releaseOrReclaimLock(blocked);
+        return { type: "chat_continuity_attention", sessionId: record.sessionId,
+          reason: "queue_resume_unavailable" };
+      }
       if (latest?.wakeSourceTurnId === attempted.wakeSourceTurnId) {
         await this.store.put({ ...latest, lastWakeError: String(error.message).slice(0, 300) });
       }
@@ -876,7 +893,7 @@ export class ChatContinuityController {
         await this.#releaseOrReclaimLock(blocked);
         return { type: "chat_continuity_attention", sessionId: record.sessionId, reason: "native_goal_changed" };
       }
-      await this.#deliverWake(record, now);
+      return await this.#deliverWake(record, now) || null;
     } else if (!record.executionObservedAt &&
       now - (record.resumedAt || now) >= 180 &&
       ["completed", "failed", "interrupted"].includes(turnStatus(latestTurn))) {

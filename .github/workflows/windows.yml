@@ -40,6 +40,16 @@ jobs:
       - name: Real Codex Windows hook review protocol (isolated config, no model)
         if: matrix.node == 22
         run: node scripts/e2e-windows-codex-hooks.mjs
+      - name: Install pinned resume-capable CLI without dropping old-version coverage
+        if: matrix.node == 22
+        run: |
+          npm install --global @openai/codex@0.166.0-alpha.5.1
+          if ($LASTEXITCODE -ne 0) { throw 'Resume-capable Codex installation failed.' }
+      - name: Hook review with resume-capable official CLI (isolated config, no model)
+        if: matrix.node == 22
+        env:
+          PULSE_TEST_EXPECTED_CODEX_VERSION: 0.166.0-alpha.5.1
+        run: node scripts/e2e-windows-codex-hooks.mjs
       - name: Real official queue reload after server restart (isolated rejecting provider, no real model)
         if: matrix.node == 22
         run: node scripts/e2e-windows-queue-resume.mjs

@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { spawn } from "node:child_process";
 import readline from "node:readline";
 import { readLatestTurn } from "./thread-lifecycle.mjs";
-import { queueNativeWakeup, trustedRecoveryHooks } from "./native-wakeup.mjs";
+import { assertQueueResumeSupported, queueNativeWakeup, trustedRecoveryHooks } from "./native-wakeup.mjs";
 import { codexInvocation, resolveCodexExecutable } from "./platform-runtime.mjs";
 import { ownedWindowsProcessInvocation } from "./windows-process-bridge.mjs";
 
@@ -145,6 +145,7 @@ export class AppServerClient extends EventEmitter {
       error.code = "PULSE_HOOK_REVIEW_REQUIRED";
       throw error;
     }
+    await assertQueueResumeSupported(this.binary, record.cwd);
   }
 
   wakeThread(record) { return queueNativeWakeup(this.binary, record); }

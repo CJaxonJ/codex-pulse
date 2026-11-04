@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { recoveryWakeId, recoveryWakeMessage, trustedRecoveryHooks, queueNativeWakeup } from "../src/native-wakeup.mjs";
+import { assertQueueResumeSupported, recoveryWakeId, recoveryWakeMessage, trustedRecoveryHooks, queueNativeWakeup } from "../src/native-wakeup.mjs";
 
 test("retries use the same pause-cycle wake key and a new pause gets a different key", () => {
   assert.equal(recoveryWakeId("thread", "turn"), recoveryWakeId("thread", "turn"));
@@ -12,12 +12,36 @@ test("official queue receives arguments directly without a shell or a second wri
   const calls = [];
   const record = { sessionId: "thread", turnId: "turn", cwd: "/tmp/test-workspace",
     initialGoal: { objective: "Keep literal $(do-not-run) and `text`" } };
-  await queueNativeWakeup("codex", record, async (...args) => calls.push(args));
-  assert.deepEqual(calls[0][1].slice(0, 4), ["queue", "--thread", "thread", "--message"]);
-  assert.equal(calls[0][1].at(-1), "--resume", "The owning official daemon must reload stored threads, not only enqueue text");
-  assert.match(calls[0][1][4], /\$\(do-not-run\)/);
-  assert.equal(calls[0][2].cwd, record.cwd);
-  assert.equal(calls[0][2].shell, undefined);
+  await queueNativeWakeup("codex", record, async (...args) => {
+    calls.push(args); return { stdout: "Usage: codex queue [OPTIONS]" };
+  });
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0][1].at(-1), "--help", "Capability probe must never enqueue");
+  assert.notEqual(calls[0][1][2], record.sessionId);
+  assert.deepEqual(calls[1][1].slice(0, 4), ["queue", "--thread", "thread", "--message"]);
+  assert.equal(calls[1][1].at(-1), "--resume", "The owning official daemon must reload stored threads, not only enqueue text");
+  assert.match(calls[1][1][4], /\$\(do-not-run\)/);
+  assert.equal(calls[1][2].cwd, record.cwd);
+  assert.equal(calls[1][2].shell, undefined);
+});
+
+test("an older parser never receives a real recovery prompt and produces an actionable capability error", async () => {
+  let calls = 0;
+  await assert.rejects(queueNativeWakeup("codex", { sessionId: "real-thread", cwd: "/tmp" }, async (_file, args) => {
+    calls++;
+    assert.equal(args.at(-1), "--help");
+    assert(!args.includes("real-thread"));
+    throw Object.assign(Error("parser rejected"), { code: 2, stderr: "error: unexpected argument '--resume' found" });
+  }), { code: "PULSE_QUEUE_RESUME_UNAVAILABLE" });
+  assert.equal(calls, 1);
+});
+
+test("missing executables and transient failures are not mislabeled as unsupported versions", async () => {
+  for (const code of ["ENOENT", "ETIMEDOUT"]) {
+    const failure = Object.assign(Error("probe failed"), { code });
+    await assert.rejects(assertQueueResumeSupported("codex", "/tmp", async () => { throw failure; }), error => error === failure);
+  }
+  await assert.rejects(assertQueueResumeSupported("codex", "/tmp", async () => ({ stdout: "" })), /Unable to verify/);
 });
 
 test("both recovery hooks must be enabled and currently trusted", () => {

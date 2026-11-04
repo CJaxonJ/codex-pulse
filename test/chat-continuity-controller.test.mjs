@@ -149,6 +149,39 @@ test("unreviewed recovery hooks stop before Goal activation or queue submission"
   assert.equal(client.calls.some(c => c.method === "thread/goal/set"), false);
 });
 
+test("unsupported official queue stops before Goal activation and keeps the checkpoint without endless retries", async () => {
+  const original = pausedChat({ initialGoal: { objective: "Keep the exact original scope" } });
+  const store = new MemoryChatContinuityStore([original]);
+  const client = new FakeClient(); let probes = 0, wakes = 0;
+  client.assertWakeReady = async () => { probes++; throw Object.assign(Error("Codex update required"), { code: "PULSE_QUEUE_RESUME_UNAVAILABLE" }); };
+  client.wakeThread = async () => { wakes++; };
+  const controller = new ChatContinuityController({ client, store });
+  const events = await controller.reconcile(summary(100), { now: 20 });
+  assert.equal(events[0].reason, "queue_resume_unavailable");
+  assert.equal(events.some(e => e.type === "chat_continuity_resumed"), false);
+  assert.equal(client.calls.some(c => c.method === "thread/goal/set"), false);
+  const saved = await store.get("thread-1");
+  assert.equal(saved.status, "needs_attention");
+  assert.deepEqual(saved.initialGoal, original.initialGoal);
+  assert.deepEqual(saved.checkpoint, original.checkpoint);
+  await controller.reconcile(summary(100), { now: 86420 });
+  assert.equal(probes, 1); assert.equal(wakes, 0);
+});
+
+test("a CLI replacement between preflight and submission reports attention instead of claiming recovery", async () => {
+  const store = new MemoryChatContinuityStore([pausedChat()]);
+  const client = new FakeClient(); let wakes = 0;
+  client.assertWakeReady = async () => {};
+  client.wakeThread = async () => { wakes++; throw Object.assign(Error("Codex update required"), { code: "PULSE_QUEUE_RESUME_UNAVAILABLE" }); };
+  const controller = new ChatContinuityController({ client, store });
+  const events = await controller.reconcile(summary(100), { now: 20 });
+  assert.equal(events[0].reason, "queue_resume_unavailable");
+  assert.equal(events.some(e => e.type === "chat_continuity_resumed"), false);
+  assert.equal((await store.get("thread-1")).workspaceValidationRequired, true);
+  await controller.reconcile(summary(100), { now: 1000 });
+  assert.equal(wakes, 1);
+});
+
 test("after a day-long observation gap a replacement watcher observes execution without a second wake", async () => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "pulse-long-gap-"));
   const store = new ChatContinuityStore(dataDir);

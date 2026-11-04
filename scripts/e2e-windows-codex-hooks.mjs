@@ -8,19 +8,19 @@ import { windowsUIFixture, inspectWindowsUI, waitForWindowsUI } from "./test-sup
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { codexInvocation } from "../src/platform-runtime.mjs";
-import { randomUUID } from "node:crypto";
+import { assertQueueResumeSupported } from "../src/native-wakeup.mjs";
 
 if(process.platform!=="win32")throw Error("This acceptance requires native Windows, not a platform mock");
 const project=path.resolve(import.meta.dirname,"..");
 const versionCall=codexInvocation(resolveCodexBinary(),["--version"]);
 const actualCodexVersion=(await promisify(execFile)(versionCall.file,versionCall.args,{encoding:"utf8",timeout:15000,windowsHide:true})).stdout.trim().split(/\s+/).at(-1);
-assert.equal(actualCodexVersion,"0.163.0-alpha.11.1","Acceptance must use the actually pinned official CLI, not another installation found first");
+const expectedCodexVersion=process.env.PULSE_TEST_EXPECTED_CODEX_VERSION || "0.163.0-alpha.11.1";
+assert.equal(actualCodexVersion,expectedCodexVersion,"Acceptance must use the actually pinned official CLI, not another installation found first");
 const fixture=await protectionFixture(project);
-// Parse the exact production argument shape, but terminate in help before any
-// enqueue. Hidden flags need not appear in help text. No real thread is used.
-const queueHelp=codexInvocation(resolveCodexBinary(),["queue","--thread",randomUUID(),"--message","Codex Pulse isolated parser probe","--resume","--help"]);
-const queueUsage=(await promisify(execFile)(queueHelp.file,queueHelp.args,{env:{...process.env,CODEX_HOME:fixture.home},encoding:"utf8",timeout:15000,windowsHide:true})).stdout;
-assert.match(queueUsage,/usage:/i,"Official Windows CLI must parse the queued-message flags without enqueueing");
+const probe=()=>assertQueueResumeSupported(resolveCodexBinary(),fixture.home,(file,args,options)=>promisify(execFile)(file,args,{...options,env:{...process.env,CODEX_HOME:fixture.home},encoding:"utf8"}));
+if(expectedCodexVersion==="0.163.0-alpha.11.1") {
+  await assert.rejects(probe(),{code:"PULSE_QUEUE_RESUME_UNAVAILABLE"},"Old official CLI must fail safely without enqueueing");
+} else await probe();
 const originalHome=process.env.CODEX_HOME;
 process.env.CODEX_HOME=fixture.home;
 const client=new AppServerClient();
