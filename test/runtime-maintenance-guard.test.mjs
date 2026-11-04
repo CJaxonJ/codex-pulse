@@ -99,6 +99,32 @@ test("an in-flight start excludes maintenance, and retained maintenance excludes
   const next = await installer.reserveMaintenance(); await next.release();
 });
 
+test("maintenance waits for a real transient polling owner, then retains exclusive ownership", async () => {
+  const f = await fixture(), installer = new RuntimeMaintenanceGuard(f.data);
+  let entered, finish;
+  const ready = new Promise(resolve => entered = resolve), exit = new Promise(resolve => finish = resolve);
+  const polling = f.guard.runOperation(async () => { entered(); await exit; }); await ready;
+  let waits = 0;
+  const reservation = await installer.reserveMaintenance({ timeoutMs: 1000, sleep: async () => { waits++; finish(); await polling; } });
+  try {
+    assert.equal(waits, 1);
+    assert.equal((await f.guard.runOperation(() => assert.fail("A new model operation must remain fenced"))).executed, false);
+  } finally { await reservation.release(); }
+});
+
+test("waiting for the maintenance gate never skips newly published active work or a persistent owner", async () => {
+  const f = await fixture(), installer = new RuntimeMaintenanceGuard(f.data);
+  let entered, finish;
+  const ready = new Promise(resolve => entered = resolve), exit = new Promise(resolve => finish = resolve);
+  const operation = f.guard.runOperation(async () => { entered(); await exit; }); await ready;
+  let clock = 0;
+  await assert.rejects(installer.reserveMaintenance({ timeoutMs: 200, now: () => clock, sleep: async ms => { clock += ms; } }), { code: "PULSE_RUNTIME_BUSY" });
+  assert.equal(clock, 200);
+  await assert.rejects(installer.reserveMaintenance({ timeoutMs: 1000, sleep: async () => { await save(f, { status: "running", threadId: "t", turnId: "u" }); finish(); await operation; } }), { code: "PULSE_MANAGED_WORK_UNCONFIRMED" });
+  assert.equal(JSON.parse(await readFile(path.join(f.tasks, "task-1.json"))).status, "running");
+  assert.equal((await f.guard.runOperation(async () => "original background can still run")).value, "original background can still run");
+});
+
 test("a second real Node process cannot start work while the maintenance owner lives and can recover after its death", { timeout: 30000 }, async () => {
   const f = await fixture(), module = pathToFileURL(path.resolve(import.meta.dirname, "../src/runtime-maintenance-guard.mjs")).href;
   const child = spawn(process.execPath, ["--input-type=module", "-e", `import {RuntimeMaintenanceGuard} from ${JSON.stringify(module)};

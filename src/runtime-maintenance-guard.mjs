@@ -97,8 +97,17 @@ export class RuntimeMaintenanceGuard {
     }
     finally { await release(); }
   }
-  async reserveMaintenance() {
-    const release = await this.claim();
+  async reserveMaintenance({ timeoutMs = 0, now = () => performance.now(), sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 5000) throw new RangeError("Invalid maintenance wait budget");
+    const deadline = now() + timeoutMs;
+    let release = await this.claim();
+    // An idle watcher's short poll uses the same gate as model starts. Wait
+    // for ownership rather than treating that transient poll as active work.
+    // No stop, journal write, or task-state assumption occurs while waiting.
+    while (!release && now() < deadline) {
+      await sleep(Math.min(100, deadline - now()));
+      release = await this.claim();
+    }
     if (!release) throw busy();
     try { await assertManagedRecordsAllowMaintenance(this.dataDir); return { release }; }
     catch (error) { await release(); throw error; }

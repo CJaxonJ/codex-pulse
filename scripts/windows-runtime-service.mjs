@@ -13,7 +13,7 @@ export class WindowsRuntimeService {
   }
   target() { return path.join(this.dataDir, "app", "CodexPulse.exe"); }
   async reserveStop(hadOld) {
-    const reservation = await new RuntimeMaintenanceGuard(this.dataDir).reserveMaintenance();
+    const reservation = await new RuntimeMaintenanceGuard(this.dataDir).reserveMaintenance({ timeoutMs: 5000 });
     try {
       if (hadOld) {
         const original = await this.capture(true);
