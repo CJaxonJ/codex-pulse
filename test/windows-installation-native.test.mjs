@@ -95,13 +95,20 @@ test("real Windows transaction recovers a move whose acknowledgement was lost wh
     await f.service.quiesce();
     const original = await f.service.capture(true), oldHash = await runtimeFingerprint(f.target);
     assert.deepEqual(original, { startup: { installed: false, enabled: false }, running: false });
-    let injected = false;
+    let injected = false, upgradeFailure; const moves = [];
     const acquireLease = async () => {
       const actual = await f.lease();
-      return { ...actual, move: async (from, to) => { await actual.move(from, to); if (!injected && from === "app" && to.startsWith("app-backup-")) { injected = true; throw Error("lost acknowledgement after actual native Directory.Move"); } } };
+      return { ...actual, move: async (from, to) => {
+        const attempt = { from, to, completed: false }; moves.push(attempt);
+        await actual.move(from, to); attempt.completed = true;
+        if (!injected && from === "app" && to.startsWith("app-backup-")) { injected = true; throw Error("lost acknowledgement after actual native Directory.Move"); }
+      } };
     };
-    await assert.rejects(f.install(await f.stage("0.9.22"), { acquireLease }), /原运行目录和启动状态已恢复/);
-    assert(injected); assert.equal(await runtimeFingerprint(f.target), oldHash);
+    await assert.rejects(f.install(await f.stage("0.9.22"), { acquireLease }), error => {
+      upgradeFailure = error; return /原运行目录和启动状态已恢复/.test(error.message);
+    });
+    assert(injected, "The actual native move must finish before injecting a lost acknowledgement: " + details(upgradeFailure) + "; moves=" + JSON.stringify(moves));
+    assert.equal(await runtimeFingerprint(f.target), oldHash);
     assert.deepEqual(await f.service.capture(true), original);
     assert(!(await readdir(f.dataDir)).includes("installation-in-progress.json"));
     assert.deepEqual(await f.queueLog(), []);

@@ -11,6 +11,9 @@ const EVENTS = ['preToolUse','postToolUse','sessionStart','userPromptSubmit','st
 const LABELS = { preToolUse:'执行前检查额度',postToolUse:'执行后记录进度',sessionStart:'会话开始时检查保护',
   userPromptSubmit:'开始任务前评估额度',stop:'暂停时保存进度',interrupt:'保留中断状态' };
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+// Official legacy definition hash, or the newer definition/content pair.
+// Keep the complete opaque value for review, persistence and readback.
+const HASH = /^sha256:[a-f0-9]{64}(?:\/sha256:[a-f0-9]{64})?$/;
 export class ProtectionConsent {
   constructor({client,dataDir,codexHome = process.env.CODEX_HOME || path.join(os.homedir(),'.codex'),now=()=>Date.now(),platform=process.platform}) {
     Object.assign(this,{client,dataDir,codexHome,now,platform});
@@ -30,7 +33,7 @@ export class ProtectionConsent {
         h.command!==(this.platform==='win32'?WINDOWS_HOOK_COMMAND:COMMAND) ||
         (h.commandWindows != null && h.commandWindows!==WINDOWS_HOOK_COMMAND) ||
         h.source!=='plugin' || h.isManaged || h.async || !h.key.startsWith(PLUGIN+':') ||
-        !/^sha256:[a-f0-9]{64}$/.test(h.currentHash) || !Number.isFinite(h.timeoutSec) || h.timeoutSec>15)) {
+        !HASH.test(h.currentHash) || !Number.isFinite(h.timeoutSec) || h.timeoutSec>15)) {
       throw Error('保护组件缺失或发生了无法确认的变化，请重新安装官方发布包');
     }
     const cache=await realpath(path.join(this.codexHome,'plugins/cache/codex-pulse-local/codex-pulse'));

@@ -29,7 +29,8 @@ try{
   const result=await client.request("hooks/list",{cwds:[fixture.home]});
   const hooks=(result.data||[]).flatMap(e=>e.hooks||[]).filter(h=>h.pluginId==="codex-pulse@codex-pulse-local");
   assert.equal(hooks.length,6);
-  console.error(JSON.stringify({actualCodexWindowsHookMetadata:{fields:Object.keys(hooks[0]),command:hooks[0].command,commandWindows:hooks[0].commandWindows}}));
+  console.error(JSON.stringify({actualCodexWindowsHookMetadata:{fields:Object.keys(hooks[0]),command:hooks[0].command,commandWindows:hooks[0].commandWindows,
+    hashShape:String(hooks[0].currentHash).replace(/[a-f0-9]{64}/g,"<digest>")}}));
 }finally{client.stop();if(originalHome===undefined)delete process.env.CODEX_HOME;else process.env.CODEX_HOME=originalHome;}
 const before=await fixture.config();
 const review=await fixture.cli(["protection","prepare"]);

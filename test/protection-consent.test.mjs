@@ -90,3 +90,26 @@ test('Windows missing or modified effective command cannot be trusted; metadata 
   const f=await fixture('win32'),review=await f.controller.prepare();
   const result=await f.controller.enable(review.reviewId,{confirmed:true});assert.equal(result.trusted,true);
 });
+
+for(const platform of ['darwin','win32']) test(`${platform} preserves the complete official definition/content hash and rejects changes to either part`,async()=>{
+  const pair='sha256:'+'a'.repeat(64)+'/sha256:'+'b'.repeat(64);
+  const f=await fixture(platform);for(const h of f.hooks)h.currentHash=pair;
+  const review=await f.controller.prepare();
+  assert(review.details.every(h=>h.hash===pair));
+  assert.equal((await f.controller.enable(review.reviewId,{confirmed:true})).trusted,true);
+  assert(f.writes[0].edits.filter(e=>e.keyPath.endsWith('.trusted_hash')).every(e=>e.value===pair));
+  for(const changed of ['sha256:'+'c'.repeat(64)+'/sha256:'+'b'.repeat(64),'sha256:'+'a'.repeat(64)+'/sha256:'+'c'.repeat(64)]){
+    const g=await fixture(platform);for(const h of g.hooks)h.currentHash=pair;
+    const pending=await g.controller.prepare();g.hooks[0].currentHash=changed;
+    await assert.rejects(g.controller.enable(pending.reviewId,{confirmed:true}),/变化/);
+    assert.equal(g.writes.length,0);
+  }
+});
+
+test('unrecognized or malformed hash formats never reach trust writes',async()=>{
+  const hash='sha256:'+'a'.repeat(64);
+  for(const value of [hash+'/',hash+'/sha256:short',hash+'/'+hash+'/'+hash,hash+'/other:'+'b'.repeat(64),hash+'\n',null]){
+    const f=await fixture();f.hooks[0].currentHash=value;
+    await assert.rejects(f.controller.prepare(),/组件/);assert.equal(f.writes.length,0);
+  }
+});
