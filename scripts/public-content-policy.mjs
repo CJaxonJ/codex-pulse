@@ -14,7 +14,7 @@ const rules = [
   ["internal-domain", /\b(?:[a-z0-9-]+\.)*(?:corp|internal)\.[a-z0-9.-]+\.[a-z]{2,}\b/i],
   ["personal-email", /\b[A-Z0-9._%+-]+@(?:gmail\.com|163\.com|qq\.com|outlook\.com|hotmail\.com|icloud\.com)\b/i],
 ];
-const exampleUsers = new Set(["tester", "runner", "example", "user", "username"]);
+const exampleUsers = new Set(["test", "tester", "runner", "example", "user", "username"]);
 const privateDirectories = new Set(["private", ".codex", "credit-operations",
   "protection-review", "hook-decisions", "managed-tasks", "chat-continuity"]);
 const privateNames = /^(?:\.env(?:\..+)?|auth(?:-.+)?\.json|credentials.*\.json|cookies.*\.(?:json|txt)|id_rsa|id_ed25519|state\.json|monitor\.log)$/i;
