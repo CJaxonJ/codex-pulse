@@ -1,15 +1,15 @@
-# Windows 内部验收包
+# Codex Pulse · Windows Beta
 
-本包只供隔离开发验收，不是已发布的 Windows 安装器。暂不向普通用户分发。
+适用于 Windows x64，使用已登录的 Codex 个人 Plus / Pro 账号。不需要另装 Node，不需要 API 绑卡或 X 凭证。
 
-包含 Node 22 x64、原生 Windows 组件、产品源文件、产品及 Node 许可证和逐文件完整性清单。解压后保留完整目录，不要单独移动 exe。
+1. 完整解压 ZIP，双击 **CodexPulse.exe**，点击“安装”。
+2. 安装后打开设置，在“保护与用卡”中审查并确认保护授权。
+3. 方便时重开 Codex，之后照常使用。从开始菜单打开 Codex Pulse 查看额度、消息历史和续跑计划。
 
-双击安装界面、安装后快捷入口、卸载入口和中断恢复已接入，正在真实 Windows 验收；不要将源码功能存在当成安装体验已经通过。活跃／未知任务会拒绝升级或卸载。尚未验收真实账号的桌面工作及物理睡眠，不用于正在执行真实托管任务的安装。
+请保留完整解压目录。升级、修复、卸载时，再次打开其中的 **CodexPulse.exe**。卸载保留偏好、任务进度与历史记录。自动使用重置卡默认关闭，需另外授权。
 
-解压后双击 **CodexPulse.exe**：安装、查看进行中状态、重试失败和再次确认卸载都在同一原生窗口完成。安装后可打开设置，亲自审查保护授权；不会代替授信。卸载时再次打开原解压目录中的程序。简明流程见仓库 [Windows 使用步骤](https://github.com/CJaxonJ/codex-pulse/blob/codex/windows-support/docs/windows-quickstart.md)。
+额度提醒、Tibo 消息、10% 工具调用保护已接入。**自动续跑仍属实验功能**，依赖 Codex 版本；无法确认任务或文件状态时会停止并提示手动继续。真实账号在断网、锁屏和物理睡眠后的续跑尚未完整验收，不保证后台必达。
 
-开发验收必须使用独立的 CODEX_HOME 和 CODEX_PULSE_DATA_DIR。安装代码入口为 `runtime\node.exe scripts\install-windows.mjs`；卸载为 `runtime\node.exe scripts\uninstall-windows.mjs`。不能从已安装的 app 目录替换或删除自身运行时。
+安装包未做 Windows 发布者签名。请仅从 [本项目 Releases](https://github.com/CJaxonJ/codex-pulse/releases) 下载；校验和与包内完整性清单用于核对文件，不代表微软认证。若系统拦截，请先核对来源，不要关闭系统安全保护。
 
-默认保留任务计划、偏好、额度历史和用卡账本。安装不会授予 Hook 信任，不会自动消费重置卡。不把未知状态当成已停止，不强删未核实文件。
-
-SHA256SUMS.txt 和包内清单用于校验完整性，不等于 Windows 代码签名或发布者认证。请仅使用本项目可信构建来源的文件。
+[安装与常见问题](https://github.com/CJaxonJ/codex-pulse/blob/v0.9.22-windows-beta.1/docs/windows-quickstart.md) · [反馈问题](https://github.com/CJaxonJ/codex-pulse/issues)

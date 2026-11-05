@@ -42,6 +42,7 @@ test("legacy history is loaded when the installed server does not support list_t
   await writeFile(log, event({ type: "task_complete", turn_id: "legacy-turn" }));
   const client = { async request(method, params) {
     if (method === "thread/turns/list") throw Error("list_turns is not supported yet");
+    assert.equal(typeof params.includeTurns,"boolean","Metadata reads must explicitly exclude history; the legacy fallback must explicitly request it");
     return { thread: { path: log, turns: params.includeTurns ? [
       { id: "legacy-turn", status: "interrupted", items: [] },
     ] : [] } };

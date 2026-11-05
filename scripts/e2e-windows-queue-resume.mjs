@@ -17,6 +17,9 @@ import { RealRpcPeer } from "./test-support/real-rpc-peer.mjs";
 
 if (process.platform !== "win32" && process.env.CODEX_PULSE_TEST_QUEUE_HOST_PROBE !== "1") throw Error("Native Windows acceptance is required");
 const execute = promisify(execFile), binary = resolveCodexBinary();
+const versionCall=codexInvocation(binary,["--version"]);
+const actualCodexVersion=(await execute(versionCall.file,versionCall.args,{encoding:"utf8",timeout:15000,windowsHide:true})).stdout.trim().split(/\s+/).at(-1);
+assert.equal(actualCodexVersion,process.env.PULSE_TEST_EXPECTED_CODEX_VERSION || "0.166.0-alpha.5.1");
 const root = await mkdtemp(path.join(os.tmpdir(), "pulse-queue-runtime-"));
 const home = path.join(root, "isolated-codex"), workspace = path.join(root, "workspace");
 await mkdir(home); await mkdir(workspace);
@@ -109,7 +112,7 @@ try {
     return turn && turn.id !== seedTurns[1] && turn.status === "failed";
   }, "a genuinely new turn to reach the deliberate local provider rejection");
   assert(localProviderRequests >= 3, "Reload alone must not be reported as actual new-turn dispatch");
-  console.log(JSON.stringify({ ok: true, platform: process.platform, actualServerRestarted: true,
+  console.log(JSON.stringify({ ok: true, platform: process.platform, actualCodexVersion, actualServerRestarted: true,
     plainQueueLeavesThreadUnloaded: true, productionWakeLoadsStoredThread: true, productionWakeStartsNewTurn: true,
     localRejectProviderRequests: localProviderRequests, successfulModelCalls: 0,
     realAccountOrQuotaTested: false, productionProfileTouched: false }));

@@ -17,7 +17,7 @@ export async function packageWindows() {
   const pkg = JSON.parse(await readFile(path.join(project, "package.json"), "utf8"));
   if (pkg.name !== "codex-pulse" || !/^\d+\.\d+\.\d+(?:[-+][a-zA-Z0-9.-]+)?$/.test(pkg.version)) throw Error("产品版本不正确。");
   const dist = path.join(project, "dist"); await mkdir(dist, { recursive: true });
-  const output = await mkdtemp(path.join(dist, "windows-")), bundleName = `Codex-Pulse-${pkg.version}-Windows-x64-dev`;
+  const output = await mkdtemp(path.join(dist, "windows-")), bundleName = `Codex-Pulse-${pkg.version}-Windows-x64`;
   const staging = path.join(output, "staging"), bundle = path.join(staging, bundleName);
   await mkdir(bundle, { recursive: true });
   try {
@@ -48,7 +48,7 @@ export async function packageWindows() {
     const checksum = await sha256File(archive);
     await writeFile(path.join(output, "SHA256SUMS.txt"), checksum + "  " + path.basename(archive) + "\n", { flag: "wx" });
     await rm(extracted, { recursive: true });
-    return { ok: true, archive, checksum, files: value.files.length, nodeVersion: value.nodeVersion, devOnly: true, guiInstallerVerified: false };
+    return { ok: true, archive, checksum, files: value.files.length, nodeVersion: value.nodeVersion, prerelease: true, guiInstallerVerified: false };
   } finally { await rm(staging, { recursive: true }); } // Exact directory created by this operation only.
 }
 if (process.argv[1] && await realpath(process.argv[1]) === await realpath(fileURLToPath(import.meta.url))) console.log(JSON.stringify(await packageWindows()));

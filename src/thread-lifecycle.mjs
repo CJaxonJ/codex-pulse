@@ -35,7 +35,9 @@ export async function readPersistedLifecycle(filePath, { maxBytes = 16 * 1024 * 
 }
 
 export async function readLatestTurn(client, threadId, itemsView = "notLoaded") {
-  let metadata = await client.request("thread/read", { threadId });
+  // Metadata inspection must not implicitly request the history backend.
+  // Legacy runtimes can reject list_turns even when the thread is readable.
+  let metadata = await client.request("thread/read", { threadId, includeTurns: false });
   let history;
   try {
     history = await client.request("thread/turns/list", { threadId, limit: 1, sortDirection: "desc", itemsView });

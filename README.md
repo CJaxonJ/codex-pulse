@@ -9,6 +9,7 @@
 
 <p align="center">
   <a href="https://github.com/CJaxonJ/codex-pulse/releases/download/v0.9.21/Codex-Pulse-0.9.21-macOS.zip"><strong>下载 macOS 版 · v0.9.21</strong></a> ·
+  <a href="https://github.com/CJaxonJ/codex-pulse/releases/download/v0.9.22-windows-beta.1/Codex-Pulse-0.9.22-beta.1-Windows-x64.zip"><strong>下载 Windows Beta</strong></a> ·
   <a href="./开始使用.md">安装指南</a> ·
   <a href="./docs/releases/v0.9.21.md">更新记录</a>
 </p>
@@ -20,7 +21,7 @@
 - **恢复后接着做**：核对原任务、文件和权限后续跑，也能先查看下一步计划。
 - **少浪费重置卡**：临期提醒；可单独授权，在不足 10 分钟且有额度可重置时自动使用一张。
 
-支持 macOS 上的个人 Plus / Pro 账户，按账户实际提供的额度窗口工作。
+支持 macOS 和 Windows x64 Beta 上的个人 Plus / Pro 账户，按账户实际提供的额度窗口工作。Windows 自动续跑仍属实验功能，详见[使用说明](./docs/windows-quickstart.md)。
 
 <details>
 <summary>看一眼实际界面（演示数据）</summary>
@@ -32,6 +33,10 @@
 </details>
 
 ## 三步开始
+
+**Windows：** 完整解压 ZIP → 双击 `CodexPulse.exe` 安装 → 在设置中确认保护授权。[详细步骤](./docs/windows-quickstart.md)
+
+**macOS：**
 
 1. **下载并解压**上面的 ZIP，双击 `安装 Codex Pulse.command`，不要下载源码包。
 2. **允许通知并确认保护**：阅读安装后窗口的说明，点击「开启自动保护」。

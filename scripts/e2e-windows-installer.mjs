@@ -19,7 +19,9 @@ if (process.platform !== "win32") throw Error("This acceptance requires real Win
 const execute = promisify(execFile);
 const official = resolveCodexExecutable();
 const versionCall = codexInvocation(official, ["--version"]);
-assert.match((await execute(versionCall.file, versionCall.args, { encoding: "utf8", timeout: 15000 })).stdout, /0\.163\.0-alpha\.11\.1/);
+const actualCodexVersion=(await execute(versionCall.file, versionCall.args, { encoding: "utf8", timeout: 15000 })).stdout.trim().split(/\s+/).at(-1);
+assert.equal(actualCodexVersion,process.env.PULSE_TEST_EXPECTED_CODEX_VERSION || "0.166.0-alpha.5.1",
+  "Installation acceptance must use the exact pinned official CLI");
 const packaged = await packageWindows(), extracted = await mkdtemp(path.join(os.tmpdir(), "pulse 包 验收-"));
 await execute("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
   "$ErrorActionPreference='Stop';Add-Type -AssemblyName System.IO.Compression.FileSystem;[IO.Compression.ZipFile]::ExtractToDirectory($env:PULSE_ZIP_OUTPUT,$env:PULSE_ZIP_EXTRACT)"],

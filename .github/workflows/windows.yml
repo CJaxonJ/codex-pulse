@@ -26,10 +26,6 @@ jobs:
         id: native-build
         shell: powershell
         run: ./scripts/build-native-windows.ps1
-      - name: Native Windows ownership, process and PowerShell recovery tests
-        # These files share a Windows desktop. Concurrency invariants are
-        # exercised by the real competing processes inside individual tests.
-        run: node --test --test-concurrency=1 test/atomic-file.test.mjs test/runtime-maintenance-guard.test.mjs test/windows-maintenance-recovery.test.mjs test/platform-runtime.test.mjs test/hosted-watcher-stop.test.mjs test/windows-private-directory.test.mjs test/windows-process-identity.test.mjs test/windows-owned-process.test.mjs test/windows-watcher-instance.test.mjs test/windows-background.test.mjs test/windows-background-recovery.test.mjs test/windows-startup.test.mjs test/windows-installation-lease.test.mjs test/windows-installation-transaction.test.mjs test/windows-uninstallation-transaction.test.mjs test/windows-installation-native.test.mjs test/windows-hook.test.mjs test/protection-consent.test.mjs test/native-wakeup.test.mjs test/worktree-lock-process.test.mjs test/chat-continuity-controller.test.mjs test/chat-continuity-full-chain.test.mjs
       - name: Install pinned official CLI for isolated protocol acceptance
         id: cli-legacy
         if: ${{ !cancelled() && matrix.node == 22 && steps.native-build.outcome == 'success' }}
@@ -62,18 +58,28 @@ jobs:
         if: ${{ !cancelled() && matrix.node == 22 && steps.cli-resume.outcome == 'success' }}
         run: node scripts/e2e-plugin-operation.mjs
       - name: Bundled Windows install, rollback and history-preserving uninstall
+        id: bundle-acceptance
         if: ${{ !cancelled() && matrix.node == 22 && steps.cli-resume.outcome == 'success' }}
         run: node scripts/e2e-windows-installer.mjs
+      - name: Native Windows ownership, process and PowerShell recovery tests
+        id: native-tests
+        if: ${{ !cancelled() && steps.native-build.outcome == 'success' }}
+        # These files share a Windows desktop. Concurrency invariants are
+        # exercised by the real competing processes inside individual tests.
+        run: node --test --test-concurrency=1 test/atomic-file.test.mjs test/runtime-maintenance-guard.test.mjs test/windows-maintenance-recovery.test.mjs test/platform-runtime.test.mjs test/hosted-watcher-stop.test.mjs test/windows-private-directory.test.mjs test/windows-process-identity.test.mjs test/windows-owned-process.test.mjs test/windows-watcher-instance.test.mjs test/windows-background.test.mjs test/windows-background-recovery.test.mjs test/windows-startup.test.mjs test/windows-installation-lease.test.mjs test/windows-installation-transaction.test.mjs test/windows-uninstallation-transaction.test.mjs test/windows-installation-native.test.mjs test/windows-hook.test.mjs test/protection-consent.test.mjs test/native-wakeup.test.mjs test/worktree-lock-process.test.mjs test/chat-continuity-controller.test.mjs test/chat-continuity-full-chain.test.mjs
       - name: Full cross-platform regression (no hosted model or credentials)
+        id: full-regression
         if: always()
         # Native UI files share one desktop. Serialize files; tests that prove
         # concurrent ownership still start multiple real processes themselves.
         run: npm test -- --test-concurrency=1
-      - name: Preserve validated internal Windows bundle (not a public release)
-        if: success() && matrix.node == 22
+      - name: Preserve installation-validated Windows Beta candidate
+        # Experimental queue acceptance remains visible as a failing check.
+        # A Beta artifact still requires all native/installation regressions.
+        if: ${{ !cancelled() && matrix.node == 22 && steps.bundle-acceptance.outcome == 'success' && steps.native-tests.outcome == 'success' && steps.full-regression.outcome == 'success' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: windows-x64-dev-bundle
+          name: windows-x64-beta-bundle
           path: |
             dist/windows-*/*.zip
             dist/windows-*/SHA256SUMS.txt

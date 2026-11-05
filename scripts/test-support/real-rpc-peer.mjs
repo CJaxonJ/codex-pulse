@@ -13,7 +13,8 @@ export class RealRpcPeer extends EventEmitter {
       const msg = JSON.parse(event.data);
       if (msg.id != null && this.pending.has(msg.id)) {
         const p = this.pending.get(msg.id); this.pending.delete(msg.id); clearTimeout(p.timer);
-        if (msg.error) p.reject(new Error(msg.error.message)); else p.resolve(msg.result);
+        if (msg.error) p.reject(Object.assign(new Error(`${p.method}: ${msg.error.message}`),
+          { code: msg.error.code, method: p.method })); else p.resolve(msg.result);
       } else if (msg.id != null && msg.method) this.emit("approval", msg);
       else this.emit("notification", msg);
     });
@@ -30,7 +31,7 @@ export class RealRpcPeer extends EventEmitter {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { this.pending.delete(id); reject(Error(`${method} timed out`)); }, 15000);
-      this.pending.set(id, { resolve, reject, timer });
+      this.pending.set(id, { resolve, reject, timer, method });
       this.socket.send(JSON.stringify({ id, method, params }));
     });
   }
