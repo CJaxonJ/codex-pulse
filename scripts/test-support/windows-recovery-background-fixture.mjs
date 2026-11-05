@@ -27,6 +27,8 @@ const fs=require('node:fs'),file=${JSON.stringify(peerState)},trace=${JSON.strin
 const read=()=>JSON.parse(fs.readFileSync(file,'utf8'));
 const save=s=>{const tmp=file+'.'+process.pid+'.tmp';fs.writeFileSync(tmp,JSON.stringify(s));fs.renameSync(tmp,file);};
 if(process.argv[2]==='queue'){
+ if(process.argv.includes('--help')){process.stdout.write('Usage: codex queue [OPTIONS]\\n');process.exit(0);}
+ if(!process.argv.includes('--resume'))throw Error('This recovery fixture requires explicit stored-thread resume');
  const s=read();fs.appendFileSync(wakes,JSON.stringify({args:process.argv.slice(2),pid:process.pid})+'\\n');
  s.turn={id:'resumed-turn',status:'inProgress'};save(s);
  fs.appendFileSync(trace,JSON.stringify({type:'event_msg',payload:{type:'task_started',turn_id:'resumed-turn'}})+'\\n');process.exit(0);
@@ -74,5 +76,5 @@ require('node:readline').createInterface({input:process.stdin}).on('line',async 
     child.stdin.end(JSON.stringify({ session_id: "native-windows-thread", turn_id: "paused-turn", cwd: workspace, ...event }));
   });
   const queueLog = async () => { try { return (await readFile(wakes, "utf8")).trim().split("\n").filter(Boolean).map(JSON.parse); } catch (error) { if (error.code === "ENOENT") return []; throw error; } };
-  return { ...f, workspace, objective, plan, invoke, setQuota, setTurn, queueLog, gatePause, pauseMarker, releasePause: () => writeFile(releasePause, "release"), store: new ChatContinuityStore(f.dataDir) };
+  return { ...f, workspace, objective, plan, invoke, setQuota, setTurn, queueLog, peerState, trace, gatePause, pauseMarker, releasePause: () => writeFile(releasePause, "release"), store: new ChatContinuityStore(f.dataDir) };
 }

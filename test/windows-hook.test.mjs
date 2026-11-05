@@ -11,6 +11,7 @@ import { AppServerClient } from "../src/app-server-client.mjs";
 import { ChatContinuityController } from "../src/chat-continuity-controller.mjs";
 import { WorktreeLockManager } from "../src/worktree-lock-manager.mjs";
 import { WorkspaceInspector } from "../src/workspace-inspector.mjs";
+import { assertQueueResumeSupported } from "../src/native-wakeup.mjs";
 
 const execute=promisify(execFile);
 const root=path.resolve(import.meta.dirname,"..");
@@ -35,7 +36,11 @@ async function fixture(){
   await writeFile(path.join(peer,"node_modules/@openai/codex/bin/codex.js"),`
 const fs=require('node:fs');const file=process.env.PULSE_WINDOWS_RPC_STATE;
 if(!file)throw Error('Missing isolated RPC state');
-if(process.argv[2]==='queue'){const s=JSON.parse(fs.readFileSync(file));s.wakes.push(process.argv.slice(2));s.turn={id:'resumed-turn',status:'inProgress'};fs.writeFileSync(file,JSON.stringify(s));fs.appendFileSync(file+'.jsonl',JSON.stringify({type:'event_msg',payload:{type:'task_started',turn_id:'resumed-turn'}})+'\\n');process.exit(0);}
+if(process.argv[2]==='queue'){
+ if(process.argv.includes('--help')){process.stdout.write('Usage: codex queue [OPTIONS]\\n');process.exit(0);}
+ if(!process.argv.includes('--resume'))throw Error('This recovery fixture requires explicit stored-thread resume');
+ const s=JSON.parse(fs.readFileSync(file));s.wakes.push(process.argv.slice(2));s.turn={id:'resumed-turn',status:'inProgress'};fs.writeFileSync(file,JSON.stringify(s));fs.appendFileSync(file+'.jsonl',JSON.stringify({type:'event_msg',payload:{type:'task_started',turn_id:'resumed-turn'}})+'\\n');process.exit(0);
+}
 require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
  const m=JSON.parse(line);if(m.id==null)return;const s=JSON.parse(fs.readFileSync(file));let result={};
  if(m.method==='thread/goal/get')result={goal:s.goal};
@@ -78,6 +83,10 @@ test("actual Windows hook command reads bundled Node, Unicode stdin and default 
 
 test("Windows process chain pauses at 10%, saves plan, recovers through CLI queue once across controller replacement",windows,async()=>{
   const f=await fixture();await f.setQuota(10);
+  const beforeProbe=await readFile(f.peerState,"utf8"),traceBeforeProbe=await readFile(f.peerState+".jsonl","utf8");
+  await assertQueueResumeSupported(f.binary,f.workspace,(file,args,options)=>execute(file,args,{...options,env:f.env}));
+  assert.equal(await readFile(f.peerState,"utf8"),beforeProbe,"Capability checks cannot activate a Goal or enqueue a message");
+  assert.equal(await readFile(f.peerState+".jsonl","utf8"),traceBeforeProbe,"Capability checks cannot create a turn");
   await f.invoke({hook_event_name:"PreToolUse",tool_name:"apply_patch"});
   const plan="Completed: kept original changes.\nVerification: no real model used.\nRemaining: finish original task.\nNext action: inspect saved work.\nBlockers: quota.";
   await f.invoke({hook_event_name:"Stop",last_assistant_message:plan});
@@ -95,6 +104,8 @@ test("Windows process chain pauses at 10%, saves plan, recovers through CLI queu
     const current=await store.get("windows-thread");
     assert.equal(state.wakes.length,1,JSON.stringify({status:current.status,blocker:current.blocker,wakeError:current.lastWakeError,resumeError:current.lastResumeError}));
     assert.deepEqual(state.wakes[0].slice(0,4),["queue","--thread","windows-thread","--message"]);
+    assert.equal(state.wakes[0].at(-1),"--resume");
+    assert.equal(state.wakes[0].includes("--help"),false);
     assert.match(state.wakes[0][4],/完成原目标/);
     assert.match(state.wakes[0][4],/Next action/);
     const prompt=state.wakes[0][4];

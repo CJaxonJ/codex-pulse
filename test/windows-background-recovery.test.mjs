@@ -5,6 +5,9 @@ import path from "node:path";
 import { windowsRecoveryBackgroundFixture } from "../scripts/test-support/windows-recovery-background-fixture.mjs";
 import { readWindowsProcessIdentity } from "../src/windows-process-bridge.mjs";
 import { readJsonSnapshot } from "../src/atomic-file.mjs";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { assertQueueResumeSupported } from "../src/native-wakeup.mjs";
 
 const windows = { skip: process.platform !== "win32", timeout: 120000 };
 const alive = pid => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === "EPERM"; } };
@@ -66,6 +69,12 @@ async function pause(f, sessions) {
 test("native Windows background preserves the original goal and checkpoint, queues once after replacement, and keeps first-tool fencing across another replacement", windows, async () => {
   const f = await windowsRecoveryBackgroundFixture({ gatePause: true }), sessions = [];
   try {
+    const beforeProbe = await readFile(f.peerState, "utf8"), traceBeforeProbe = await readFile(f.trace, "utf8");
+    await assertQueueResumeSupported(f.env.CODEX_BINARY, f.workspace,
+      (file, args, options) => promisify(execFile)(file, args, { ...options, env: f.env }));
+    assert.equal(await readFile(f.peerState, "utf8"), beforeProbe);
+    assert.equal(await readFile(f.trace, "utf8"), traceBeforeProbe);
+    assert.deepEqual(await f.queueLog(), [], "Capability check must not appear as a real queue submission");
     const original = await pause(f, sessions);
     await stop(f, sessions, original);
     await f.setQuota(100);
@@ -78,6 +87,7 @@ test("native Windows background preserves the original goal and checkpoint, queu
     assert.equal(record.resumeCount, 1);
     const queue = await f.queueLog(); assert.equal(queue.length, 1);
     assert.deepEqual(queue[0].args.slice(0, 4), ["queue", "--thread", "native-windows-thread", "--message"]);
+    assert.equal(queue[0].args.at(-1), "--resume"); assert.equal(queue[0].args.includes("--help"), false);
     const prompt = queue[0].args[4]; assert(prompt.includes(f.objective)); assert(prompt.includes("Next action:"));
     const admitted = await f.invoke({ hook_event_name: "UserPromptSubmit", turn_id: "resumed-turn", prompt });
     assert.notEqual(admitted?.decision, "block");
