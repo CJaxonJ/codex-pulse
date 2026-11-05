@@ -49,7 +49,7 @@ export async function renameAtomic(source,destination,{platform=process.platform
 
 // Publish a complete shared snapshot. This does not replace the durable
 // credit-operation journal or its separate Windows write-through contract.
-export async function writeJsonSnapshotAtomic(destination, value) {
+export async function writeJsonSnapshotAtomic(destination, value, { move = rename } = {}) {
   const encoded = JSON.stringify(value, null, 2);
   if (typeof encoded !== "string") throw new TypeError("A JSON snapshot is required");
   await mkdir(path.dirname(destination), { recursive: true });
@@ -64,6 +64,7 @@ export async function writeJsonSnapshotAtomic(destination, value) {
     // can tolerate a longer bounded contention window than a Hook checkpoint;
     // never truncate/unlink the prior snapshot to make replacement succeed.
     await renameAtomic(temporary, destination, {
+      move,
       retryDelays: [10,20,40,80,160,200,250,300,400,500,500,500],
     });
   } finally { if (owned) await rm(temporary, { force: true }); }

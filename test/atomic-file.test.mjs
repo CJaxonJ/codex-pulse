@@ -121,11 +121,13 @@ test("shared JSON snapshots remain complete during real cross-process replacemen
 test("Windows snapshot publishing survives a real sharing handle held beyond the ordinary checkpoint retry budget", { skip: process.platform !== "win32", timeout: 20000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "pulse snapshot occupied-")), file = path.join(root, "state.json");
   await writeJsonSnapshotAtomic(file, { quota: 10 });
-  const script = `$f=[IO.File]::Open($env:PULSE_LOCK_TARGET,'Open','Read',[IO.FileShare]::Read);try{[Console]::WriteLine('locked');[Console]::Out.Flush();Start-Sleep -Milliseconds 1000}finally{$f.Dispose()}`;
+  const script = `$f=[IO.File]::Open($env:PULSE_LOCK_TARGET,'Open','Read',[IO.FileShare]::Read);try{[Console]::WriteLine('locked');[Console]::Out.Flush();$null=[Console]::ReadLine()}finally{$f.Dispose()}`;
   const holder = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
-    windowsHide: true, env: { ...process.env, PULSE_LOCK_TARGET: file }, stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true, env: { ...process.env, PULSE_LOCK_TARGET: file }, stdio: ["pipe", "pipe", "pipe"],
   });
   const exited = once(holder, "exit");
+  holder.stdin.on("error", () => {});
+  let releaseTimer, denied = 0;
   try {
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(Error("Sharing holder never became ready")), 10000);
@@ -133,13 +135,29 @@ test("Windows snapshot publishing survives a real sharing handle held beyond the
       holder.once("error", error => { clearTimeout(timer); reject(error); });
       holder.once("exit", () => { clearTimeout(timer); reject(Error("Sharing holder exited before readiness")); });
     });
-    const publishing = writeJsonSnapshotAtomic(file, { quota: 100 });
+    // Start the hold interval only after a real rename has been denied, not
+    // when the independently scheduled PowerShell process prints readiness.
+    // All I/O and the production retry budget remain real and unchanged.
+    const publishing = writeJsonSnapshotAtomic(file, { quota: 100 }, { move: async (from, to) => {
+      try { return await rename(from, to); }
+      catch (error) {
+        denied++;
+        if (!releaseTimer) releaseTimer = setTimeout(() => holder.stdin.end("release\n"), 1000);
+        throw error;
+      }
+    } });
     assert.deepEqual(JSON.parse(await readFile(file, "utf8")), { quota: 10 }, "Denied replacement must leave the old complete snapshot readable");
     await publishing;
+    assert(denied > 0, "The publishing path must encounter an actual Windows sharing denial");
     assert.deepEqual(JSON.parse(await readFile(file, "utf8")), { quota: 100 });
     assert.deepEqual(await readdir(root), ["state.json"]);
     assert.equal((await exited)[0], 0);
-  } finally { if (holder.exitCode == null) holder.kill(); }
+  } finally {
+    clearTimeout(releaseTimer);
+    if (holder.stdin.writable) holder.stdin.end("release\n");
+    const cleanup = setTimeout(() => { if (holder.exitCode == null) holder.kill(); }, 5000);
+    try { await exited; } finally { clearTimeout(cleanup); }
+  }
 });
 
 test("failed snapshot preparation or actual replacement preserves prior data and cleans only its own temporary file", async () => {
